@@ -3,9 +3,10 @@
 The rules and the simulation. Headless: no DOM, no canvas, no renderer, no wall clock.
 
 **Built so far.** `BJ-2` landed the first two modules, `BJ-3` the next two, `BJ-4` the dealer, `BJ-5`
-settlement, `BJ-6` the wallet, `BJ-7` the phase machine with the type unions it is written in, and `BJ-8`
-the round those phases play out, with the house-rule record it reads. The remaining modules follow the
-active Blackjack build plan.
+settlement, `BJ-6` the wallet, `BJ-7` the phase machine with the type unions it is written in, `BJ-8`
+the round those phases play out, with the house-rule record it reads, and `BJ-9` the strategy coach that
+reads that round without touching it. Eleven modules. The remaining ones follow the active Blackjack build
+plan.
 
 | Module | What it owns | Part | Item |
 |---|---|---|---|
@@ -30,6 +31,8 @@ active Blackjack build plan.
 | `table.ts` | Hit, Stand, Double, Split and Surrender, and the availability rules under the phase gate | `BJ-8` | `B9` `B10` `B12` |
 | `table.ts` | SPEC 4.7's offer, even money and the round settled through SPEC 4.10's ladder | `BJ-8` | `B11` |
 | `rules.ts` | SPEC 14's house-rule record: shoe size, DAS, surrender, even money, the split comparison | `BJ-8` | none |
+| `strategy.ts` | SPEC 7's three surfaces, generated per house-rule record, as preference lists | `BJ-9` | `J3` |
+| `strategy.ts` | The three coach modes and the two accuracy counters. **Graded by `J4`** at `BJ-20` | `BJ-9` | `J4` |
 
 **This directory is a lint boundary, not a convention.** Nothing under `core/` may import `render/`, `ui/`,
 `@js-games/engine/render`, or any DOM or canvas type, and nothing here may call `Math.random()`. All
@@ -307,6 +310,58 @@ the side wager's net, the settlement by the hand's, and the release of the defer
 all. **The release is at the round boundary and not at the peek**, and the control is the design that was
 rejected: releasing it with the side wager is written out and required to take the balance negative on
 exactly the branch where the stake is lost, which is the branch whose credit is zero.
+
+## The coach is generated, checked against a chart it did not write, and cannot reach the game
+
+`strategy.ts` holds no chart. It holds basic strategy as rules, written per row as the up cards a play
+applies against, and `strategyTable(rules)` resolves them into 380 cells: 18 hard totals and 10 soft totals
+and 10 pair rows, each against SPEC 7's ten dealer up cards. SPEC 7 requires exactly that: "the table is
+generated from the active house-rule record, never stored as one chart".
+
+**What makes that claim checkable is a second chart nobody generated.**
+`tests/unit/reference/basic-strategy-charts.ts` carries all eight rule combinations, written out by hand
+from published basic strategy for a shoe of 4 to 8 decks with the dealer standing on soft 17, which is the
+game SPEC 4 describes. It imports nothing from `src/` and never ships, which SPEC 7 and DESIGN section 7
+both require. `tests/unit/strategy-coach.test.ts` compares 3,040 cells against it, `380 x 8`, and the count
+is derived from the row and column lists on both sides so a row quietly dropped fails the arithmetic rather
+than shrinking the sweep. This is `hand-evaluator.ts`'s discipline applied to SPEC 7: a chart pasted from
+the generator's own output would agree with the generator's misreading forever.
+
+**Of the three axes, two move cells and one does not.** Double after split moves exactly 7 pair cells, and
+late surrender exactly 7 that are all one of two hard totals: 15 against a 10, 16 against a 9, a 10 and an
+Ace, and the three 8,8 cells whose fall-through is that same hard 16. Both sets are written out and two
+deliberately wrong generators are required to disagree on **exactly** their own set, one with the toggle
+inverted and one that emits the right rule set and then drops surrender from every list. The shoe size moves
+nothing: the 6-deck and 8-deck charts were written out separately and came out identical cell for cell,
+which is the right answer for total-dependent S17 play, and the test asserts that identity rather than
+hiding it behind a sweep that would pass either way. Both sizes are still swept, so a wrong deck branch
+would still be caught.
+
+**Two documents say the shoe size moves recommendations, and both are left exactly as written.** They are
+[../../../SPEC.md](../../../SPEC.md) section 7, "Changing shoe size or turning DAS off changes some
+recommendations", and [../../../DESIGN.md](../../../DESIGN.md) section 7, "because the correct action
+genuinely changes with shoe size, DAS availability and surrender availability". Each is satisfied through
+the DAS axis, which really does move seven cells. The shoe-size half of each is unsatisfiable and is the
+user's to resolve, in one approved edit that touches both: they are a matched pair, and editing one of a
+pair is how the two come apart. Both are named here, in `strategy.ts`, in the reference chart and in the
+sweep, so that edit finds every home of the claim.
+
+**A cell is a preference list, and legality is never decided here.** DESIGN section 7's `['double', 'hit']`
+is walked down to the first action currently legal, which is what makes one cell correct on a two-card hand,
+on a three-card hand and on a balance that cannot fund the increment. Every clause of SPEC 4.5, 4.6 and 4.8
+is asked of `table.ts`'s four exported refusal predicates, so the game has one reading of them; the chip
+half is the one comparison the coach makes for itself, because `wallet.ts` decides it inside `commitDouble`
+and `commitSplit`, which **spend** the chips they check. A coach that asked by committing would be a coach
+that changed the game, so the two answers are pinned together by test instead, against a real wallet on both
+sides of the boundary. A pair cell always carries a tail for the same reason: `['split']` alone would leave
+the coach silent on a pair the three-split cap or the balance will not let the player split.
+
+**That the coach cannot change an outcome is asserted, not asserted about.** Two 120-round seeded sessions
+are played from the same seed with the same intent policy, one with the coach observing every decision and
+one without, and the whole readout is serialised at every step: the phase and its payload, every card, the
+timers, the shoe's counters and the wallet's four-term identity. The transcripts have to be equal step for
+step, and the run with the coach on has to have produced hundreds of recommendations and counted hundreds of
+decisions, because otherwise the comparison would pass just as well against a coach that did nothing.
 
 ## The timers are accumulators, and the module has no clock in it
 
