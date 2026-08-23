@@ -1,0 +1,210 @@
+/*
+ * Design tokens. Item E1.
+ *
+ * Every colour, size, spacing, radius, type step and duration in this project
+ * resolves through one of the custom properties below. No component may carry a
+ * literal value, and after BJ-1 there is no reason for one to.
+ *
+ * The independent source is `tests/reference/design-contract.md`, which holds
+ * the Blackjack numeric scales and palette used by the verification suite.
+ *
+ * Every hex below is copied from that contract and every ratio quoted there is
+ * measured rather than estimated. `tests/unit/tokens.test.ts` parses the
+ * contract and this file and fails if they disagree, and it re-derives all 35
+ * contrast ratios from the hexes, so editing a colour here to make something
+ * look better is a test failure rather than a silent regression downstream in
+ * G2 and E4.
+ *
+ * The play surface tokens are mirrored in src/render/tokens.ts, because a canvas
+ * 2D context cannot take `var()` in a fillStyle. Same test, same source, so the
+ * two cannot drift.
+ */
+
+:root {
+  /* ---------------------------------------------------------------------
+   * Type. Base 1rem, ratio 1.200. QUALITY-BAR 15.
+   *
+   * rem throughout and never px, so the user's browser font setting applies.
+   * Chrome text only: the play surface has no type scale, because anything a
+   * player needs in order to decide is real DOM text.
+   * ------------------------------------------------------------------- */
+  --type-xs: 0.694rem;
+  --type-sm: 0.833rem;
+  --type-base: 1rem;
+  --type-md: 1.2rem;
+  --type-lg: 1.44rem;
+  --type-xl: 1.728rem;
+  --type-2xl: 2.074rem;
+
+  /* 1.5 for body, 1.25 from --type-lg upward. */
+  --leading-body: 1.5;
+  --leading-tight: 1.25;
+
+  /* ---------------------------------------------------------------------
+   * Spacing, radius, border, focus ring. QUALITY-BAR 15.
+   * ------------------------------------------------------------------- */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --space-7: 48px;
+  --space-8: 64px;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 14px;
+  --radius-pill: 999px;
+
+  --border-hair: 1px;
+  --border-thin: 2px;
+  --border-thick: 3px;
+
+  /* The minimum touch target, and its clearance. Section 3 fixes both, and a
+   * control that looks smaller still carries this hit area through padding,
+   * never through a transparent overlay. */
+  --target-min: 44px;
+  --target-clearance: var(--space-2);
+
+  /* Focus ring: 2px solid, 2px offset, in --bj-accent. That is 9.65:1 dark and
+   * 6.17:1 light against the ground, well past the 3:1 the criterion asks. */
+  --focus-ring-width: var(--border-thin);
+  --focus-ring-style: solid;
+  --focus-ring-offset: 2px;
+  --focus-ring-color: var(--bj-accent);
+
+  /* ---------------------------------------------------------------------
+   * Motion. QUALITY-BAR 15.
+   *
+   * These are chrome durations. Gameplay pacing constants are simulation
+   * timing, live in SPEC.md, and are deliberately not here: reduced motion
+   * removes animation, and must not change the sequence of states.
+   * ------------------------------------------------------------------- */
+  --dur-0: 0ms;
+  --dur-1: 80ms;
+  --dur-2: 140ms;
+  --dur-3: 220ms;
+  --dur-4: 320ms;
+
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ---------------------------------------------------------------------
+   * Chrome palette. SPEC 16.
+   *
+   * Both themes are declared once, here, under their own names. The active
+   * theme below is an alias onto one set or the other, so every hex in this
+   * file appears exactly once and a theme swap cannot half-apply.
+   * ------------------------------------------------------------------- */
+  --bj-dark-ground: #0e1512;
+  --bj-dark-elevated: #18231d;
+  --bj-dark-text: #e8efea;
+  --bj-dark-text-muted: #a9bbb1;
+  --bj-dark-accent: #e8b33c;
+  --bj-dark-positive: #4fd3a0;
+  --bj-dark-negative: #ff6b70;
+
+  --bj-light-ground: #f2f5f1;
+  --bj-light-elevated: #ffffff;
+  --bj-light-text: #1a231e;
+  --bj-light-text-muted: #4c5f55;
+  --bj-light-accent: #7a5406;
+  --bj-light-positive: #0e6b45;
+  --bj-light-negative: #a3232a;
+
+  /* Active theme. Dark is the default, and prefers-color-scheme moves it. */
+  --bj-ground: var(--bj-dark-ground);
+  --bj-elevated: var(--bj-dark-elevated);
+  --bj-text: var(--bj-dark-text);
+  --bj-text-muted: var(--bj-dark-text-muted);
+  --bj-accent: var(--bj-dark-accent);
+  --bj-positive: var(--bj-dark-positive);
+  --bj-negative: var(--bj-dark-negative);
+
+  /* ---------------------------------------------------------------------
+   * Play surface palette. SPEC 16.
+   *
+   * **This set does not flip with the theme.** A casino table is dark in a lit
+   * room and dark in a dark one, and a pale felt would mean a second set of
+   * measured ratios earning nothing. Only the chrome around it flips.
+   * ------------------------------------------------------------------- */
+  --felt-bronze: #14503a;
+  --felt-silver: #133f55;
+  --felt-gold: #4a1526;
+  --felt-rail: #c2a86a;
+  --felt-print: #f3f7f4;
+
+  --card-margin: #f6f3ec;
+  --card-face: #f6f3ec;
+  --card-back: #7a2230;
+  --rank-black: #1a1a1a;
+  --rank-red: #b3121b;
+
+  --chip-ring: #f0ede4;
+  --chip-10-fill: #2e6da4;
+  --chip-50-fill: #1f7a49;
+  --chip-100-fill: #23272b;
+  --chip-500-fill: #6b4fa8;
+
+  /* SPEC 16 states the chip glyph as "White glyph on fill" and commits its four
+   * ratios rather than a hex. All four reproduce from #ffffff exactly, so this
+   * is the value the sheet already measured, written down. */
+  --chip-glyph: #ffffff;
+}
+
+/*
+ * Theme resolution. SPEC 16: prefers-color-scheme by default, settings override
+ * wins. The media query is guarded so that an explicit dark choice is not undone
+ * by a light system preference, and the two attribute selectors win in both
+ * directions.
+ */
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) {
+    --bj-ground: var(--bj-light-ground);
+    --bj-elevated: var(--bj-light-elevated);
+    --bj-text: var(--bj-light-text);
+    --bj-text-muted: var(--bj-light-text-muted);
+    --bj-accent: var(--bj-light-accent);
+    --bj-positive: var(--bj-light-positive);
+    --bj-negative: var(--bj-light-negative);
+  }
+}
+
+:root[data-theme='light'] {
+  --bj-ground: var(--bj-light-ground);
+  --bj-elevated: var(--bj-light-elevated);
+  --bj-text: var(--bj-light-text);
+  --bj-text-muted: var(--bj-light-text-muted);
+  --bj-accent: var(--bj-light-accent);
+  --bj-positive: var(--bj-light-positive);
+  --bj-negative: var(--bj-light-negative);
+}
+
+:root[data-theme='dark'] {
+  --bj-ground: var(--bj-dark-ground);
+  --bj-elevated: var(--bj-dark-elevated);
+  --bj-text: var(--bj-dark-text);
+  --bj-text-muted: var(--bj-dark-text-muted);
+  --bj-accent: var(--bj-dark-accent);
+  --bj-positive: var(--bj-dark-positive);
+  --bj-negative: var(--bj-dark-negative);
+}
+
+/*
+ * Reduced motion. QUALITY-BAR 15: every --dur-* resolves to --dur-0.
+ *
+ * Redefining the tokens rather than blanket-killing animation is deliberate. A
+ * global `animation: none !important` sweep also cancels transitionend and
+ * animationend events, and anything sequenced on those stops arriving, which
+ * changes the order of states. Reduced motion is required to remove the
+ * animation and leave the sequence and the outcome untouched.
+ */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: var(--dur-0);
+    --dur-2: var(--dur-0);
+    --dur-3: var(--dur-0);
+    --dur-4: var(--dur-0);
+  }
+}

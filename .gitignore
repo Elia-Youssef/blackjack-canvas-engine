@@ -1,0 +1,38 @@
+# Installed packages
+node_modules/
+
+# Compiled output and coverage
+dist/
+coverage/
+artifacts/reports/
+*.tsbuildinfo
+
+# Test and browser output
+playwright-report/
+test-results/
+blob-report/
+.determinism/
+
+# Local caches, logs and environment overrides
+.vite/
+.cache/
+.eslintcache
+*.local
+*.local.md
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+.env
+.env.*
+!.env.example
+
+# Local workspace and editor state
+.local/
+.workspace/
+.idea/
+.vscode/
+
+# Operating-system metadata
+.DS_Store
+Thumbs.db
