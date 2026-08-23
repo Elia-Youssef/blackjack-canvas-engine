@@ -1,5 +1,5 @@
 {
-  "name": "typescript-canvas-blackjack",
+  "name": "blackjack-canvas-engine",
   "version": "0.0.0",
   "private": true,
   "type": "module",
