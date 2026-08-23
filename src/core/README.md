@@ -3,8 +3,9 @@
 The rules and the simulation. Headless: no DOM, no canvas, no renderer, no wall clock.
 
 **Built so far.** `BJ-2` landed the first two modules, `BJ-3` the next two, `BJ-4` the dealer, `BJ-5`
-settlement, `BJ-6` the wallet and `BJ-7` the phase machine with the type unions it is written in. The
-remaining modules follow the active Blackjack build plan.
+settlement, `BJ-6` the wallet, `BJ-7` the phase machine with the type unions it is written in, and `BJ-8`
+the round those phases play out, with the house-rule record it reads. The remaining modules follow the
+active Blackjack build plan.
 
 | Module | What it owns | Part | Item |
 |---|---|---|---|
@@ -21,9 +22,14 @@ remaining modules follow the active Blackjack build plan.
 | `wallet.ts` | SPEC 6's three tables, the unlock high-water mark and SPEC 13's launch fallback | `BJ-6` | `J1` `J2` |
 | `wallet.ts` | Chips, per-hand wagers, commit and settle, and SPEC 4.12's bust-out and reset | `BJ-6` | `J1` `J2` |
 | `wallet.ts` | The betting controls of SPEC 4.11. Built here, **graded by `B15`** at `BJ-15` | `BJ-6` | `B15` |
+| `wallet.ts` | SPEC 4.7's insurance stake, its deferred remainder and the release at the boundary | `BJ-8` | `B11` |
 | `types.ts` | DESIGN 2's unions: `Phase`, `Intent`, `HandState` and the hand a round is played on | `BJ-7` | `C2` |
 | `table.ts` | SPEC 10's eleven phases, the legality table and the one `apply(intent)` entry point | `BJ-7` | `C2` |
 | `table.ts` | The intent queue, DESIGN 3's per-frame drain, and SPEC 5's timings as accumulators | `BJ-7` | `C2` |
+| `table.ts` | SPEC 4.3's opening deal, drawn from the seeded shoe, and the face-down hole card | `BJ-8` | `B6` |
+| `table.ts` | Hit, Stand, Double, Split and Surrender, and the availability rules under the phase gate | `BJ-8` | `B9` `B10` `B12` |
+| `table.ts` | SPEC 4.7's offer, even money and the round settled through SPEC 4.10's ladder | `BJ-8` | `B11` |
+| `rules.ts` | SPEC 14's house-rule record: shoe size, DAS, surrender, even money, the split comparison | `BJ-8` | none |
 
 **This directory is a lint boundary, not a convention.** Nothing under `core/` may import `render/`, `ui/`,
 `@js-games/engine/render`, or any DOM or canvas type, and nothing here may call `Math.random()`. All
@@ -194,12 +200,20 @@ SPEC 13 cannot persist, and still checked against a lowest-first scan that has t
 48 cases where more than one table is enterable.
 
 **The conserved quantity is written with four terms from the start.** `chips + committed + insuranceStake -
-deferredStake` moves only by a settled outcome and by SPEC 4.12's reset. The last two terms are zero
-everywhere in this part, because SPEC 4.7's insurance stake and its deferred remainder are item `B11` at
-`BJ-8`, and they are in the readout anyway: the three-term form passes every round until the first insured
-one, which is exactly the negative control the soak `H6` at `BJ-12` carries. No mutation of those two terms
-can be detected yet, so what `scripts/mutation-check.mjs` holds today is the shape, by removing a term from
-the readout and requiring the field list to notice.
+deferredStake` moves only by a settled outcome and by SPEC 4.12's reset. `BJ-6` pinned the last two at zero
+and put them in the readout anyway, because the three-term form passes every round until the first insured
+one, which is exactly the negative control the soak `H6` at `BJ-12` carries. `BJ-8` moved them, through
+`takeInsurance` and `settleInsurance`, and the expression did not change shape when it did.
+
+**The balance is non-negative after every single application, not merely at rest**, which is `B11`'s last
+clause. Three things make that true rather than lucky. `takeInsurance` captures `min(chips, stake)`
+**before** the debit, so it cannot take out more than is there; reading `chips` again afterwards computes
+the shortfall against a balance that has already paid, and on a fully deferred stake that reads zero and
+credits the player the whole stake for nothing. `settleInsurance` credits `stake + net`, which is `3 x
+stake` or 0 and never negative. And the unfunded remainder is released at `endRound`, which refuses to run
+while any hand is still committed, so every credit the round is owed has landed before the shortfall is
+taken back. SPEC 4.7 states the margin that makes the ordering safe: the insurance credit is `3 x stake` on
+a dealer natural and the natural pays `wager x 3 / 2` otherwise, and both exceed any possible shortfall.
 
 ## The phase machine is the gate the wallet deliberately is not
 
@@ -208,49 +222,91 @@ all accepted mid-round there, because a wallet has no phases to check them again
 blocks "changing the wager after the deal" and "acting after the round ends", so `table.ts` is where both
 sentences are enforced, and it enforces them for all seventeen intents rather than for Deal alone.
 
-`apply(intent)` asks the phase first. A rejection carries the layer that refused it, `phase` or `wallet`,
-because "you cannot bet now" and "that is more than the table takes" are different sentences and `B15` at
-`BJ-15` renders the second of them. The order is checked directly rather than assumed: the same chip tap is
-offered on a screen that does not want it, through a wallet that counts the questions it was asked, and the
-count has to be zero. `BJ-8` adds a third layer under the phase for the per-hand rules of SPEC 4.5, 4.6 and
-4.8, items `B9`, `B10` and `B12`, in the place the wallet occupies today.
+`apply(intent)` asks the phase first, then whether the action is available on the hand at all, then the
+wallet. A rejection carries the layer that refused it, because "you cannot bet now", "not on this hand" and
+"that is more than the table takes" are three different sentences and `B15` at `BJ-15` renders the last of
+them. The order is checked directly rather than assumed: the same chip tap is offered on a screen that does
+not want it, through a wallet that counts the questions it was asked, and the count has to be zero. `BJ-8`
+added the middle layer for the per-hand rules of SPEC 4.5, 4.6, 4.7 and 4.8, items `B9`, `B10`, `B11` and
+`B12`, in the place the wallet occupied alone.
+
+**"Can the balance cover it" is asked in exactly one place, and it is not that layer.** SPEC 4.6 requires
+Split to be "unavailable on that hand with the reason surfaced" when the chips are short, and `wallet.ts`
+already answers that question inside `commitSplit`. So the availability layer does not ask it again: the
+commit is attempted and its refusal is surfaced with the `wallet` layer on it. The one exception is SPEC
+4.7's offer, where the rule is not about chips at all but about which offer is on the table, since even
+money is "offered regardless of balance" and an ordinary stake is not.
 
 ## The legality sweep is exhaustive by arithmetic, and it drives the real machine
 
-Eleven phases crossed with seventeen intents is 187 cells, of which SPEC 10 makes 17 legal and 170 illegal.
+Eleven phases crossed with eighteen intents is 198 cells, of which SPEC 10 makes 18 legal and 180 illegal.
 `tests/unit/phase-legality.test.ts` derives all three numbers, attempts every cell **on a machine of its
-own**, and for each of the 170 refusals asserts both halves of `C2`: the reason surfaced, and the whole
+own**, and for each of the 180 refusals asserts both halves of `C2`: the reason surfaced, and the whole
 readout unchanged by deep equality rather than by a spot check. The readout is a snapshot rather than a
-view, which is what stops those 170 comparisons being idle, and a control drives the machine forward and
+view, which is what stops those 180 comparisons being idle, and a control drives the machine forward and
 requires an earlier snapshot to still describe the moment it was taken.
+
+The eighteenth intent is SPEC 10's Change Table, added at `BJ-8`: `BETTING -- Change Table, only with no
+wager placed ---> START`. It is legal on one screen like every other control, and the "only with no wager
+placed" half is not a legality cell at all: SPEC 10 puts the control there and then blocks it with a reason,
+which is 4.11's rejection principle applied to the one control that leaves the screen. That refusal is
+driven separately, along with the balance surviving it intact and the pick-and-Start flow rerunning.
 
 The legality table is **not exported**, and the sweep transcribes SPEC 10's diagram for itself. A sweep that
 imported the table it is grading would agree with any edit to it forever. Three misreadings run beside the
-real one, each required to disagree on exactly its derived set: a phase-blind table on all **170** illegal
+real one, each required to disagree on exactly its derived set: a phase-blind table on all **180** illegal
 cells, insurance folded into the peek on exactly **4**, and betting controls that never close on exactly
 **40**, which is the four controls across the ten phases that are not `betting`. Same device as the shoe's
 two broken shuffles and the settlement ladder's three reorderings.
 
-`createTable` opens at `start` and hands back five methods, none of which is a phase setter. Ten of the
-eleven phases are reached by transitions the machine performs; the eleventh, SPEC 4.12's bust-out, needs a
-round the player lost, and no round here can lose because SPEC 4.10's ladder is wired at `BJ-8`. So that one
-is driven with the real wallet wrapped so a settled hand is credited a loss, which is the number `BJ-8` will
-supply, and the machine still takes SPEC 10's `chips < tableMin` branch by itself.
+`createTable` opens at `start` and hands back five methods, none of which is a phase setter. Every one of
+the eleven phases is reached by a transition the machine performed; what the sweep supplies is cards, from
+`tests/unit/support/stacked-shoe.ts`, wherever a phase depends on which ones arrived. `BJ-7` had to supply
+an up card and a settled net as well, because neither existed; `BJ-8` deals from a shoe and settles through
+the ladder, so both seams are gone.
 
-**Nine expressions in `table.ts` are inert until `BJ-8`, and the module header lists all nine by name**, the
-way `wallet.ts` names the two identity terms it pins at zero. Seven cannot answer two ways because no card
-exists yet, among them the dealer's `shouldHit` operand, the whole of the peek's natural test, and the
-clears at the round boundary; two are live but constant, the offer's `evenMoney` and the move-right arm of
-the active hand. Each is already the right expression, each is reached by real code, and none of them can be
-held by a test or broken by a mutation before the cards and the second hand arrive. Naming them is the point:
-a count of covered lines that quietly included them would be a worse number than an honest list.
+**The nine expressions `BJ-7` listed as inert are all live**, and each one carries a mutation entry: the
+dealer's `shouldHit` operand and the whole of the peek's natural test now read dealt cards, the round
+boundary clears real hands, the readout copies a real dealer hand, the offer's `evenMoney` answers SPEC
+4.2's question of a hand that can be a natural, and the move-right arm of the active hand is what SPEC 4.6
+walks a split down. The disclosure block in `table.ts` that named them is gone, because it described a state
+the module is no longer in.
 
-**One hazard is written into `settleRound` rather than guarded against.** The wallet's hand index is this
-module's array position, which is sound while a round has one hand and is only sound by position. `wallet.ts`
-**appends** a split hand while SPEC 4.6 plays hands left to right, so a resplit has to **insert** here.
-`B10` at `BJ-8` must decide and say which: carry the wallet's index on the hand, or keep both structures
-aligned by inserting in both. The index is deliberately not carried today, because it would equal the
-position at every reachable state, which is a field no test could hold and no mutation could break.
+**The hazard `BJ-7` wrote into `settleRound` is resolved, and `B10` chose the first of the two options it
+named.** `HandInPlay` carries `walletHand`, populated from the commit result. The wallet **appends** a split
+hand, which is commit order, while SPEC 4.6 plays hands left to right, so `takeSplit` **inserts** beside the
+parent: three splits of the leftmost hand leave the play order holding the wallet's hands as 0, 3, 2, 1.
+Forcing the two orders together would have meant the wallet inserting too, and every index a caller was
+holding shifting underneath it. `tests/unit/split.test.ts` drives that round with one hand doubled, so a
+settlement keyed on the position credits a different set of hands; the **round total is identical either
+way**, because a permutation cannot change a sum, which is exactly why the per-hand credits are the check
+and the total is not.
+
+## The round is the five criteria of `BJ-8`, and each is driven against a control
+
+`tests/unit/deal.test.ts` takes SPEC 4.3 one card at a time and reads off who received each: a deal that
+gave the player both cards first differs at exactly the two middle positions, and a hole card dealt face up
+differs at exactly the phases SPEC 4.3 keeps it down. The no-leak half is separate from the count: a whole
+round is walked with every snapshot kept, and the card that turns out to be the hole card must appear in
+none of them before the reveal, compared by object identity because a six-deck shoe holds six of each card.
+
+`tests/unit/double.test.ts` and `tests/unit/surrender.test.ts` each sweep the availability rule over every
+shape of hand it can be asked about, 64 and 24 of them, and run a misreading beside it: Double without its
+card count differs on exactly 12, and Surrender without its split clause on exactly 3, of which exactly one
+is the two-card split hand the clause exists for. Both rules are also asked directly about hands play cannot
+assemble, a live split-Ace hand among them, for the reason `settlement.ts` gives for rung 1's qualifier.
+
+`tests/unit/split.test.ts` drives all ten sentences of SPEC 4.6 and settles a four-hand round. The equal-rank
+comparison is run beside equal value over all 169 ordered rank pairs and has to disagree on exactly the 12
+mixed ten-value ones. The 1:1 clause is driven as a pair: the same Ace and ten pay 125 unsplit and 100 on a
+split hand, a difference of exactly the 25 chips `fromSplit` exists to decide.
+
+`tests/unit/insurance.test.ts` walks every insurance scenario frame by frame and asserts where SPEC 4.11's
+four-term identity moved as well as by how much: taking the offer moves it by nothing, the peek moves it by
+the side wager's net, the settlement by the hand's, and the release of the deferred remainder by nothing at
+all. **The release is at the round boundary and not at the peek**, and the control is the design that was
+rejected: releasing it with the side wager is written out and required to take the balance negative on
+exactly the branch where the stake is lost, which is the branch whose credit is zero.
 
 ## The timers are accumulators, and the module has no clock in it
 
