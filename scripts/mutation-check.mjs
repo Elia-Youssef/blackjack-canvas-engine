@@ -3,7 +3,8 @@
  *
  * One entry per gate, added by the part that builds it: `M3` and `A6` at BJ-0,
  * `E1` at BJ-1, `B1` at BJ-2, `B2` and `B3` at BJ-3, `B7` and `B8` at BJ-4,
- * `B13` and `B14` at BJ-5, `J1` and `J2` at BJ-6, `C2` at BJ-7.
+ * `B13` and `B14` at BJ-5, `J1` and `J2` at BJ-6, `C2` at BJ-7, and `B6`, `B9`,
+ * `B10`, `B11` and `B12` at BJ-8.
  *
  * The `BJ-6` block carries entries labelled `B15` as well. The betting rules and
  * the four-term identity are built at `BJ-6` and unit tested there, and `B15`
@@ -1354,9 +1355,13 @@ const EDITS = [
     item: 'C2',
     name: 'the betting screen leaves a player action live',
     file: 'src/core/table.ts',
-    find: "  betting: Object.freeze<IntentKind[]>(['tapChip', 'clear', 'repeat', 'max', 'deal']),",
+    find:
+      "  betting: Object.freeze<IntentKind[]>([\n" +
+      "    'tapChip',\n    'clear',\n    'repeat',\n    'max',\n    'changeTable',\n    'deal',\n  ]),",
     replace:
-      "  betting: Object.freeze<IntentKind[]>(['tapChip', 'clear', 'repeat', 'max', 'deal', 'hit']),",
+      "  betting: Object.freeze<IntentKind[]>([\n" +
+      "    'tapChip',\n    'clear',\n    'repeat',\n    'max',\n    'changeTable',\n    'deal',\n" +
+      "    'hit',\n  ]),",
     detectedBy: UNIT,
   },
   {
@@ -1518,10 +1523,13 @@ const EDITS = [
   },
   {
     item: 'C2',
-    name: 'the up card is never recorded, so every deal takes the otherwise arm',
+    // `BJ-7` supplied the up card as an option and `BJ-8` deleted it: the
+    // `dealerUp` step draws a card and the branch reads that card's rank, so
+    // the two cannot disagree. What is broken here is the reading.
+    name: 'the up card is never read, so every deal takes the otherwise arm',
     file: 'src/core/table.ts',
-    find: "    if (step === 'dealerUp') {\n      upCard = openingUpCard;\n    }",
-    replace: '    void step;',
+    find: '    return dealer[UP_CARD]?.rank ?? null;',
+    replace: '    return null;',
     detectedBy: UNIT,
   },
   {
@@ -1650,8 +1658,8 @@ const EDITS = [
     item: 'C2',
     name: 'the round boundary never closes, so the next deal reaches a wallet throw',
     file: 'src/core/table.ts',
-    find: '    wallet.endRound();\n    rounds += 1;',
-    replace: '    rounds += 1;',
+    find: '    wallet.endRound();\n    shoe.endRound();',
+    replace: '    shoe.endRound();',
     detectedBy: UNIT,
   },
   {
@@ -1769,8 +1777,8 @@ const EDITS = [
     item: 'C2',
     name: "the sweep's own transcription of SPEC 10 opens a control on the wrong screen",
     file: 'tests/unit/phase-legality.test.ts',
-    find: "  betting: ['tapChip', 'clear', 'repeat', 'max', 'deal'],",
-    replace: "  betting: ['tapChip', 'clear', 'repeat', 'max', 'deal', 'hit'],",
+    find: "  betting: ['tapChip', 'clear', 'repeat', 'max', 'changeTable', 'deal'],",
+    replace: "  betting: ['tapChip', 'clear', 'repeat', 'max', 'changeTable', 'deal', 'hit'],",
     detectedBy: UNIT,
   },
   {
@@ -1779,6 +1787,630 @@ const EDITS = [
     file: 'tests/unit/phase-legality.test.ts',
     find: "  'settling',\n  'roundResult',\n  'bustOut',\n];",
     replace: "  'settling',\n  'roundResult',\n];",
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // B6. The opening deal of SPEC 4.3: four cards, who got each one, which
+  // of the dealer's two is face down, and that the cards are the shoe's.
+  // The order and the concealment fail differently, so each gets entries
+  // of its own, and the face-down clause gets three because "reports one
+  // card down", "does not publish it" and "turns it over eventually" are
+  // three separate things a machine can get wrong one at a time.
+  // ------------------------------------------------------------------
+  {
+    item: 'B6',
+    name: 'the deal gives the dealer cards to the player',
+    file: 'src/core/table.ts',
+    find:
+      "    if (step === 'playerCard') {\n" +
+      '      dealTo(FIRST_HAND);\n' +
+      '      return;\n' +
+      '    }\n' +
+      '    dealer.push(shoe.draw());',
+    replace: '    void step;\n    dealTo(FIRST_HAND);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B6',
+    name: "SPEC 4.3's order gives the player both cards before the dealer",
+    file: 'src/core/table.ts',
+    find:
+      'export const OPENING_DEAL: readonly DealStep[] = Object.freeze([\n' +
+      "  'playerCard',\n  'dealerUp',\n  'playerCard',\n  'dealerHole',\n]);",
+    replace:
+      'export const OPENING_DEAL: readonly DealStep[] = Object.freeze([\n' +
+      "  'playerCard',\n  'playerCard',\n  'dealerUp',\n  'dealerHole',\n]);",
+    detectedBy: UNIT,
+  },
+  {
+    // "Exactly" is the clause an order assertion cannot see: a fifth card
+    // dealt after the four still reads player, dealer, player, dealer.
+    item: 'B6',
+    name: 'the deal runs to five cards instead of exactly four',
+    file: 'src/core/table.ts',
+    find: "  'playerCard',\n  'dealerUp',\n  'playerCard',\n  'dealerHole',\n]);",
+    replace: "  'playerCard',\n  'dealerUp',\n  'playerCard',\n  'dealerHole',\n  'playerCard',\n]);",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B6',
+    name: 'the hole card is dealt face up',
+    file: 'src/core/table.ts',
+    find: '    return CONCEALED_PHASES.includes(phase.kind) && dealer.length > HOLE_CARD ? 1 : 0;',
+    replace: '    return 0;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B6',
+    name: 'the hole card turns face up while the player is still acting',
+    file: 'src/core/table.ts',
+    find:
+      'const CONCEALED_PHASES: readonly PhaseKind[] = Object.freeze([\n' +
+      "  'dealing',\n  'peek',\n  'insurance',\n  'playerTurn',\n]);",
+    replace:
+      'const CONCEALED_PHASES: readonly PhaseKind[] = Object.freeze([\n' +
+      "  'dealing',\n  'peek',\n  'insurance',\n]);",
+    detectedBy: UNIT,
+  },
+  {
+    // The readout can report one card concealed and publish it anyway,
+    // which no count of concealed cards can see.
+    item: 'B6',
+    name: 'the readout publishes the whole dealer hand, hole card and all',
+    file: 'src/core/table.ts',
+    find: '      dealerVisible: Object.freeze(dealer.slice(0, dealer.length - concealed)),',
+    replace: '      dealerVisible: Object.freeze([...dealer]),',
+    detectedBy: UNIT,
+  },
+  {
+    // SPEC 4.1's boundary, which the shoe cannot see for itself: the round
+    // module is the only thing that can tell it a round has ended.
+    item: 'B6',
+    name: 'the shoe is never told the round ended, so its cards stay in play',
+    file: 'src/core/table.ts',
+    find: '    wallet.endRound();\n    shoe.endRound();',
+    replace: '    wallet.endRound();',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B6',
+    name: 'the seed is ignored, so every session deals the same shoe',
+    file: 'src/core/table.ts',
+    find: 'createShoe(rules.decks, createRng(options.seed ?? DEFAULT_SEED))',
+    replace: 'createShoe(rules.decks, createRng(DEFAULT_SEED))',
+    detectedBy: UNIT,
+  },
+  {
+    // SPEC 12 prints both hand values at the round result and SPEC 10 keeps
+    // the play surface behind every screen, so sweeping the felt at the
+    // settlement leaves the round result with nothing to show.
+    item: 'B6',
+    name: 'the table is swept at the settlement, so the round result is empty',
+    file: 'src/core/table.ts',
+    find: '    wallet.endRound();\n    shoe.endRound();\n    rounds += 1;',
+    replace:
+      '    wallet.endRound();\n    shoe.endRound();\n    rounds += 1;\n' +
+      '    hands.length = 0;\n    dealer.length = 0;',
+    detectedBy: UNIT,
+  },
+  {
+    // SPEC 4.5 and 4.2: a hand that is already finished must not be offered
+    // an action, which is how a player natural reaches the reveal and how
+    // split Aces end the turn.
+    item: 'B6',
+    name: 'the turn is handed to a hand that has already finished',
+    file: 'src/core/table.ts',
+    find:
+      '  function handOverToPlayer(): Phase {\n' +
+      "    const next = hands.findIndex((hand) => hand.state === 'live');\n" +
+      '    return next === NOT_FOUND ? REVEAL : playerTurnAt(next);\n' +
+      '  }',
+    replace: '  function handOverToPlayer(): Phase {\n    return playerTurnAt(FIRST_HAND);\n  }',
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // B9. Double Down: the three clauses of SPEC 4.5's availability row, the
+  // one card it deals, the wager it doubles and the hand it ends. The
+  // bust entry is the one no payout can see, because SPEC 4.10 reads the
+  // cards and would settle a busted hand correctly either way: what it
+  // breaks is SPEC 4.9's contention gate.
+  // ------------------------------------------------------------------
+  {
+    item: 'B9',
+    name: 'Double stops requiring exactly two cards',
+    file: 'src/core/table.ts',
+    find:
+      '  if (hand.cards.length !== INITIAL_CARDS) {\n' +
+      "    return 'not-two-cards';\n" +
+      '  }\n' +
+      '  if (hand.fromSplit && !context.rules.doubleAfterSplit) {',
+    replace: '  if (hand.fromSplit && !context.rules.doubleAfterSplit) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B9',
+    name: 'Double stops refusing a split Ace hand',
+    file: 'src/core/table.ts',
+    find:
+      'export function doubleRefusal(hand: HandInPlay, context: ActionContext): RejectionReason | null {\n' +
+      '  if (hand.fromSplitAces) {\n' +
+      "    return 'split-aces';\n" +
+      '  }\n',
+    replace:
+      'export function doubleRefusal(hand: HandInPlay, context: ActionContext): RejectionReason | null {\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B9',
+    name: 'Double after split stops reading its house-rule toggle',
+    file: 'src/core/table.ts',
+    find:
+      '  if (hand.fromSplit && !context.rules.doubleAfterSplit) {\n' +
+      "    return 'double-after-split-off';\n" +
+      '  }\n',
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B9',
+    name: 'Double deals no card at all',
+    file: 'src/core/table.ts',
+    find:
+      '        const grown = dealTo(index);\n' +
+      "        resolve(index, isBust(grown.cards) ? 'bust' : 'doubled');",
+    replace: "        resolve(index, 'doubled');",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B9',
+    name: 'Double leaves the hand live instead of ending it',
+    file: 'src/core/table.ts',
+    find:
+      "        resolve(index, isBust(grown.cards) ? 'bust' : 'doubled');\n" +
+      '        phase = handOverToPlayer();',
+    replace: '        void grown;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B9',
+    name: 'the doubled wager is not the one the wallet committed',
+    file: 'src/core/table.ts',
+    find: '        hands[index] = Object.freeze({ ...hand, wager: commit.wager });',
+    replace: '        void commit.wager;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B9',
+    name: 'a doubled hand that busts is recorded as doubled, so the dealer draws for it',
+    file: 'src/core/table.ts',
+    find: "        resolve(index, isBust(grown.cards) ? 'bust' : 'doubled');",
+    replace: "        resolve(index, 'doubled');",
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // B10. Split. The insertion, the wallet index it makes necessary, the
+  // cap, the pair test, the two flags and the split-Ace rule each fail
+  // differently. The settlement entry is the one `BJ-7` wrote down as a
+  // hazard and left to this part: it pays the doubled wager of one hand
+  // onto the undoubled wager of another, and the round total is identical
+  // either way, so only the per-hand credits can see it.
+  // ------------------------------------------------------------------
+  {
+    item: 'B10',
+    name: 'the split hand is appended instead of inserted beside its parent',
+    file: 'src/core/table.ts',
+    find: '    hands.splice(\n      index + 1,\n      0,',
+    replace: '    hands.splice(\n      hands.length,\n      0,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: "the settlement keys on the table's position instead of the wallet's hand",
+    file: 'src/core/table.ts',
+    find: '        credit: wallet.settleHand(hand.walletHand, decided.net),',
+    replace: '        credit: wallet.settleHand(hands.indexOf(hand), decided.net),',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: 'the split cap lets a fourth split through',
+    file: 'src/core/table.ts',
+    find: '  if (context.splits >= MAX_SPLITS) {',
+    replace: '  if (context.splits > MAX_SPLITS) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: 'the split cap is dropped entirely',
+    file: 'src/core/table.ts',
+    find: '  if (context.splits >= MAX_SPLITS) {\n    return \'split-limit\';\n  }\n',
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: "SPEC 4.6's three splits become four",
+    file: 'src/core/table.ts',
+    find: 'const MAX_SPLITS = 3;',
+    replace: 'const MAX_SPLITS = 4;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: 'a split Ace hand may be resplit',
+    file: 'src/core/table.ts',
+    find:
+      'export function splitRefusal(hand: HandInPlay, context: ActionContext): RejectionReason | null {\n' +
+      '  if (hand.fromSplitAces) {\n' +
+      "    return 'split-aces';\n" +
+      '  }\n',
+    replace:
+      'export function splitRefusal(hand: HandInPlay, context: ActionContext): RejectionReason | null {\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: 'the pair test reads a fixed comparison instead of the house rule',
+    file: 'src/core/table.ts',
+    find: '  if (!canSplit(hand.cards, context.rules.splitRule)) {',
+    replace: "  if (!canSplit(hand.cards, 'equalRank')) {",
+    detectedBy: UNIT,
+  },
+  {
+    // The parent as well as the child. SPEC 4.6's "a two-card 21 on a split
+    // hand is 21, not a natural" is about both halves, so a parent that
+    // kept its unsplit origin pays 3:2 on an Ace beside a ten.
+    item: 'B10',
+    name: 'the parent of a split keeps its unsplit origin',
+    file: 'src/core/table.ts',
+    find:
+      '    hands[index] = Object.freeze({\n' +
+      '      ...hand,\n' +
+      '      cards: Object.freeze([first]),\n' +
+      '      fromSplit: true,\n' +
+      '      fromSplitAces: aces,\n' +
+      '    });',
+    replace:
+      '    hands[index] = Object.freeze({\n' +
+      '      ...hand,\n' +
+      '      cards: Object.freeze([first]),\n' +
+      '      fromSplitAces: aces,\n' +
+      '    });',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: 'a split of Aces is not recorded as one',
+    file: 'src/core/table.ts',
+    find: '    const aces = isAce(first.rank);',
+    replace: '    const aces = false;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: 'only one of the two hands a split produced receives a card',
+    file: 'src/core/table.ts',
+    find: '    dealOntoSplitHand(index);\n    dealOntoSplitHand(index + 1);',
+    replace: '    dealOntoSplitHand(index);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: 'split Aces are left live instead of standing automatically',
+    file: 'src/core/table.ts',
+    find: "    resolve(index, grown.fromSplitAces ? 'stood' : stateAfterCard(grown));",
+    replace: '    resolve(index, stateAfterCard(grown));',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: 'the split counter never moves, so the cap can never be reached',
+    file: 'src/core/table.ts',
+    find: '    const aces = isAce(first.rank);\n    splits += 1;',
+    replace: '    const aces = isAce(first.rank);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: 'a hand reaching exactly 21 is left live instead of standing',
+    file: 'src/core/table.ts',
+    find: '    if (handValue(hand.cards).total === TARGET) {\n      return \'stood\';\n    }\n',
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: 'a natural is recorded as an ordinary 21',
+    file: 'src/core/table.ts',
+    find:
+      "    if (isNatural(hand.cards, { fromSplit: hand.fromSplit })) {\n      return 'blackjack';\n    }\n",
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    // The mistake `SplitOrigin` exists to make hard, one level up from the
+    // one `settlement.ts` already carries an entry for: the hand's state
+    // would call a split 21 a blackjack and the payout would follow.
+    item: 'B10',
+    name: 'the hand state ignores the split origin when testing for a natural',
+    file: 'src/core/table.ts',
+    find: '    if (isNatural(hand.cards, { fromSplit: hand.fromSplit })) {',
+    replace: '    if (isNatural(hand.cards, { fromSplit: false })) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: 'Hit stops refusing a split Ace hand',
+    file: 'src/core/table.ts',
+    find:
+      'export function hitRefusal(hand: HandInPlay): RejectionReason | null {\n' +
+      '  if (hand.fromSplitAces) {\n' +
+      "    return 'split-aces';\n" +
+      '  }\n',
+    replace: 'export function hitRefusal(hand: HandInPlay): RejectionReason | null {\n',
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // B11. SPEC 4.7's side wager. The funding arithmetic is the part that
+  // fails silently: an uncaptured `min(chips, stake)` reads a balance that
+  // has already paid, and the shortfall released a step early takes the
+  // balance negative on exactly the branch where the stake is lost. Both
+  // are written out here rather than argued about in a comment.
+  // ------------------------------------------------------------------
+  {
+    item: 'B11',
+    name: 'the funded part is read after the balance has already paid',
+    file: 'src/core/wallet.ts',
+    find:
+      '    const funded = Math.min(chips, stake);\n' +
+      '    chips -= funded;\n' +
+      '    insuranceStake += stake;\n' +
+      '    deferredStake += stake - funded;',
+    replace:
+      '    chips -= Math.min(chips, stake);\n' +
+      '    insuranceStake += stake;\n' +
+      '    deferredStake += stake - Math.min(chips, stake);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B11',
+    name: 'the whole stake leaves the balance even when it is not there',
+    file: 'src/core/wallet.ts',
+    find: '    const funded = Math.min(chips, stake);',
+    replace: '    const funded = stake;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B11',
+    name: 'settling the side wager credits the net alone and swallows the stake',
+    file: 'src/core/wallet.ts',
+    find: '    const credit = insuranceStake + net;',
+    replace: '    const credit = net;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B11',
+    name: 'the round boundary stops releasing the deferred stake, waiving it',
+    file: 'src/core/wallet.ts',
+    find: '    chips -= deferredStake;\n    deferredStake = 0;',
+    replace: '    deferredStake = 0;',
+    detectedBy: UNIT,
+  },
+  {
+    // The design `B11` rejected, and the reason it rejected it.
+    item: 'B11',
+    name: 'the shortfall is released with the side wager, taking the balance negative',
+    file: 'src/core/wallet.ts',
+    find: '    const credit = insuranceStake + net;\n    chips += credit;\n    insuranceStake = 0;',
+    replace:
+      '    const credit = insuranceStake + net;\n' +
+      '    chips += credit - deferredStake;\n' +
+      '    deferredStake = 0;\n' +
+      '    insuranceStake = 0;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B11',
+    name: 'the peek stops settling the side wager it was taken against',
+    file: 'src/core/table.ts',
+    find: '    settleOpenStake(dealerNatural);\n',
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B11',
+    name: 'the ordinary offer stops checking that the balance covers the stake',
+    file: 'src/core/table.ts',
+    find: '        if (!offer.evenMoney && wallet.readout().chips < offer.stake) {',
+    replace: '        if (offer.stake < 0) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B11',
+    name: 'even money is refused when the balance cannot cover it',
+    file: 'src/core/table.ts',
+    find: '        if (!offer.evenMoney && wallet.readout().chips < offer.stake) {',
+    replace: '        if (wallet.readout().chips < offer.stake) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B11',
+    name: 'even money stops reading its house-rule toggle',
+    file: 'src/core/table.ts',
+    find:
+      '      evenMoney: rules.evenMoney && isNatural(hand.cards, { fromSplit: hand.fromSplit }),',
+    replace: '      evenMoney: isNatural(hand.cards, { fromSplit: hand.fromSplit }),',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B11',
+    name: 'even money is offered on any hand rather than on a natural',
+    file: 'src/core/table.ts',
+    find:
+      '      evenMoney: rules.evenMoney && isNatural(hand.cards, { fromSplit: hand.fromSplit }),',
+    replace: '      evenMoney: rules.evenMoney,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B11',
+    name: "the deferred remainder is not recorded on SPEC 12's round result",
+    file: 'src/core/table.ts',
+    find: '      deferred: openStake.deferred,',
+    replace: '      deferred: 0,',
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // B12. Late surrender: the three clauses of SPEC 4.8 and its toggle.
+  // The split clause is the one every other clause hides, because a hand
+  // fresh from a split holds exactly two cards and has taken no action.
+  // ------------------------------------------------------------------
+  {
+    item: 'B12',
+    name: 'Surrender stops refusing a hand created by a split',
+    file: 'src/core/table.ts',
+    find: "  if (hand.fromSplit) {\n    return 'from-split';\n  }\n",
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B12',
+    name: 'Surrender stops reading its house-rule toggle',
+    file: 'src/core/table.ts',
+    find: "  if (!context.rules.surrender) {\n    return 'surrender-off';\n  }\n",
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B12',
+    name: "Surrender stops requiring a hand's initial two cards",
+    file: 'src/core/table.ts',
+    find:
+      '  if (hand.cards.length !== INITIAL_CARDS) {\n' +
+      "    return 'not-two-cards';\n" +
+      '  }\n' +
+      '  return null;\n' +
+      '}',
+    replace: '  return null;\n}',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B12',
+    name: 'the surrendered hand is left live instead of ending immediately',
+    file: 'src/core/table.ts',
+    find: "        resolveActiveHand('surrendered');\n        return accepted('surrender');",
+    replace: "        return accepted('surrender');",
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // C2 again. SPEC 10's eighteenth intent, and the drain comparison `BJ-7`
+  // deferred to this part because only a split can produce two phases with
+  // the same tag and a different payload.
+  // ------------------------------------------------------------------
+  {
+    // DESIGN section 3's trap, in the one form `BJ-7` could not drive: a
+    // double press on Stand across a split stands the hand the player has
+    // not looked at yet.
+    item: 'C2',
+    name: 'the drain compares the phase tag instead of the phase itself',
+    file: 'src/core/table.ts',
+    find: '      if (phase !== before) {',
+    replace: '      if (phase.kind !== before.kind) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'C2',
+    name: 'Change Table stops checking for a pending wager',
+    file: 'src/core/table.ts',
+    find:
+      '        if (wallet.readout().wager !== NO_WAGER) {\n' +
+      "          return refused('changeTable', 'availability', 'pending-wager');\n" +
+      '        }\n',
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'C2',
+    name: 'Change Table clears the pending wager instead of refusing',
+    file: 'src/core/table.ts',
+    find: "          return refused('changeTable', 'availability', 'pending-wager');",
+    replace: '          wallet.clear();',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'C2',
+    name: 'Change Table returns to the betting screen instead of the start screen',
+    file: 'src/core/table.ts',
+    find: "        phase = START;\n        return accepted('changeTable');",
+    replace: "        phase = BETTING;\n        return accepted('changeTable');",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'C2',
+    name: 'Change Table is left live on a screen SPEC 10 does not offer it on',
+    file: 'src/core/table.ts',
+    find: '  dealing: Object.freeze<IntentKind[]>([]),',
+    replace: "  dealing: Object.freeze<IntentKind[]>(['changeTable']),",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'C2',
+    name: "the sweep's own transcription drops the eighteenth intent",
+    file: 'tests/unit/phase-legality.test.ts',
+    find: "  'changeTable',\n  'deal',\n  'takeInsurance',",
+    replace: "  'deal',\n  'takeInsurance',",
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // The house-rule record of SPEC 14. No item claims the file, so each
+  // default is labelled with the item whose criterion names the toggle:
+  // `B9` and `B10` on Double after split, `B10` on the split comparison,
+  // `B11` on even money and `B12` on surrender.
+  // ------------------------------------------------------------------
+  {
+    item: 'B10',
+    name: "SPEC 4.6's Double after split default is switched off",
+    file: 'src/core/rules.ts',
+    find: '  doubleAfterSplit: true,',
+    replace: '  doubleAfterSplit: false,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B12',
+    name: "SPEC 4.8's surrender default is switched off",
+    file: 'src/core/rules.ts',
+    find: '  surrender: true,\n  evenMoney: true,',
+    replace: '  surrender: false,\n  evenMoney: true,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B11',
+    name: "SPEC 4.7's even money default is switched off",
+    file: 'src/core/rules.ts',
+    find: '  surrender: true,\n  evenMoney: true,',
+    replace: '  surrender: true,\n  evenMoney: false,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: "SPEC 4.6's split comparison defaults to equal rank",
+    file: 'src/core/rules.ts',
+    find: "  splitRule: 'equalValue',",
+    replace: "  splitRule: 'equalRank',",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B10',
+    name: 'the house-rule record ignores what a caller asked for',
+    file: 'src/core/rules.ts',
+    find: '  return Object.freeze({ ...DEFAULT_RULES, ...overrides });',
+    replace: '  return Object.freeze({ ...DEFAULT_RULES });',
     detectedBy: UNIT,
   },
 ];

@@ -11,32 +11,36 @@
  * line, and the machine is measured against the transcription.
  *
  * **The sweep is exhaustive by arithmetic, not by intention.** Eleven phases
- * crossed with seventeen intents is 187 cells, of which SPEC 10 makes 17 legal
- * and 170 illegal, and all three numbers are derived below and asserted. Every
+ * crossed with eighteen intents is 198 cells, of which SPEC 10 makes 18 legal
+ * and 180 illegal, and all three numbers are derived below and asserted. Every
  * cell is attempted on **a machine of its own**, built by `createTable` and
  * driven into its phase, so no cell can be judged on a state some earlier cell
  * left behind.
  *
- * **Ten of the eleven phases are reached by transitions the machine performed
- * itself**, and the eleventh differs only in what its wallet did. `createTable`
- * always opens at `start` and exposes no phase setter, which is asserted; the
- * rest is `apply` and `update`. Two things the machine cannot yet discover are
- * supplied, and both are named where they are used:
+ * **The eighteenth intent arrived at `BJ-8`.** SPEC 10's diagram carries the
+ * line `BETTING -- Change Table, only with no wager placed ---> START`, and it
+ * is swept like any other control: legal on one screen, refused on the other
+ * ten, and refused on its own screen by the availability layer while a wager is
+ * pending. That last refusal is not a legality cell and is driven separately
+ * below, because SPEC 10 offers the control there and 4.11's principle is what
+ * turns it down.
  *
- *   1. The dealer's **up card**, through `TableOptions.openingUpCard`, because
- *      SPEC 10's branch at the end of the deal reads it and no card is dealt
- *      until `B6` at `BJ-8`. It is a `Rank`, and every rank selects one of the
- *      three successors SPEC 10 already gives `dealing`.
- *   2. The **net on a settled hand**, through a wallet that credits a losing
- *      one, because SPEC 4.10's ladder is not wired until `BJ-8` and every
- *      round here therefore closes at zero. `bustOut` is the phase SPEC 10
- *      enters when the balance has fallen below the table minimum, so without a
- *      round that can lose it is unreachable. The wallet is the real
- *      `createWallet`, wrapped; the machine under test is untouched.
+ * **Every phase is reached by transitions the machine performed itself, and
+ * nothing is supplied but cards.** `createTable` always opens at `start` and
+ * exposes no phase setter, which is asserted; the rest is `apply` and `update`.
+ * `BJ-7` had to hand the machine an up card and a settled net because neither
+ * existed yet; `BJ-8` deals real cards from a shoe and settles through SPEC
+ * 4.10's ladder, so both seams are gone. What this file supplies instead is a
+ * **written-down shoe**, from `support/stacked-shoe.ts`, wherever a phase
+ * depends on which cards arrived: an Ace up card for `insurance`, a ten for
+ * `peek`, a hand that must still be played for `playerTurn`, and a round the
+ * player loses for `bustOut`. The machine under test is untouched, and rounds
+ * are also driven through the real seeded shoe so that the phase order is never
+ * only ever seen against a fixture.
  *
  * **Three negative controls, each required to disagree on exactly its derived
  * set.** A phase-blind table that accepts everything everywhere has to differ
- * on all 170 illegal cells. A table that folds insurance into the peek, which
+ * on all 180 illegal cells. A table that folds insurance into the peek, which
  * is the misreading SPEC 10 and SPEC 4.4 both warn about, has to differ on
  * exactly 4. A table on which the betting controls never close, which is the
  * defect `wallet.ts` warns about in as many words because nothing in the wallet
@@ -45,10 +49,12 @@
  * what makes the claim falsifiable.
  *
  * **What this file does not claim.** `C1` at `BJ-20` grades a complete round
- * end to end in a browser with real cards, `C6` grades one accepted action per
- * frame under rapid input, `C4` the bust-out flow and `C8` the round result.
- * `B15` at `BJ-15` grades the betting refusals where a player can read them.
- * The phase order driven here is the machine's own, with no cards in it.
+ * end to end in a browser, `C6` grades one accepted action per frame under
+ * rapid input, `C4` the bust-out flow and `C8` the round result. `B15` at
+ * `BJ-15` grades the betting refusals where a player can read them. The five
+ * actions themselves are items `B6` and `B9` to `B12` at `BJ-8` and are graded
+ * in `deal`, `double`, `split`, `insurance` and `surrender`; what is here is the
+ * gate in front of them.
  */
 
 import { readFileSync } from 'node:fs';
@@ -59,7 +65,8 @@ import { describe, expect, it } from 'vitest';
 import type { Rank } from '../../src/core/cards';
 import { RANKS } from '../../src/core/cards';
 import { offersInsurance, peeksOn } from '../../src/core/dealer';
-import type { IntentResult, Table, TableReadout } from '../../src/core/table';
+import type { Shoe } from '../../src/core/shoe';
+import type { IntentResult, Table, TableOptions, TableReadout } from '../../src/core/table';
 import {
   FAST_SPEED_MULTIPLIER,
   INTENT_KINDS,
@@ -84,6 +91,8 @@ import type {
   WalletReadout,
 } from '../../src/core/wallet';
 import { createWallet, tableLimits } from '../../src/core/wallet';
+
+import { scriptedShoe } from './support/stacked-shoe';
 
 // ---------------------------------------------------------------------------
 // SPEC 10, transcribed. Nothing below is imported from the module under test.
@@ -123,6 +132,7 @@ const INTENTS: readonly IntentKind[] = [
   'clear',
   'repeat',
   'max',
+  'changeTable',
   'deal',
   'takeInsurance',
   'declineInsurance',
@@ -140,7 +150,8 @@ const INTENTS: readonly IntentKind[] = [
  * SPEC 10's legality table, one row per phase, quoted from the diagram.
  *
  * - `START ---- pick table, Start`
- * - `BETTING -- chips / Clear / Repeat / Max adjust the wager` and `-- Deal`
+ * - `BETTING -- chips / Clear / Repeat / Max adjust the wager`,
+ *   `-- Change Table, only with no wager placed ---------> START` and `-- Deal`
  * - `DEALING -- timed`, `PEEK -- hole card checked`, `REVEAL -- timed pause`,
  *   `DEALER_TURN -- timed draws`, `SETTLING -- per-hand outcomes`: five paced
  *   transitions, and the diagram gives none of them a player action.
@@ -149,10 +160,18 @@ const INTENTS: readonly IntentKind[] = [
  * - `PLAYER_TURN -- Hit / Stand / Double / Split / Surrender`
  * - `ROUND_RESULT -- Next Hand`
  * - `BUST_OUT -- drop a table, or free reset to 1,000`
+ *
+ * Change Table's "only with no wager placed" is **not** a legality cell. SPEC 10
+ * puts the control on the betting screen and then blocks it with a reason while
+ * a wager is pending, which is that section's own words: "A pending wager blocks
+ * it with a reason and is never silently cleared, which is 4.11's rejection
+ * principle applied to the one control that leaves the screen." So it is legal
+ * at `betting` here and refused there by a different layer, which is driven on
+ * its own below.
  */
 const LEGALITY: Readonly<Record<PhaseKind, readonly IntentKind[]>> = {
   start: ['chooseTable', 'start'],
-  betting: ['tapChip', 'clear', 'repeat', 'max', 'deal'],
+  betting: ['tapChip', 'clear', 'repeat', 'max', 'changeTable', 'deal'],
   dealing: [],
   peek: [],
   insurance: ['takeInsurance', 'declineInsurance'],
@@ -177,13 +196,13 @@ const UNTIMED: readonly PhaseKind[] = [
 /**
  * The size of the sweep, derived.
  *
- * 11 phases x 17 intents = 187 cells. SPEC 10 makes 2 legal at `start`, 5 at
+ * 11 phases x 18 intents = 198 cells. SPEC 10 makes 2 legal at `start`, 6 at
  * `betting`, 2 at `insurance`, 5 at `playerTurn`, 1 at `roundResult` and 2 at
  * `bustOut`, and none at any of the five timed phases:
- * 2 + 5 + 2 + 5 + 1 + 2 = 17 legal, so 187 - 17 = 170 illegal.
+ * 2 + 6 + 2 + 5 + 1 + 2 = 18 legal, so 198 - 18 = 180 illegal.
  */
 const CELLS = PHASES.length * INTENTS.length;
-const LEGAL_CELLS = 17;
+const LEGAL_CELLS = 18;
 const ILLEGAL_CELLS = CELLS - LEGAL_CELLS;
 
 // ---------------------------------------------------------------------------
@@ -231,6 +250,63 @@ const PLAIN_RANKS = RANKS.length - PEEK_RANKS - INSURANCE_RANKS;
 const EPSILON = 0.001;
 
 // ---------------------------------------------------------------------------
+// Written-down shoes, so a phase that depends on the cards is deterministic
+// ---------------------------------------------------------------------------
+
+/**
+ * One round, written in SPEC 4.3's deal order: player, dealer up, player,
+ * dealer down, then whatever the dealer draws.
+ *
+ * The player holds 9 and 7 for a hard 16, which is live, is not a natural and
+ * is not 21, so the machine always reaches `playerTurn` and `driveTo` can stand
+ * on it. The dealer shows 7 with an 8 behind it for 15, which SPEC 4.9 makes it
+ * draw on, so `dealerTurn` is reached and takes exactly one card before the 10
+ * carries it to 25 and it stands out at a bust. Every phase SPEC 10 gives a
+ * plain up card is therefore visited, in order, with no card left to chance.
+ */
+const PLAIN_ROUND: readonly Rank[] = ['9', '7', '7', '8', '10'];
+
+/**
+ * The same round over and over, for a fixture that plays more than one.
+ *
+ * A round of `PLAIN_ROUND` consumes exactly its own length: four cards to the
+ * deal and one to the dealer's single draw. So a repeated script deals an
+ * identical round every time, and a fixture that runs out of cards says so
+ * loudly rather than dealing something the test did not intend.
+ */
+function plainRounds(count: number): Shoe {
+  const script: Rank[] = [];
+  for (let round = 0; round < count; round += 1) {
+    script.push(...PLAIN_ROUND);
+  }
+  return scriptedShoe(script);
+}
+
+/**
+ * A round whose dealer up card is chosen, so SPEC 10's branch is chosen.
+ *
+ * **The player holds a pair of eights, and that is not decoration.** SPEC 10
+ * makes all five player actions legal at `playerTurn`, so the sweep has to
+ * attempt Split there and be accepted; a hand of 9 and 7 would be turned down
+ * by SPEC 4.6's pair test and the cell would be measuring availability instead
+ * of legality. A pair of eights is 16, which is neither 21 nor a natural, so
+ * the hand is still live and every one of the five is available on it.
+ *
+ * The hole card is a 7, which makes no natural behind any up card: SPEC 4.2
+ * needs an Ace beside a ten-value card and a 7 is neither. Four tens follow, so
+ * the dealer always finishes its turn whatever the up card leaves it on, and so
+ * that an accepted Split or Double has the cards it immediately deals.
+ */
+function roundShowing(up: Rank): Shoe {
+  return scriptedShoe(['8', up, '8', '7', '10', '10', '10', '10']);
+}
+
+/** A table dealing `PLAIN_ROUND` as many times as the fixture will play it. */
+function plainTable(rounds: number, options: TableOptions = {}): Table {
+  return createTable({ shoe: plainRounds(rounds), ...options });
+}
+
+// ---------------------------------------------------------------------------
 // Driving the machine
 // ---------------------------------------------------------------------------
 
@@ -276,10 +352,25 @@ function feed(table: Table, seconds: number): void {
   }
 }
 
-/** The phase and, inside the deal, how much of the queue is left. */
+/**
+ * The phase, plus whatever a paced step inside it moves.
+ *
+ * Two of SPEC 10's timed phases take more than one step before they hand on, so
+ * the phase alone cannot say whether a step fired: `dealing` counts its queue
+ * down four times and `dealerTurn` draws while SPEC 4.9 says to. The queue
+ * length answers for the first and the dealer's card count for the second. At
+ * `BJ-7` the dealer could not draw at all and its turn ended on the first tick,
+ * so the second half of this was not needed and would have measured nothing.
+ */
 function signature(table: Table): string {
-  const { phase } = table.readout();
-  return phase.kind === 'dealing' ? `dealing:${String(phase.queue.length)}` : phase.kind;
+  const state = table.readout();
+  if (state.phase.kind === 'dealing') {
+    return `dealing:${String(state.phase.queue.length)}`;
+  }
+  if (state.phase.kind === 'dealerTurn') {
+    return `dealerTurn:${String(state.dealerVisible.length + state.dealerConcealed)}`;
+  }
+  return state.phase.kind;
 }
 
 /**
@@ -366,8 +457,6 @@ function driveRound(table: Table): readonly PhaseKind[] {
 interface WalletHooks {
   /** Counts the decisions the machine actually asked the wallet to make. */
   readonly onCall?: () => void;
-  /** The net `settlement.ts`'s ladder will supply once `BJ-8` wires it. */
-  readonly net?: (wager: number) => number;
   /** A SPEC 4.11 refusal at the commit, to prove the machine surfaces it. */
   readonly dealRefusal?: Refusal;
 }
@@ -375,11 +464,13 @@ interface WalletHooks {
 /**
  * The real wallet with one number substituted, never a stand-in for it.
  *
- * Two of `BJ-7`'s three untestable corners are numbers the wallet is handed
- * rather than behaviour of the machine: the net on a settled hand, which SPEC
- * 4.10's ladder decides and `BJ-8` wires, and the reason a commit was refused,
- * which SPEC 4.11 decides and `wallet.test.ts` already grades over 240 cases.
- * Supplying those here leaves the machine entirely alone, which is the point:
+ * One corner is left: the reason a commit was refused, which SPEC 4.11 decides
+ * and `wallet.test.ts` already grades over 240 cases. Four of SPEC 4.11's six
+ * reasons cannot be built through the controls, so the machine's job of passing
+ * whichever it was handed straight through is only visible with one supplied.
+ * `BJ-7` also substituted the net on a settled hand; `BJ-8` wired SPEC 4.10's
+ * ladder, so that hook is gone and every round below settles for real.
+ * Supplying nothing else leaves the machine entirely alone, which is the point:
  * every assertion in this file is about `table.ts`.
  */
 function wrapWallet(inner: Wallet, hooks: WalletHooks = {}): Wallet {
@@ -419,10 +510,17 @@ function wrapWallet(inner: Wallet, hooks: WalletHooks = {}): Wallet {
       called();
       return inner.commitSplit(hand);
     },
+    takeInsurance: (stake: number): void => {
+      called();
+      inner.takeInsurance(stake);
+    },
+    settleInsurance: (net: number): number => {
+      called();
+      return inner.settleInsurance(net);
+    },
     settleHand: (hand: number, net: number): number => {
       called();
-      const wager = inner.readout().hands[hand]?.wager ?? 0;
-      return inner.settleHand(hand, hooks.net === undefined ? net : hooks.net(wager));
+      return inner.settleHand(hand, net);
     },
     endRound: (): void => {
       called();
@@ -486,15 +584,24 @@ function silverWalletAt90(): Wallet {
  * A machine that has just been shown SPEC 4.12's bust-out, by playing a round
  * and losing it.
  *
- * The only thing the wrapper supplies is the net, which SPEC 4.10's ladder
- * will supply at `BJ-8`. Everything else is the machine: it deals, runs the
- * queue, stands, reveals, settles the hand through the wallet, closes the
- * round, and then takes SPEC 10's `chips < tableMin ? BUST_OUT : BETTING`
- * branch on `nextHand` by itself.
+ * Nothing is supplied but the cards. The player holds 10 and 6 for 16 and
+ * stands on it; the dealer shows 9 with an 8 behind for 17, which SPEC 4.9
+ * stands on immediately, so rung 8 of SPEC 4.10 takes the whole 50 wager. The
+ * rest is the machine: it deals, runs the queue, stands, reveals, settles the
+ * hand through the ladder and the wallet, closes the round, and then takes SPEC
+ * 10's `chips < tableMin ? BUST_OUT : BETTING` branch on `nextHand` by itself.
+ * 90 less the lost 50 is 40, which is under Silver's 50 minimum and over
+ * Bronze's 10.
  */
 function bustedOut(): Table {
-  const wallet = wrapWallet(silverWalletAt90(), { net: (wager) => -wager });
-  const table = driveTo(createTable({ wallet, table: 'silver' }), 'roundResult');
+  const table = driveTo(
+    createTable({
+      wallet: silverWalletAt90(),
+      table: 'silver',
+      shoe: scriptedShoe(['10', '9', '6', '8']),
+    }),
+    'roundResult',
+  );
   if (table.readout().wallet.chips !== 40) {
     throw new Error(`expected 40 chips after the loss, found ${String(table.readout().wallet.chips)}`);
   }
@@ -505,21 +612,33 @@ function bustedOut(): Table {
 /**
  * A machine sitting in one phase, built for that cell and nothing else.
  *
- * Ten of the eleven are `createTable()` driven forward by `apply` and
- * `update`. The eleventh is the same, with a wallet that lost the round.
+ * Every one of the eleven is `createTable` driven forward by `apply` and
+ * `update`. What differs between them is the shoe: three of the phases exist
+ * only for a particular up card, one exists only after a round the player lost,
+ * and the rest are the plain round above.
  */
-function machineAt(kind: PhaseKind): Table {
+function machineAt(kind: PhaseKind, attempting?: IntentKind): Table {
   switch (kind) {
     case 'start':
       return createTable();
     case 'betting': {
       // A completed round, so Repeat has something to repeat, and then a chip
       // on the board, so Deal has something to commit. Without both, two of
-      // the five legal cells here would be refused by the wallet rather than
+      // the six legal cells here would be refused by the wallet rather than
       // accepted, and the sweep would be measuring the wrong thing.
-      const table = driveTo(createTable(), 'roundResult');
+      const table = driveTo(plainTable(4), 'roundResult');
       accept(table.apply({ kind: 'nextHand' }));
       accept(table.apply({ kind: 'tapChip', chip: ROUND_CHIP }));
+      // SPEC 10 gives the betting screen two controls with opposite
+      // preconditions: Deal wants a wager on the board and Change Table wants
+      // none. Both are legal there, so the board is cleared for the one that
+      // needs it, through SPEC 4.11's own Clear control rather than by reaching
+      // into the machine. What a pending wager earns Change Table is a refusal
+      // from a different layer, which is not a legality cell and is driven on
+      // its own below.
+      if (attempting === 'changeTable') {
+        accept(table.apply({ kind: 'clear' }));
+      }
       return table;
     }
     case 'dealing': {
@@ -528,16 +647,16 @@ function machineAt(kind: PhaseKind): Table {
       return table;
     }
     case 'peek':
-      return driveTo(createTable({ openingUpCard: TEN_UP }), 'peek');
+      return driveTo(createTable({ shoe: roundShowing(TEN_UP) }), 'peek');
     case 'insurance':
-      return driveTo(createTable({ openingUpCard: ACE_UP }), 'insurance');
+      return driveTo(createTable({ shoe: roundShowing(ACE_UP) }), 'insurance');
     case 'playerTurn':
-      return driveTo(createTable({ openingUpCard: PLAIN_UP }), 'playerTurn');
+      return driveTo(createTable({ shoe: roundShowing(PLAIN_UP) }), 'playerTurn');
     case 'reveal':
     case 'dealerTurn':
     case 'settling':
     case 'roundResult':
-      return driveTo(createTable(), kind);
+      return driveTo(plainTable(4), kind);
     case 'bustOut':
       return bustedOut();
   }
@@ -551,6 +670,7 @@ const SAMPLES: Readonly<Record<IntentKind, Intent>> = {
   clear: { kind: 'clear' },
   repeat: { kind: 'repeat' },
   max: { kind: 'max' },
+  changeTable: { kind: 'changeTable' },
   deal: { kind: 'deal' },
   takeInsurance: { kind: 'takeInsurance' },
   declineInsurance: { kind: 'declineInsurance' },
@@ -586,7 +706,7 @@ function sweep(): readonly Measured[] {
     const cells: Measured[] = [];
     for (const phase of PHASES) {
       for (const kind of INTENTS) {
-        const table = machineAt(phase);
+        const table = machineAt(phase, kind);
         if (table.readout().phase.kind !== phase) {
           throw new Error(`the machine built for ${phase} is in ${table.readout().phase.kind}`);
         }
@@ -629,7 +749,7 @@ describe('C2: the sweep drives a real machine into every phase', () => {
     expect([...PHASE_KINDS]).toEqual([...PHASES]);
     expect([...INTENT_KINDS]).toEqual([...INTENTS]);
     expect(PHASES.length).toBe(11);
-    expect(INTENTS.length).toBe(17);
+    expect(INTENTS.length).toBe(18);
     expect(new Set(PHASES).size).toBe(PHASES.length);
     expect(new Set(INTENTS).size).toBe(INTENTS.length);
     // Every kind has a sample, or a cell of the sweep would be attempting the
@@ -665,9 +785,9 @@ describe('C2: the sweep drives a real machine into every phase', () => {
       legal += phases.length;
     }
     expect(legal).toBe(LEGAL_CELLS);
-    expect(legal).toBe(17);
-    expect(CELLS).toBe(187);
-    expect(ILLEGAL_CELLS).toBe(170);
+    expect(legal).toBe(18);
+    expect(CELLS).toBe(198);
+    expect(ILLEGAL_CELLS).toBe(180);
   });
 });
 
@@ -676,7 +796,7 @@ describe('C2: the sweep drives a real machine into every phase', () => {
 // ---------------------------------------------------------------------------
 
 describe('C2: accepted only where legal, and a rejection changes nothing', () => {
-  it('accepts exactly the 17 legal cells and refuses the other 170 by phase', () => {
+  it('accepts exactly the 18 legal cells and refuses the other 180 by phase', () => {
     const wrong: string[] = [];
     let accepted = 0;
     let refused = 0;
@@ -711,14 +831,14 @@ describe('C2: accepted only where legal, and a rejection changes nothing', () =>
 
     expect(wrong).toEqual([]);
     expect(accepted).toBe(LEGAL_CELLS);
-    expect(accepted).toBe(17);
+    expect(accepted).toBe(18);
     expect(refused).toBe(ILLEGAL_CELLS);
-    expect(refused).toBe(170);
+    expect(refused).toBe(180);
     expect(accepted + refused).toBe(CELLS);
-    expect(accepted + refused).toBe(187);
+    expect(accepted + refused).toBe(198);
   });
 
-  it('leaves every field of the readout untouched on all 170 rejections', () => {
+  it('leaves every field of the readout untouched on all 180 rejections', () => {
     let compared = 0;
     for (const cell of sweep()) {
       if (LEGALITY[cell.phase].includes(cell.kind)) {
@@ -731,7 +851,7 @@ describe('C2: accepted only where legal, and a rejection changes nothing', () =>
       expect(cell.after, `${cell.phase}/${cell.kind} changed the machine`).toEqual(cell.before);
     }
     expect(compared).toBe(ILLEGAL_CELLS);
-    expect(compared).toBe(170);
+    expect(compared).toBe(180);
   });
 
   /**
@@ -767,17 +887,32 @@ describe('C2: accepted only where legal, and a rejection changes nothing', () =>
     }
   });
 
+  /**
+   * The readout widened at `BJ-8`, and every field it gained is something the
+   * round now has that it did not before.
+   *
+   * `dealer` and `upCard` are gone and `dealerVisible` and `dealerConcealed`
+   * replaced them, which is `B6`'s representation of SPEC 4.3's face-down hole
+   * card: the machine holds the whole dealer hand because `shouldHit`, the peek
+   * and the ladder all need it, and the readout publishes only the cards the
+   * player may see. `rules` is the house-rule record of SPEC 14, `splits` is
+   * SPEC 4.6's count across the round, and `shoe` is where SPEC 11's cards
+   * remaining and penetration come from now that cards are dealt at all.
+   */
   it('publishes a readout wide enough for that comparison to mean anything', () => {
     const state = machineAt('dealing').readout();
     expect(Object.keys(state)).toEqual([
       'phase',
       'table',
+      'rules',
       'hands',
-      'dealer',
-      'upCard',
+      'dealerVisible',
+      'dealerConcealed',
       'elapsed',
       'queued',
       'rounds',
+      'splits',
+      'shoe',
       'wallet',
     ]);
     expect(Object.isFrozen(state)).toBe(true);
@@ -788,12 +923,12 @@ describe('C2: accepted only where legal, and a rejection changes nothing', () =>
    * The control for the comparison above, and the reason it is not idle.
    *
    * A readout that handed back the machine's own arrays would compare equal to
-   * itself after any mutation whatsoever, and all 170 assertions would pass on
+   * itself after any mutation whatsoever, and all 180 assertions would pass on
    * a machine that mutated on every rejection. So a snapshot is taken, the
    * machine is driven forward, and the snapshot has to still describe the
    * moment it was taken.
    */
-  it('hands back a snapshot and not a view, or the 170 comparisons are idle', () => {
+  it('hands back a snapshot and not a view, or the 180 comparisons are idle', () => {
     const table = machineAt('dealing');
     const snapshot = table.readout();
     expect(snapshot.phase.kind).toBe('dealing');
@@ -809,12 +944,17 @@ describe('C2: accepted only where legal, and a rejection changes nothing', () =>
     expect(table.readout().queued).toEqual([]);
 
     driveTo(table, 'roundResult');
-    expect(table.readout().hands).toEqual([]);
     expect(table.readout().rounds).toBe(2);
+    // The hand is still on the felt at SPEC 10's round result and has stopped
+    // being live, so the two readouts differ on the state as well as the count.
+    expect(table.readout().hands[0]?.state).not.toBe('live');
+    accept(table.apply({ kind: 'nextHand' }));
+    expect(table.readout().hands).toEqual([]);
 
     // Every one of these is read off the object taken before the round ran.
     expect(snapshot.phase.kind).toBe('dealing');
     expect(snapshot.hands.length).toBe(1);
+    expect(snapshot.hands[0]?.state).toBe('live');
     expect(snapshot.hands[0]?.wager).toBe(ROUND_WAGER);
     expect(snapshot.rounds).toBe(1);
     expect(snapshot.elapsed).toBe(0);
@@ -833,10 +973,10 @@ describe('C2: the legality table disagrees with three misreadings of SPEC 10', (
     return sweep().filter((cell) => cell.result.ok !== table[cell.phase].includes(cell.kind));
   }
 
-  it('agrees with SPEC 10 on every one of the 187 cells', () => {
+  it('agrees with SPEC 10 on every one of the 198 cells', () => {
     expect(disagreements(LEGALITY)).toEqual([]);
     expect(sweep().length).toBe(CELLS);
-    expect(sweep().length).toBe(187);
+    expect(sweep().length).toBe(198);
   });
 
   /**
@@ -845,7 +985,7 @@ describe('C2: the legality table disagrees with three misreadings of SPEC 10', (
    * live on every screen, so a chip tap lands mid-deal and Next Hand fires
    * during the dealer's turn.
    */
-  it('disagrees with a phase-blind table on exactly the 170 illegal cells', () => {
+  it('disagrees with a phase-blind table on exactly the 180 illegal cells', () => {
     const blind: Readonly<Record<PhaseKind, readonly IntentKind[]>> = {
       start: INTENTS,
       betting: INTENTS,
@@ -861,7 +1001,7 @@ describe('C2: the legality table disagrees with three misreadings of SPEC 10', (
     };
     const differ = disagreements(blind);
     expect(differ.length).toBe(ILLEGAL_CELLS);
-    expect(differ.length).toBe(170);
+    expect(differ.length).toBe(180);
     for (const cell of differ) {
       expect(cell.result.ok).toBe(false);
     }
@@ -1151,8 +1291,10 @@ describe('C2: SPEC 10 enters the bust-out only when SPEC 4.12 says the player is
   });
 
   it('takes the betting arm when the balance still covers the minimum', () => {
-    const table = driveTo(createTable(), 'roundResult');
-    expect(table.readout().wallet.chips).toBe(SPEC_STARTING_CHIPS);
+    // The plain round pays: the dealer's 15 draws a ten and busts, so SPEC
+    // 4.10's rung 6 credits the 50 wager back with 50 on top.
+    const table = driveTo(plainTable(2), 'roundResult');
+    expect(table.readout().wallet.chips).toBe(SPEC_STARTING_CHIPS + ROUND_WAGER);
     accept(table.apply({ kind: 'nextHand' }));
     expect(table.readout().phase.kind).toBe('betting');
   });
@@ -1267,18 +1409,30 @@ describe('C2: the deal branches on the up card, offering before it peeks', () =>
     ];
 
     let rounds = 0;
-    for (const rank of RANKS) {
-      const table = createTable({ openingUpCard: rank });
+    for (const upCard of RANKS) {
+      const table = createTable({ shoe: roundShowing(upCard) });
       accept(table.apply({ kind: 'start' }));
       accept(table.apply({ kind: 'tapChip', chip: ROUND_CHIP }));
       const seen = driveRound(table);
-      const expected = rank === 'A' ? ace : branchAfterDealing(rank) === 'peek' ? ten : plain;
-      expect(seen, `up card ${rank}`).toEqual([...expected]);
-      // The wager left the balance at the deal and came back at the settlement,
-      // because no net is wired yet. SPEC 4.11's identity holds either way.
+      const expected = upCard === 'A' ? ace : branchAfterDealing(upCard) === 'peek' ? ten : plain;
+      expect(seen, `up card ${upCard}`).toEqual([...expected]);
+
+      // SPEC 4.11: the wager left the balance at the deal and settlement
+      // credits back `wager + net`. The credit is read off SPEC 12's round
+      // result rather than recomputed here, so the assertion is that the
+      // balance and the printed result agree, and that nothing is left
+      // outstanding when the round has closed.
       const state = table.readout();
-      expect(state.wallet.chips).toBe(SPEC_STARTING_CHIPS);
-      expect(state.wallet.conserved).toBe(SPEC_STARTING_CHIPS);
+      expect(state.phase.kind).toBe('roundResult');
+      const credit =
+        state.phase.kind === 'roundResult' ? (state.phase.result.hands[0]?.credit ?? -1) : -1;
+      expect(state.wallet.chips, `up card ${upCard}`).toBe(
+        SPEC_STARTING_CHIPS - ROUND_WAGER + credit,
+      );
+      expect(state.wallet.conserved).toBe(state.wallet.chips);
+      expect(state.wallet.committed).toBe(0);
+      expect(state.wallet.insuranceStake).toBe(0);
+      expect(state.wallet.deferredStake).toBe(0);
       expect(state.rounds).toBe(1);
       rounds += 1;
     }
@@ -1323,7 +1477,7 @@ describe('C2: the deal branches on the up card, offering before it peeks', () =>
     let checked = 0;
     for (const { chip, table: seat } of wagers) {
       const table = createTable({
-        openingUpCard: ACE_UP,
+        shoe: roundShowing(ACE_UP),
         table: seat,
         wallet: createWallet({ bestBalance: SPEC_SILVER.unlocksAt }),
       });
@@ -1409,6 +1563,53 @@ describe('C2: one accepted intent per frame, and the queue behind it', () => {
     const second = table.drain();
     expect(second.applied).toBeNull();
     expect(table.readout().wallet.wager).toBe(0);
+  });
+
+  /**
+   * The case `BJ-7` could not drive and handed to `BJ-8`, in as many words:
+   * "The distinguishing case cannot be driven yet: no `BJ-7` transition
+   * produces the same tag with a different payload, because that needs two
+   * hands."
+   *
+   * SPEC 4.6 splits a pair into two hands played left to right, so Stand moves
+   * `playerTurn(0)` to `playerTurn(1)`: **the same tag, a different screen**. A
+   * drain that compared the tag would keep the queue, and the second Stand of a
+   * double press would stand the hand the player has not looked at yet. That is
+   * exactly the trap DESIGN section 3 names, and it is only reachable here.
+   */
+  it('discards behind a phase change that kept its tag, which needs two hands', () => {
+    const table = driveTo(createTable({ shoe: roundShowing(PLAIN_UP) }), 'playerTurn');
+    accept(table.apply({ kind: 'split' }));
+    const before = table.readout();
+    expect(before.phase.kind).toBe('playerTurn');
+    expect(before.hands.length).toBe(2);
+    if (before.phase.kind === 'playerTurn') {
+      expect(before.phase.activeHand).toBe(0);
+    }
+
+    // A double press on Stand, in one frame.
+    table.queue({ kind: 'stand' });
+    table.queue({ kind: 'stand' });
+    const report = table.drain();
+
+    expect(report.applied?.kind).toBe('stand');
+    expect(report.rejected).toEqual([]);
+    expect(report.discarded).toBe(1);
+    expect(report.remaining).toBe(0);
+
+    const after = table.readout();
+    // The tag did not change, which is the whole point: only the payload did.
+    expect(after.phase.kind).toBe('playerTurn');
+    if (after.phase.kind === 'playerTurn') {
+      expect(after.phase.activeHand).toBe(1);
+    }
+    // The second hand is untouched. A tag comparison would have stood it.
+    expect(after.hands[0]?.state).toBe('stood');
+    expect(after.hands[1]?.state).toBe('live');
+
+    // And it is gone rather than deferred: another frame finds nothing.
+    expect(table.drain().applied).toBeNull();
+    expect(table.readout().hands[1]?.state).toBe('live');
   });
 
   it('keeps the queue when the accepted intent stayed on the same screen', () => {
@@ -1600,10 +1801,15 @@ describe('C2: every timer is a float accumulator, clamped and carried', () => {
     expect(table.readout().elapsed).toBeCloseTo(0.016, 10);
   });
 
-  it('changes nothing at all on a resume that arrives with nothing owed', () => {
+  it('drops the accumulator on a resume and moves no other state with it', () => {
     const table = machineAt('settling');
-    // The accumulator this machine carries into `settling` is dropped, and
-    // nothing else moves: no step, no phase, no hand, no chip.
+    // Part of SPEC 5's settle pause, put on the accumulator deliberately. At
+    // an empty accumulator "drop the delta" and "drop the accumulator" answer
+    // identically and the weaker reading passes, and what this machine happens
+    // to carry into `settling` is exactly zero: the dealer's paced draws land
+    // on a whole number of intervals, which is arithmetic rather than design
+    // and is not a thing to hang an assertion on.
+    table.update(0.2);
     const owed = table.readout().elapsed;
     expect(owed).toBeGreaterThan(0);
     table.update(QB_RESUME_GAP + 1);
@@ -1695,6 +1901,86 @@ describe('C2: every timer is a float accumulator, clamped and carried', () => {
 });
 
 // ---------------------------------------------------------------------------
+// SPEC 10 and SPEC 6: the eighteenth intent, and the one control that leaves
+// ---------------------------------------------------------------------------
+
+/**
+ * SPEC 10: "BETTING -- Change Table, only with no wager placed ---> START", and
+ * SPEC 6: "Change Table on the betting screen, with no wager placed, returns to
+ * the start screen with the balance intact."
+ *
+ * Three clauses and three tests. It leaves for the start screen, it leaves the
+ * balance alone, and a pending wager blocks it **with a reason** rather than
+ * being silently cleared, which SPEC 10 calls 4.11's rejection principle
+ * applied to the one control that leaves the screen.
+ */
+describe('C2: Change Table leaves the betting screen only with no wager placed', () => {
+  it('returns to the start screen with the balance intact', () => {
+    const table = driveTo(createTable(), 'betting');
+    const before = table.readout();
+    expect(before.wallet.wager).toBe(0);
+
+    const result = accept(table.apply({ kind: 'changeTable' }));
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.phase).toBe('start');
+    }
+    const after = table.readout();
+    expect(after.phase.kind).toBe('start');
+    // "with the balance intact": every one of the wallet's numbers, not just
+    // the chips, so a wager quietly banked somewhere would show up.
+    expect(after.wallet).toEqual(before.wallet);
+    expect(after.wallet.chips).toBe(SPEC_STARTING_CHIPS);
+    expect(after.table).toBe(before.table);
+  });
+
+  it('refuses while a wager is pending, and never clears it', () => {
+    const table = driveTo(createTable(), 'betting');
+    accept(table.apply({ kind: 'tapChip', chip: ROUND_CHIP }));
+    const before = table.readout();
+    expect(before.wallet.wager).toBe(ROUND_WAGER);
+
+    const result = table.apply({ kind: 'changeTable' });
+    expect(result.ok).toBe(false);
+    if (!result.ok) {
+      // The reason is the machine's own: `wallet.ts` has no phases and no
+      // opinion on leaving one, so this cannot be a `Refusal` from there.
+      expect(result.layer).toBe('availability');
+      expect(result.reason).toBe('pending-wager');
+      expect(result.kind).toBe('changeTable');
+    }
+    // Not silently cleared, and nothing else moved either.
+    expect(table.readout()).toEqual(before);
+    expect(table.readout().wallet.wager).toBe(ROUND_WAGER);
+    expect(table.readout().phase.kind).toBe('betting');
+
+    // Clearing the wager through SPEC 4.11's own control opens it again.
+    accept(table.apply({ kind: 'clear' }));
+    accept(table.apply({ kind: 'changeTable' }));
+    expect(table.readout().phase.kind).toBe('start');
+  });
+
+  it('hands back to SPEC 6 pick-and-Start, which reruns unchanged', () => {
+    const table = createTable({
+      wallet: createWallet({ bestBalance: SPEC_SILVER.unlocksAt }),
+    });
+    accept(table.apply({ kind: 'start' }));
+    accept(table.apply({ kind: 'changeTable' }));
+    expect(table.readout().phase.kind).toBe('start');
+
+    // SPEC 10: "the ordinary pick-and-Start flow reruns". The entry rule is
+    // still `canEnter`'s, so a table the mark has not unlocked is still shut.
+    const locked = table.apply({ kind: 'chooseTable', table: 'gold' });
+    expect(locked.ok).toBe(false);
+    accept(table.apply({ kind: 'chooseTable', table: 'silver' }));
+    accept(table.apply({ kind: 'start' }));
+    expect(table.readout().phase.kind).toBe('betting');
+    expect(table.readout().table).toBe('silver');
+    expect(table.readout().wallet.chips).toBe(SPEC_STARTING_CHIPS);
+  });
+});
+
+// ---------------------------------------------------------------------------
 // No player action may reach a wallet throw, in any phase
 // ---------------------------------------------------------------------------
 
@@ -1703,20 +1989,34 @@ describe('C2: no action in any phase can reach a wallet throw', () => {
    * `wallet.ts`'s handoff, made a test.
    *
    * A second initial commit, settling a hand twice, a round closed with a hand
-   * still committed, a reset mid-round and a hand index nothing carries are
-   * all `RangeError`s there, and its header says the phase machine is what has
-   * to make them unreachable. So every intent is offered in a fixed rotation,
-   * frame after frame, and the machine has to answer every one of them with a
-   * value and hold SPEC 4.11's identity throughout.
+   * still committed, a round closed with an insurance stake still open, a reset
+   * mid-round and a hand index nothing carries are all `RangeError`s there, and
+   * its header says the phase machine is what has to make them unreachable. So
+   * every intent is offered in a fixed rotation, frame after frame, and the
+   * machine has to answer every one of them with a value and hold SPEC 4.11's
+   * identity throughout.
+   *
+   * **`BJ-8` widened this in three ways it had to.** The rotation now includes
+   * the eighteenth intent; it runs on the **real seeded shoe** rather than a
+   * script, so the rounds carry real cards and hit, double, split, surrender
+   * and both insurance answers all land on hands the deal actually produced;
+   * and because SPEC 4.10's ladder is wired the identity moves, so the
+   * assertion is that it is the four-term sum at every frame and that the
+   * balance never goes negative, rather than that it never moves. The three
+   * `bustOut` intents are in the rotation too, so a bankroll that runs down
+   * takes SPEC 4.12's reset and the rotation carries on.
    */
   it('survives every intent offered in rotation for 400 frames', () => {
-    const table = createTable({ openingUpCard: ACE_UP });
+    const table = createTable({ seed: 20260823 });
     let frames = 0;
+    let moved = 0;
+    let previous = table.readout().wallet.conserved;
     for (let frame = 0; frame < 400; frame += 1) {
       table.queue(SAMPLES[INTENTS[frame % INTENTS.length] ?? 'clear']);
       table.drain();
       table.update(QB_CLAMP);
       const state = table.readout();
+      // `B11`'s last clause, at every frame rather than at rest.
       expect(state.wallet.chips).toBeGreaterThanOrEqual(0);
       expect(state.wallet.conserved).toBe(
         state.wallet.chips +
@@ -1724,33 +2024,50 @@ describe('C2: no action in any phase can reach a wallet throw', () => {
           state.wallet.insuranceStake -
           state.wallet.deferredStake,
       );
-      // No net is wired, so no settled outcome can move the identity yet.
-      expect(state.wallet.conserved).toBe(SPEC_STARTING_CHIPS);
+      if (state.wallet.conserved !== previous) {
+        moved += 1;
+        previous = state.wallet.conserved;
+      }
       if (UNTIMED.includes(state.phase.kind)) {
         expect(state.elapsed).toBe(0);
       }
       frames += 1;
     }
     expect(frames).toBe(400);
-    // The rotation really played, rather than stalling on a screen.
+    // The rotation really played, rather than stalling on a screen, and real
+    // outcomes really settled rather than every round pushing.
     expect(table.readout().rounds).toBeGreaterThan(0);
+    expect(moved).toBeGreaterThan(0);
   });
 
   it('plays four rounds back to back through the same round boundary', () => {
-    const table = driveTo(createTable(), 'betting');
+    // The plain round pays 50 a time: the dealer's 15 draws a ten and busts,
+    // which is SPEC 4.10's rung 6. Four of them is 200 on top of the bankroll,
+    // and the point of the assertion is the boundary rather than the sum: the
+    // hands are cleared on both sides of it and the next deal is not a wallet
+    // throw.
+    const table = driveTo(plainTable(5), 'betting');
     let played = 0;
     for (let round = 0; round < 4; round += 1) {
       accept(table.apply({ kind: 'tapChip', chip: ROUND_CHIP }));
       driveRound(table);
       expect(table.readout().phase.kind).toBe('roundResult');
-      expect(table.readout().hands).toEqual([]);
+      // The money closed at the settlement and the cards are still on the felt,
+      // because SPEC 12's round result prints both hand values and SPEC 10
+      // keeps the play surface behind every screen. `Next Hand` sweeps it.
       expect(table.readout().wallet.hands).toEqual([]);
+      expect(table.readout().hands.length).toBe(1);
+      expect(table.readout().dealerVisible.length).toBeGreaterThan(1);
       accept(table.apply({ kind: 'nextHand' }));
+      expect(table.readout().hands).toEqual([]);
+      expect(table.readout().dealerVisible).toEqual([]);
+      expect(table.readout().splits).toBe(0);
       played += 1;
     }
     expect(played).toBe(4);
     expect(table.readout().rounds).toBe(4);
-    expect(table.readout().wallet.chips).toBe(SPEC_STARTING_CHIPS);
+    expect(table.readout().wallet.chips).toBe(SPEC_STARTING_CHIPS + 4 * ROUND_WAGER);
+    expect(table.readout().wallet.conserved).toBe(table.readout().wallet.chips);
     // SPEC 4.11: the controls empty at the deal, which is what leaves Repeat
     // something to do on the round after.
     expect(table.readout().wallet.previousWager).toBe(ROUND_WAGER);

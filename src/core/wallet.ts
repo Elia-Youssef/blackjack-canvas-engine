@@ -19,14 +19,28 @@
  *
  *     chips + committed + insuranceStake - deferredStake
  *
- * and it moves only by a settled outcome. Two of the four are pinned at zero in
- * this part and are still in the readout, deliberately. The insurance stake and
- * the unfunded part of an even-money stake are item `B11` at `BJ-8`, whose
- * criterion names both in as many words; `BJ-8` adds the two mutators and the
- * expression below does not change shape when it does. Writing the three-term
- * form today and widening it later is the exact defect the soak `H6` at `BJ-12`
- * carries as its negative control: it passes every round until the first insured
- * one. `B15` at `BJ-15` grades the identity at the controls.
+ * and it moves only by a settled outcome. `BJ-6` pinned two of the four at zero
+ * and put them in the readout anyway; `BJ-8` moved them, through `takeInsurance`
+ * and `settleInsurance` below, and the expression did not change shape when it
+ * did. Writing the three-term form and widening it later is the exact defect the
+ * soak `H6` at `BJ-12` carries as its negative control: it passes every round
+ * until the first insured one. `B15` at `BJ-15` grades the identity at the
+ * controls and `B11` at `BJ-8` grades the two terms themselves.
+ *
+ * **The balance never goes negative, at any single application and not merely at
+ * rest**, which is `B11`'s last clause. Three things make that true rather than
+ * lucky, and they are all in this file. `takeInsurance` captures
+ * `min(chips, stake)` **before** the debit, so it can never take out more than
+ * is there. `settleInsurance` credits `stake + net`, which is `3 x stake` or 0
+ * and never negative. And the unfunded remainder is subtracted at `endRound`,
+ * which refuses to run while any hand is still committed, so every credit the
+ * round is owed has landed before the shortfall is taken back. Subtracting it at
+ * the insurance settlement instead is the defect: on the branch where the side
+ * wager is lost the credit is 0, and a balance that had been emptied to fund the
+ * stake would go negative between two calls. SPEC 4.7 states the margin the
+ * ordering rests on: on a dealer natural the insurance credit is `3 x stake`,
+ * and otherwise the natural pays `wager x 3 / 2`, both of which exceed any
+ * possible shortfall.
  *
  * **A rejected bet changes nothing.** SPEC 4.11: a chip tap that would carry the
  * wager above `min(tableMax, chips)` is rejected with a reason, never silently
@@ -519,13 +533,13 @@ export interface WalletReadout {
   /** Every unsettled hand's wager, summed. On the table, not in the balance. */
   readonly committed: number;
   /**
-   * SPEC 4.7's insurance stake, once one has been taken. Zero throughout this
-   * part: taking one is item `B11` at `BJ-8`.
+   * SPEC 4.7's insurance stake, while one is open. Zero before the offer is
+   * taken and zero again once it has settled. Item `B11`.
    */
   readonly insuranceStake: number;
   /**
-   * SPEC 4.7's unfunded part of an even-money stake. Zero throughout this part,
-   * and zero in every case except that one. Item `B11` at `BJ-8`.
+   * SPEC 4.7's unfunded part of an even-money stake, while one is outstanding.
+   * Zero in every other case, and released at the round boundary. Item `B11`.
    */
   readonly deferredStake: number;
   /** `chips + committed + insuranceStake - deferredStake`. SPEC 4.11. */
@@ -558,11 +572,24 @@ export interface Wallet {
   /** SPEC 4.6's Split. The new hand's equal wager leaves the balance too. */
   commitSplit(hand: number): CommitResult;
   /**
+   * SPEC 4.7's insurance stake. Only `min(chips, stake)` leaves the balance and
+   * the shortfall becomes `deferredStake`. The identity does not move.
+   */
+  takeInsurance(stake: number): void;
+  /**
+   * SPEC 4.7's side wager settled. Credits `stake + net`, so the identity moves
+   * by exactly `net` and the balance can only rise. Returns the credit.
+   */
+  settleInsurance(net: number): number;
+  /**
    * Settlement. SPEC 4.11 credits back `wager + net`, so the hand stops being
    * committed and the identity moves by exactly `net`. Returns the credit.
    */
   settleHand(hand: number, net: number): number;
-  /** The round boundary. Every hand must have settled. */
+  /**
+   * The round boundary. Every hand must have settled and any side wager must
+   * have resolved. SPEC 4.7's unfunded remainder is released here.
+   */
   endRound(): void;
   /** SPEC 4.12's free reset: 1,000 chips, and the high-water mark survives. */
   reset(): void;
@@ -605,11 +632,12 @@ export function createWallet(options: WalletOptions = {}): Wallet {
   const hands: { wager: number; settled: boolean }[] = [];
 
   /**
-   * SPEC 4.7 and 4.11's third and fourth terms. Held here rather than left out
-   * so that `BJ-8` moves two numbers instead of reshaping the identity.
+   * SPEC 4.7 and 4.11's third and fourth terms. Held here from `BJ-6` rather
+   * than left out, so that `BJ-8` moved two numbers instead of reshaping the
+   * identity, which is exactly what it did.
    */
-  const insuranceStake = 0;
-  const deferredStake = 0;
+  let insuranceStake = 0;
+  let deferredStake = 0;
 
   /** The high-water mark of SPEC 6. It rises and never falls. */
   function recordBest(): void {
@@ -758,6 +786,75 @@ export function createWallet(options: WalletOptions = {}): Wallet {
   }
 
   /**
+   * SPEC 4.7's insurance stake, taken out of the balance. Item `B11`.
+   *
+   * **The funded part is captured before the debit, and that ordering is the
+   * whole of the arithmetic.** SPEC 4.7: "only `min(chips, stake)` leaves the
+   * balance, and `deferredStake = stake - min(chips, stake)`". Reading `chips`
+   * again after subtracting from it would compute the shortfall against a
+   * balance that has already paid, which on a fully deferred stake reads zero
+   * and quietly credits the player the whole stake for nothing.
+   *
+   * **The identity does not move here**, which is SPEC 4.7 in as many words:
+   * "which the offer leaves unchanged and which moves only on a settled
+   * outcome". `chips` falls by `funded`, `insuranceStake` rises by `stake` and
+   * `deferredStake` rises by `stake - funded`, and the four-term sum is
+   * unchanged by construction.
+   *
+   * Whether an offer may be taken at all is not this call's. SPEC 4.7 offers
+   * ordinary insurance only when the balance covers the stake and offers even
+   * money regardless of it, which is a rule about which offer is on the table
+   * rather than about chips, so the round module holds it and item `B11` grades
+   * it there. What is refused here is a second stake in one round, because SPEC
+   * 4.7 makes exactly one offer and a second would be a caller defect.
+   */
+  function takeInsurance(stake: number): void {
+    if (insuranceStake !== 0) {
+      throw new RangeError('SPEC 4.7 offers one insurance stake per round, and one is already open');
+    }
+    if (!Number.isInteger(stake) || stake <= 0) {
+      throw new RangeError(
+        `SPEC 4.7 stakes a whole number of chips above zero; ${String(stake)} is not one`,
+      );
+    }
+    const funded = Math.min(chips, stake);
+    chips -= funded;
+    insuranceStake += stake;
+    deferredStake += stake - funded;
+  }
+
+  /**
+   * SPEC 4.7's side wager settled, at the moment the peek decides it.
+   *
+   * The credit is `stake + net`, exactly parallel to `settleHand` below: SPEC
+   * 4.7 says the balance is credited `3 x stake` on a dealer natural, which is
+   * the stake returned plus the `+2 x stake` net, and 0 when the stake is lost,
+   * which is the stake returned plus its own `-stake`. So the identity moves by
+   * exactly `net` and the balance only ever rises.
+   *
+   * **The unfunded remainder is not touched here, and that is what keeps the
+   * balance non-negative.** On the losing branch the credit is 0, so a balance
+   * emptied to fund the stake is sitting at zero; subtracting the shortfall now
+   * would take it below. `endRound` releases it instead, after every hand has
+   * been credited, and SPEC 4.7 states the margin that makes that safe.
+   *
+   * The net comes in as a number for the reason `settleHand`'s does:
+   * `settlement.ts`'s `settleInsurance(stake, dealerNatural)` is the only thing
+   * that produces one, and this module has no opinion on which branch it came
+   * from.
+   */
+  function settleInsurance(net: number): number {
+    if (insuranceStake === 0) {
+      throw new RangeError('no insurance stake is open; SPEC 4.7 settles the one that was taken');
+    }
+    const credit = insuranceStake + net;
+    chips += credit;
+    insuranceStake = 0;
+    recordBest();
+    return credit;
+  }
+
+  /**
    * SPEC 4.11: settlement credits back `wager + net`.
    *
    * The wager is credited because it already left at the deal. A losing hand
@@ -788,7 +885,21 @@ export function createWallet(options: WalletOptions = {}): Wallet {
    * It refuses to close a round with money still on the table, for the reason
    * `shoe.ts` puts the reshuffle at `endRound` rather than mid-round: the wallet
    * cannot see a hand being abandoned, so the discipline has to be enforced
-   * where it is visible. The round module at `BJ-8` owns that ordering.
+   * where it is visible. The round module at `BJ-8` owns that ordering, and an
+   * open insurance stake is refused on the same grounds: SPEC 4.7 resolves the
+   * side wager at the peek, so one still open at the boundary is a round that
+   * skipped it.
+   *
+   * **SPEC 4.7's unfunded remainder is released here, and here is the only place
+   * it can be.** "Settlement credits the insurance result and subtracts
+   * `deferredStake`." Subtracting it anywhere earlier can take the balance
+   * negative, because the branch that loses the side wager credits nothing; by
+   * the time this function runs, the checks above have already proved that every
+   * credit the round is owed has landed. The release moves no money in the
+   * conserved sense: `chips` falls by the remainder and `deferredStake` falls to
+   * zero, and the four-term identity subtracts that term, so the sum is
+   * unchanged. It is the accounting catching up with a stake that was never
+   * fully paid, not an outcome.
    */
   function endRound(): void {
     const unsettled = hands.filter((hand) => !hand.settled).length;
@@ -797,6 +908,13 @@ export function createWallet(options: WalletOptions = {}): Wallet {
         `${String(unsettled)} hand(s) are still committed; SPEC 4.10 settles every hand`,
       );
     }
+    if (insuranceStake !== 0) {
+      throw new RangeError(
+        'an insurance stake is still open; SPEC 4.7 settles it immediately after the peek',
+      );
+    }
+    chips -= deferredStake;
+    deferredStake = 0;
     hands.length = 0;
   }
 
@@ -839,6 +957,8 @@ export function createWallet(options: WalletOptions = {}): Wallet {
     commitInitial,
     commitDouble,
     commitSplit,
+    takeInsurance,
+    settleInsurance,
     settleHand,
     endRound,
     reset,

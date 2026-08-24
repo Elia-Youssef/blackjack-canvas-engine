@@ -14,22 +14,25 @@
  * added here would be a second authority over the same question, and the two
  * would agree until the day one moved.
  *
- * **`Outcome` is re-exported rather than re-declared.** `settlement.ts` at
- * `BJ-5` declares it, since settlement is the only thing that produces one, and
- * that file's header named this module as the one that would absorb it. A
- * second declaration is exactly what it warned against, and moving the first
- * would edit a merged part and leave the derivation in
+ * **`Outcome` and `Rung` are re-exported rather than re-declared.**
+ * `settlement.ts` at `BJ-5` declares them, since settlement is the only thing
+ * that produces one, and that file's header named this module as the one that
+ * would absorb it. A second declaration is exactly what it warned against, and
+ * moving the first would edit a merged part and leave the derivation in
  * `tests/unit/payout-integrality.test.ts` describing a module the union had
- * left. So the union has one declaration and this file is where the rest of the
- * game imports it from.
+ * left. So each union has one declaration and this file is where the rest of the
+ * game imports it from. `Rung` joins `Outcome` at `BJ-8`, because SPEC 12's
+ * round result carries the reason a hand settled the way it did and the deciding
+ * rung is that reason.
  *
  * No DOM, no canvas, no renderer import, no `Math.random()`, no clock.
  */
 
 import type { Card } from './cards';
+import type { Outcome, Rung } from './settlement';
 import type { ChipDenomination, TableId } from './wallet';
 
-export type { Outcome } from './settlement';
+export type { Outcome, Rung };
 
 // ---------------------------------------------------------------------------
 // SPEC 10: the eleven phases
@@ -88,19 +91,65 @@ export interface InsuranceOffer {
  * One hand as SPEC 12's round result prints it.
  *
  * `credit` is what SPEC 4.11's settlement handed back, `wager + net`, so a lost
- * hand credits zero and a push credits the wager. The outcome and its reason,
- * both hand values, the insurance result and the coach verdict are the other
- * six things SPEC 12 asks for, and they are item `C8` at `BJ-15`; the net that
- * produces the credit comes from `settlement.ts`'s ladder, wired at `BJ-8`.
+ * hand credits zero and a push credits the wager. `outcome` and `rung` are SPEC
+ * 12's "the outcome and its reason": `settlement.ts` carries the deciding rung
+ * for exactly this, since rungs 2 and 9 are both a push of 0 and rungs 4, 5 and
+ * 8 are all a dealer win of `-wager`, so the outcome alone cannot say why.
+ *
+ * **Four fields, and SPEC 12 asks for seven.** What is here is the money and
+ * the verdict; the two hand values and the coach verdict are not, and item `C8`
+ * at `BJ-15` computes them rather than reading them off this record. It can,
+ * because the cards are still on the table at SPEC 10's round result: the felt
+ * is swept at `Next Hand` and not at the settlement, so `readout().hands[i]
+ * .cards` and `readout().dealerVisible` are both there to be evaluated through
+ * `handValue`. Copying the two totals in here instead would be a second reading
+ * of SPEC 4.2 kept beside the cards it was computed from.
+ *
+ * **The order is `readout().hands`'s order**, because `table.ts` builds this
+ * list with one `map` over that same array. That is what makes zipping the two
+ * safe at `BJ-15`: `result.hands[i]` and `readout().hands[i]` are the same hand,
+ * left to right in SPEC 4.6's play order. Neither is the wallet's order, which
+ * is commit order and is why `HandInPlay` carries `walletHand`.
  */
 export interface SettledHand {
   readonly wager: number;
   readonly credit: number;
+  /** SPEC 4.10's verdict on this hand. */
+  readonly outcome: Outcome;
+  /** Which of SPEC 4.10's nine rungs decided it. SPEC 12's "reason". */
+  readonly rung: Rung;
+}
+
+/**
+ * SPEC 4.7's side wager, as SPEC 12's "the insurance result if any" prints it.
+ *
+ * `stake` is what was staked, `net` is what SPEC 4.7's 2:1 came to, `+2 x stake`
+ * on a dealer natural and `-stake` otherwise, and `credit` is `stake + net`,
+ * which is what actually reached the balance. `deferred` is SPEC 4.7's unfunded
+ * remainder, zero on every path except an even-money stake the balance could not
+ * cover, and it is here because a player whose balance could not cover the stake
+ * has to be able to see where the shortfall went.
+ */
+export interface InsuranceResult {
+  readonly stake: number;
+  readonly net: number;
+  readonly credit: number;
+  readonly deferred: number;
+  /** True when the offer taken was SPEC 4.7's even money rather than insurance. */
+  readonly evenMoney: boolean;
 }
 
 /** SPEC 12's round result, as much of it as the machine owns. */
 export interface RoundResult {
   readonly hands: readonly SettledHand[];
+  /**
+   * SPEC 12's "the insurance result if any", or `null` when no stake was taken.
+   *
+   * `null` rather than a zero-valued record, because "no side wager" and "a side
+   * wager that lost" are different sentences to put in front of a player and
+   * SPEC 12 says "if any" in as many words.
+   */
+  readonly insurance: InsuranceResult | null;
   /** SPEC 12's "resulting balance", read after every hand has settled. */
   readonly chips: number;
 }
@@ -140,7 +189,7 @@ export type Phase =
 // ---------------------------------------------------------------------------
 
 /**
- * The name of an intent. Seventeen, read off SPEC 10's flow diagram.
+ * The name of an intent. Eighteen, read off SPEC 10's flow diagram.
  *
  * **The three overlays are not here.** SPEC 10 makes Settings, How to Play and
  * Statistics "reachable at any time and never blocking state", so they are
@@ -148,6 +197,11 @@ export type Phase =
  * closing any overlay leaves game state unchanged. An overlay intent would put
  * three rows in the legality table that are legal in all eleven phases and mean
  * nothing, and would invite a later part to route a real transition through one.
+ *
+ * **`changeTable` is the eighteenth, added at `BJ-8`.** SPEC 10's diagram has
+ * the line `BETTING -- Change Table, only with no wager placed ---> START`, and
+ * SPEC 6 repeats it. It was left out at `BJ-7` for no reason but sequencing, and
+ * it is a move rather than an overlay: it changes the phase.
  */
 export type IntentKind =
   | 'chooseTable'
@@ -156,6 +210,7 @@ export type IntentKind =
   | 'clear'
   | 'repeat'
   | 'max'
+  | 'changeTable'
   | 'deal'
   | 'takeInsurance'
   | 'declineInsurance'
@@ -171,13 +226,19 @@ export type IntentKind =
 /**
  * One thing the player asked for. SPEC 10's diagram, as a union.
  *
- * Three of the seventeen carry data and the rest are bare. `tapChip` carries
+ * Three of the eighteen carry data and the rest are bare. `tapChip` carries
  * which chip, because SPEC 4.11 has four denominations and the tap is rejected
  * rather than clamped when the one chosen does not fit; `chooseTable` and
  * `dropTable` carry which table, because SPEC 6 and SPEC 4.12 both name a
  * destination. Nothing carries a hand index: SPEC 4.6 plays hands left to
  * right and the active hand is the machine's, so an index on the intent would
  * let the chrome act on a hand the machine is not on.
+ *
+ * **`changeTable` is bare, and that is SPEC 10's reading rather than a
+ * simplification.** The diagram sends it to `START`, which is where SPEC 6's
+ * pick-and-Start flow already lives, so the destination is chosen there by
+ * `chooseTable` against the entry rule. A table on this intent would be a second
+ * place SPEC 6's `canEnter` had to be asked, and the two would drift.
  *
  * Every field is `readonly`, so an intent that has been queued cannot be edited
  * before it is drained. That is the whole of the guarantee: a caller that
@@ -190,6 +251,7 @@ export type Intent =
   | { readonly kind: 'clear' }
   | { readonly kind: 'repeat' }
   | { readonly kind: 'max' }
+  | { readonly kind: 'changeTable' }
   | { readonly kind: 'deal' }
   | { readonly kind: 'takeInsurance' }
   | { readonly kind: 'declineInsurance' }
@@ -231,6 +293,16 @@ export type HandState = 'live' | 'stood' | 'bust' | 'doubled' | 'surrendered' | 
  * `fromSplitAces` is what forbids hitting, per SPEC 4.6. Both are set once at
  * split time and never recomputed, so the rule cannot drift. Setting them is
  * item `B10` at `BJ-8`.
+ *
+ * **`walletHand` is DESIGN section 2's five fields plus one, and `B10` is what
+ * added it.** `table.ts` at `BJ-7` wrote the hazard down rather than guarding
+ * against it: the wallet's hand index was this array's position, which held only
+ * while a round had one hand. `wallet.ts` **appends** a split hand while SPEC 4.6
+ * plays hands left to right, so a resplit **inserts** here and the two orders
+ * come apart at the second split. They are different orders on purpose, commit
+ * order and play order, so `B10` carries the wallet's index rather than forcing
+ * one of them to be the other. Settling the wrong hand is a wrong payout, which
+ * is why it is a field and not a comment.
  */
 export interface HandInPlay {
   readonly cards: readonly Card[];
@@ -238,4 +310,6 @@ export interface HandInPlay {
   readonly state: HandState;
   readonly fromSplit: boolean;
   readonly fromSplitAces: boolean;
+  /** This hand's index in `wallet.ts`, which is commit order, not play order. */
+  readonly walletHand: number;
 }

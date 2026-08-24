@@ -1,69 +1,62 @@
 /**
  * The table: SPEC 10's eleven phases, the one entry point every action goes
- * through, the intent queue and the timers. Item `C2`, Critical.
+ * through, the intent queue, the timers, and the round those phases play out.
+ * Items `C2` (Critical) at `BJ-7`, and `B6`, `B9`, `B10`, `B11` and `B12` at
+ * `BJ-8`.
  *
  * DESIGN section 2 makes this module "the only authority" and everything else
  * an observer, and DESIGN section 3 gives the per-frame order it runs in. Both
  * are here and nowhere else.
  *
- * **This part is the machine and not the moves.** The actions themselves,
- * dealing cards into a round and the effects of Hit, Double, Split, Insurance
- * and Surrender, are items `B6` and `B9` to `B12` at `BJ-8`. What is here is
- * the thing those actions arrive at: which of them SPEC 10 allows on which
- * screen, that one rejected on the way in changes nothing at all, and the paced
- * transitions between screens that no action drives. The seams `BJ-8` fills are
- * each named where they are, and none of them reshapes the phase union,
- * `apply`, the queue or the timers.
+ * **`BJ-7` built the machine and `BJ-8` built the moves.** The phase union,
+ * `apply`, the queue and the timers are unchanged; what joined them is the deal
+ * of SPEC 4.3, the five player actions of SPEC 4.5, the split of SPEC 4.6, the
+ * side wager of SPEC 4.7, the surrender of SPEC 4.8 and the settlement of SPEC
+ * 4.10 wired through `settlement.ts`. Every one of the nine expressions `BJ-7`
+ * listed as inert is now reached and can answer two ways, and every one of them
+ * carries a mutation entry.
  *
  * **There is no way to put this machine in a phase.** It opens at SPEC 10's
  * `start`, the returned object carries no setter, and every one of the other ten
  * phases is entered by an accepted intent or by a timed step written here. The
- * one datum a caller may supply that the machine cannot yet discover for itself
- * is the dealer's up card, because SPEC 10's branch at the end of the deal reads
- * it and no card is dealt until `BJ-8`. It is a `Rank`, every value of which
- * `branchAfterDealing` already answers with one of the three successors SPEC 10
- * gives `dealing`, so it selects a legal branch and cannot invent a state.
+ * one datum a caller supplied at `BJ-7`, the dealer's up card, is gone: the
+ * `dealerUp` step draws a card from the shoe and the up card is that card's
+ * rank, so the branch reads what was dealt and nothing outside can choose it.
  *
- * **Nine expressions here are inert until `BJ-8`, and this is the list**, in
- * the style `wallet.ts` uses for the two identity terms it pins at zero: an
- * inert expression is one no test can hold and no mutation can break, so it has
- * to be named rather than counted as covered. Seven are inert because no card
- * exists yet: `shouldHit(dealer)` in the dealer's draw step, the whole of
- * `dealerNaturalAtPeek`, the natural arm of `applyPeek`, the `dealer` and
- * `upCard` clears at the round boundary, the `dealer` copy in the readout, and
- * the `cards` copy in `copyHand`. Two are live but constant: `evenMoney` on the
- * insurance offer, which asks SPEC 4.2's real question of an empty hand, and
- * the move-right arm of `resolveActiveHand`, which needs a second hand. Every
- * one of them is the right expression already, is reached by real code today,
- * and starts deciding something the moment `B6`, `B10` and `B11` land at
- * `BJ-8`; `C1` at `BJ-20` grades the round they sit in end to end. Nothing in
- * this file is unreachable in the sense of dead: these are reached and cannot
- * yet answer two ways.
+ * **The randomness is the seeded stream and nothing else.** SPEC 4.1 and item
+ * `M3`: the table takes a seed, builds one session stream from it and hands that
+ * stream to the shoe, which splits its own child off it. There is no second
+ * consumer yet, and when one arrives it takes its own `split()` rather than
+ * sharing the shoe's, which is what keeps a seeded deal stable against a
+ * consumer added later. A shoe may be injected instead, which is how a test
+ * puts a known pair in front of a known up card without hunting for a seed.
  *
  * **Legality is checked first, and it is checked here.** SPEC 4.11 blocks
  * "changing the wager after the deal" and "acting after the round ends", and
  * `wallet.ts` deliberately holds neither: its own header says in as many words
  * that it is not a phase gate and that `tap`, `clear`, `max` and `repeat` are
- * gated at `BJ-7`. So all four are gated here, by phase, before the wallet is
- * consulted at all. A rejection carries which layer refused it, because "the
- * screen has gone" and "the wager is over the ceiling" are different sentences
- * to put in front of a player and `B15` at `BJ-15` has to tell them apart.
+ * gated at `BJ-7`. So all four are gated here, by phase, before anything else is
+ * consulted. A rejection carries which layer refused it, because "the screen has
+ * gone", "not on this hand" and "the wager is over the ceiling" are three
+ * different sentences to put in front of a player and `B15` at `BJ-15` has to
+ * tell them apart.
  *
  * **A rejection is a value and mutates nothing.** Every refusal a player can
  * reach comes back as an `IntentResult`, in the house style of `shoe.ts` and
  * `wallet.ts`. The `RangeError` throws in this file are caller defects, and
  * `wallet.ts`'s handoff is what makes the distinction matter: a second initial
- * commit, settling a hand twice, closing a round with a hand unsettled and a
- * reset mid-round are all throws there, and this module's phase legality is
- * exactly what makes every one of them unreachable from any player action in
- * any phase. A player action that could reach a wallet throw is a defect here,
- * not there.
+ * commit, settling a hand twice, closing a round with a hand unsettled, closing
+ * one with the side wager still open and a reset mid-round are all throws there,
+ * and this module's phase and availability gates are exactly what makes every
+ * one of them unreachable from any player action in any phase.
  *
  * **The offer closes before the peek result is applied.** SPEC 4.4, and it is
  * the reason `insurance` is a phase rather than a step inside `peek`. The
  * dealing branch asks `offersInsurance(up)` first and only ever calls `peek`
  * inside the `peek` phase, which is the ordering `dealer.ts` documented and
- * could not enforce, because it has no phases to enforce it with.
+ * could not enforce, because it has no phases to enforce it with. SPEC 4.7's
+ * side wager is then resolved in that same step, immediately after the peek, on
+ * both of its paths.
  *
  * **Every timer is a float accumulator and there is no clock in this file.**
  * DESIGN section 3: no `setTimeout` drives game state, no frame counter exists,
@@ -76,13 +69,25 @@
  */
 
 import type { Card, Rank } from './cards';
+import { isAce } from './cards';
 import { offersInsurance, peek, peeksOn, shouldHit } from './dealer';
-import { isNatural } from './hand';
+import { TARGET, canSplit, handValue, isBust, isNatural } from './hand';
+import { createRng } from './rng';
+import type { HouseRules } from './rules';
+import { houseRules } from './rules';
+// `settleInsurance` is aliased because `wallet.ts` exposes a method of the same
+// name that answers a different question: this one turns a stake and the peek's
+// bit into a net, and the wallet's turns a net into a balance movement.
+import type { DealerHand, PlayerHand } from './settlement';
+import { settleInsurance as insuranceNet, settle } from './settlement';
+import type { Shoe, ShoeReadout } from './shoe';
+import { createShoe } from './shoe';
 import type {
   DealStep,
   HandInPlay,
   HandState,
   InsuranceOffer,
+  InsuranceResult,
   Intent,
   IntentKind,
   Phase,
@@ -90,7 +95,7 @@ import type {
   SettledHand,
 } from './types';
 import type { Refusal, TableId, TableLimits, Wallet, WalletReadout } from './wallet';
-import { LOWEST_TABLE, bustOut, canEnter, createWallet, tableLimits } from './wallet';
+import { LOWEST_TABLE, NO_WAGER, bustOut, canEnter, createWallet, tableLimits } from './wallet';
 
 // ---------------------------------------------------------------------------
 // SPEC 5: the reference timings, all tunable constants in one place
@@ -221,12 +226,11 @@ export function clampDelta(dt: number): number {
 /**
  * SPEC 4.3's order: player, dealer up, player, dealer down.
  *
- * Four steps, and the queue is the machine's contribution: it is what makes
- * `dealing` a paced phase rather than an instant one, and what `DEAL_INTERVAL`
- * paces. That the cards really arrive, two face up to the player and one face
- * up plus one face down to the dealer, in this order, is item `B6` at `BJ-8`,
- * whose criterion states the order in as many words and whose implementation
- * draws them from the shoe `BJ-3` built.
+ * Four steps, and the queue is what makes `dealing` a paced phase rather than
+ * an instant one. Item `B6` at `BJ-8` is the claim that the cards really
+ * arrive, two to the player and two to the dealer, in this order, with the
+ * second of the dealer's face down: `takeDealStep` below draws each one from
+ * the shoe `BJ-3` built, and this list is the order it draws them in.
  */
 export const OPENING_DEAL: readonly DealStep[] = Object.freeze([
   'playerCard',
@@ -247,26 +251,43 @@ const INSURANCE_STAKE_DIVISOR = 2;
  */
 const FIRST_HAND = 0;
 
+/** SPEC 4.3: the dealer's first card, face up, and its second, face down. */
+const UP_CARD = 0;
+const HOLE_CARD = 1;
+
+/**
+ * How many cards a hand holds before it has acted. SPEC 4.5 and 4.8.
+ *
+ * Double Down is "exactly two cards" and surrender is "only on a hand's initial
+ * two cards", and both are this number. It is also what SPEC 4.6 splits, which
+ * `canSplit` in `hand.ts` already tests for itself.
+ */
+const INITIAL_CARDS = 2;
+
+/**
+ * SPEC 4.6: "At most 3 splits per round, producing at most 4 hands, counted
+ * across the whole round, not per hand."
+ *
+ * One number, because the second is the first plus the original hand and a
+ * second constant could disagree with it. `tests/unit/split.test.ts` derives
+ * the four hands from the three splits rather than quoting either.
+ */
+const MAX_SPLITS = 3;
+
 /** What `Array.prototype.findIndex` answers when nothing matches. */
 const NOT_FOUND = -1;
 
 /**
- * The net every hand settles at until `BJ-8` wires the ladder.
+ * The seed a table takes when the composition root has not chosen one.
  *
- * SPEC 4.11 credits back `wager + net` and SPEC 4.10's nine rungs decide the
- * net. `settlement.ts` built that ladder at `BJ-5` and nothing has wired it,
- * because wiring it needs the cards `B6` deals and the actions `B9` to `B12`
- * take, all at `BJ-8`. Until then every hand closes at zero, so the round
- * **boundary** is real and the arithmetic behind it is not.
- *
- * The boundary has to be real even now: `wallet.ts` throws on a round closed
- * with a hand still committed and on a second initial commit, so a machine
- * that skipped the close would make the next Deal a wallet throw reached by a
- * player action. Item `C1` at `BJ-20` grades the whole phase order end to end
- * with real outcomes, and the soak `H6` at `BJ-12` grades the four-term
- * identity across 50,000 rounds of them.
+ * `core/` has no clock and calls no `Math.random()`, so it cannot invent a seed
+ * and must not try: item `M3` forbids the one and this module's own header
+ * forbids the other. `main.ts` at `BJ-19` owns the composition and is where a
+ * real session seed comes from. A constant here means a table built with no
+ * options deals a fixed, reproducible round, which is what every test in the
+ * suite wants and what `B16` at `BJ-12` grades.
  */
-const UNWIRED_NET = 0;
+export const DEFAULT_SEED = 1;
 
 // ---------------------------------------------------------------------------
 // SPEC 10: which intents each phase allows, and no others
@@ -290,7 +311,7 @@ export const PHASE_KINDS: readonly PhaseKind[] = Object.freeze([
   'bustOut',
 ]);
 
-/** The seventeen intents SPEC 10's diagram offers, in phase order. */
+/** The eighteen intents SPEC 10's diagram offers, in phase order. */
 export const INTENT_KINDS: readonly IntentKind[] = Object.freeze([
   'chooseTable',
   'start',
@@ -298,6 +319,7 @@ export const INTENT_KINDS: readonly IntentKind[] = Object.freeze([
   'clear',
   'repeat',
   'max',
+  'changeTable',
   'deal',
   'takeInsurance',
   'declineInsurance',
@@ -328,11 +350,19 @@ export const INTENT_KINDS: readonly IntentKind[] = Object.freeze([
  *
  * **Every intent is legal in exactly one phase**, which is not a rule imposed
  * here but a property of SPEC 10: each control belongs to one screen. The
- * sweep derives it rather than assuming it.
+ * sweep derives it rather than assuming it, and `changeTable` joins `betting`
+ * at `BJ-8` without disturbing it.
  */
 const LEGAL: Readonly<Record<PhaseKind, readonly IntentKind[]>> = Object.freeze({
   start: Object.freeze<IntentKind[]>(['chooseTable', 'start']),
-  betting: Object.freeze<IntentKind[]>(['tapChip', 'clear', 'repeat', 'max', 'deal']),
+  betting: Object.freeze<IntentKind[]>([
+    'tapChip',
+    'clear',
+    'repeat',
+    'max',
+    'changeTable',
+    'deal',
+  ]),
   dealing: Object.freeze<IntentKind[]>([]),
   peek: Object.freeze<IntentKind[]>([]),
   insurance: Object.freeze<IntentKind[]>(['takeInsurance', 'declineInsurance']),
@@ -351,31 +381,63 @@ const LEGAL: Readonly<Record<PhaseKind, readonly IntentKind[]>> = Object.freeze(
 /**
  * Which layer refused an action.
  *
- * Two, and they are in a fixed order: the phase is asked first and the wallet
- * is not asked at all when the phase has already said no. The distinction is
- * the readable half of `C2`'s "surfaces a reason": "you cannot bet now" and
- * "that is more than the table takes" are different sentences, and `B15` at
- * `BJ-15` renders the second of them.
+ * Three, and they are in a fixed order: the phase is asked first, then whether
+ * the action is available at all, then the wallet, and no layer is asked once
+ * one above it has said no. The distinction is the readable half of `C2`'s
+ * "surfaces a reason": "you cannot bet now", "not on this hand" and "that is
+ * more than the table takes" are three different sentences, and `B15` at
+ * `BJ-15` renders the last of them.
  *
- * `BJ-8` adds a third for the per-hand availability rules of SPEC 4.5, 4.6 and
- * 4.8, which are items `B9`, `B10` and `B12`: Double on exactly two cards,
- * Split on an equal-value pair inside the three-split cap, Surrender only on a
- * hand's first two cards. All three sit **under** the phase gate, in the same
- * place the wallet sits today, so adding them widens this union and changes
- * nothing else.
+ * `availability` is `BJ-8`'s, and it holds the per-hand rules of SPEC 4.5, 4.6
+ * and 4.8 that items `B9`, `B10` and `B12` name, SPEC 4.7's "only if chips
+ * available >= the stake" on the insurance offer, and SPEC 10's "Change Table,
+ * only with no wager placed". It sits **under** the phase gate, in the same
+ * place the wallet sits, exactly as `BJ-7` said it would.
  */
-export type RejectionLayer = 'phase' | 'wallet';
+export type RejectionLayer = 'phase' | 'availability' | 'wallet';
 
 /**
  * Why an action was refused.
  *
  * `wrong-phase` is this module's own and is the whole of `C2`'s left-hand
- * side. `table-locked` covers SPEC 6's entry rule and SPEC 4.12's drop, both
- * of which `wallet.ts` answers. The rest is `wallet.ts`'s `Refusal` union
- * unchanged, because SPEC 4.11's reasons belong to the module that decides
- * them and a second spelling of `above-ceiling` here would drift.
+ * side. The nine reasons after it are the availability layer's, one per clause
+ * of SPEC 4.5, 4.6, 4.7, 4.8 and 10 that can turn an action down without any
+ * money being involved. `table-locked` covers SPEC 6's entry rule and SPEC
+ * 4.12's drop, both of which `wallet.ts` answers. The rest is `wallet.ts`'s
+ * `Refusal` union unchanged, because SPEC 4.11's reasons belong to the module
+ * that decides them and a second spelling of `above-ceiling` here would drift.
+ *
+ * **`insufficient-chips` is not respelled either.** SPEC 4.6 requires Split to
+ * be "unavailable on that hand with the reason surfaced" when the balance
+ * cannot cover it, and `wallet.ts` already decides exactly that question inside
+ * `commitSplit`. So the availability layer does not ask it a second time: the
+ * commit is attempted and its refusal is surfaced with the `wallet` layer on
+ * it. Two readings of "can the balance cover this" is how one of them drifts.
  */
-export type RejectionReason = 'wrong-phase' | 'table-locked' | Refusal;
+export type RejectionReason =
+  /** The screen does not offer this control at all. SPEC 10. */
+  | 'wrong-phase'
+  /** SPEC 10: Change Table is offered "only with no wager placed". */
+  | 'pending-wager'
+  /** The hand has already stood, busted, doubled or surrendered. SPEC 4.5. */
+  | 'hand-resolved'
+  /** SPEC 4.5 and 4.6: no hit, no double and no resplit on a split Ace hand. */
+  | 'split-aces'
+  /** SPEC 4.5 and 4.8: Double and Surrender want a hand's first two cards. */
+  | 'not-two-cards'
+  /** SPEC 4.6: the two cards are not a pair under the house's comparison. */
+  | 'not-a-pair'
+  /** SPEC 4.6: at most 3 splits per round, counted across the whole round. */
+  | 'split-limit'
+  /** SPEC 4.8: surrender is "not available after a split". */
+  | 'from-split'
+  /** SPEC 4.8's house-rule toggle is off. */
+  | 'surrender-off'
+  /** SPEC 4.6's Double after split toggle is off. */
+  | 'double-after-split-off'
+  /** SPEC 6's entry rule, and SPEC 4.12's drop. */
+  | 'table-locked'
+  | Refusal;
 
 /** An action the machine took, and the phase it left behind. */
 export interface IntentAccepted {
@@ -416,6 +478,137 @@ export interface DrainReport {
 }
 
 // ---------------------------------------------------------------------------
+// SPEC 4.5, 4.6 and 4.8: whether an action is available on a hand at all
+// ---------------------------------------------------------------------------
+
+/**
+ * What the availability rules need to know about the round a hand sits in.
+ *
+ * Two fields, because only two of the rules look past the hand itself: SPEC
+ * 4.6's split cap is counted across the round and every toggle lives in the
+ * house-rule record. The balance is deliberately absent, for the reason
+ * `RejectionReason` gives: `wallet.ts` already decides whether a wager can be
+ * funded and a second reading here would drift from it.
+ */
+export interface ActionContext {
+  /** The house rules in force. SPEC 14, and `rules.ts`. */
+  readonly rules: HouseRules;
+  /** Splits taken this round. SPEC 4.6 counts them across the round. */
+  readonly splits: number;
+}
+
+/**
+ * Why Hit is unavailable on a hand, or `null` when it is available. SPEC 4.5.
+ *
+ * That table's Hit row is "Hand live and under 21. Never on a split Ace hand."
+ * The first two clauses are one condition rather than two, and deliberately: a
+ * hand that reaches exactly 21 stands automatically per that same section, so
+ * it stops being live at the moment it stops being under 21, and a second test
+ * for 21 here would be a reading of the auto-stand that could disagree with the
+ * one that performs it.
+ *
+ * Exported with its three siblings because the chrome at `BJ-15` has to grey a
+ * control out **before** the player presses it, and because the split-Ace
+ * clause is otherwise unreachable through `apply`: SPEC 4.6 stands a split Ace
+ * hand automatically, so it is never the active hand and the phase gate turns
+ * every action on it down first. The clause is still the rule, and a pure
+ * function is the only thing that can be asked about a hand play cannot build.
+ * That is `settlement.ts`'s rung 1 precedent exactly.
+ */
+export function hitRefusal(hand: HandInPlay): RejectionReason | null {
+  if (hand.fromSplitAces) {
+    return 'split-aces';
+  }
+  if (hand.state !== 'live') {
+    return 'hand-resolved';
+  }
+  return null;
+}
+
+/**
+ * Why Double Down is unavailable on a hand, or `null`. SPEC 4.5, item `B9`.
+ *
+ * "Exactly two cards, chips available >= the hand's wager. Permitted after a
+ * split when DAS is on. Never on a split Ace hand." Three of the four clauses
+ * are here in that order; the chips are the wallet's, one layer down.
+ */
+export function doubleRefusal(hand: HandInPlay, context: ActionContext): RejectionReason | null {
+  if (hand.fromSplitAces) {
+    return 'split-aces';
+  }
+  if (hand.state !== 'live') {
+    return 'hand-resolved';
+  }
+  if (hand.cards.length !== INITIAL_CARDS) {
+    return 'not-two-cards';
+  }
+  if (hand.fromSplit && !context.rules.doubleAfterSplit) {
+    return 'double-after-split-off';
+  }
+  return null;
+}
+
+/**
+ * Why Split is unavailable on a hand, or `null`. SPEC 4.6, item `B10`.
+ *
+ * The pair test is `canSplit` in `hand.ts`, asked under the house's comparison
+ * rather than re-derived: that function's own header says a `true` from it is
+ * not "Split is available", and this function is the rest of the sentence.
+ *
+ * **The cap is counted across the round and not per hand**, which SPEC 4.6 says
+ * in as many words, so it reads `context.splits` rather than the length of any
+ * hand's history. Split Aces are refused before the cap is consulted, because
+ * "may never be resplit" is a property of the hand and holds at any count.
+ */
+export function splitRefusal(hand: HandInPlay, context: ActionContext): RejectionReason | null {
+  if (hand.fromSplitAces) {
+    return 'split-aces';
+  }
+  if (hand.state !== 'live') {
+    return 'hand-resolved';
+  }
+  if (!canSplit(hand.cards, context.rules.splitRule)) {
+    return 'not-a-pair';
+  }
+  if (context.splits >= MAX_SPLITS) {
+    return 'split-limit';
+  }
+  return null;
+}
+
+/**
+ * Why Surrender is unavailable on a hand, or `null`. SPEC 4.8, item `B12`.
+ *
+ * "Only on a hand's initial two cards, before any other action on it. Not
+ * available after a split, a hit or a double." The toggle is asked first
+ * because "this table does not offer surrender" is true of every hand and is
+ * the sentence a player needs; the split is asked before the card count because
+ * a hand fresh from a split has exactly two cards and would otherwise be
+ * refused for the wrong reason.
+ *
+ * **"Late surrender only: after the peek" is not tested here, because it cannot
+ * fail here.** SPEC 10 gives Surrender to `playerTurn` alone, and the only
+ * routes into `playerTurn` are through the peek or from an up card SPEC 4.4
+ * never peeks behind, which is an up card no dealer natural can be built on.
+ * The phase gate is the whole of that clause.
+ */
+export function surrenderRefusal(hand: HandInPlay, context: ActionContext): RejectionReason | null {
+  if (!context.rules.surrender) {
+    return 'surrender-off';
+  }
+  if (hand.state !== 'live') {
+    return 'hand-resolved';
+  }
+  if (hand.fromSplit) {
+    return 'from-split';
+  }
+  if (hand.cards.length !== INITIAL_CARDS) {
+    return 'not-two-cards';
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
 // SPEC 10: the branch at the end of the deal
 // ---------------------------------------------------------------------------
 
@@ -437,9 +630,10 @@ export interface DrainReport {
  * an up card SPEC 4.4 never peeks behind; the only call site is the `peek`
  * phase.
  *
- * A `null` up card is the "otherwise" arm. Until `BJ-8` deals cards there is
- * no up card to read, and SPEC 10 sends every rank that is neither an Ace nor
- * a ten-value card to `playerTurn`.
+ * A `null` up card is the "otherwise" arm and is only reachable through a
+ * direct call: every round deals a dealer up card before this is asked. It is
+ * kept because the function is exported and total, and because SPEC 10 sends
+ * every rank that is neither an Ace nor a ten-value card to `playerTurn`.
  */
 export function branchAfterDealing(up: Rank | null): 'insurance' | 'peek' | 'playerTurn' {
   if (up === null) {
@@ -464,18 +658,38 @@ export interface TableReadout {
   readonly phase: Phase;
   /** The table the player is sitting at. SPEC 6. */
   readonly table: TableId;
+  /** The house rules in force. SPEC 14, fixed for this table's life. */
+  readonly rules: HouseRules;
   /** This round's hands, left to right. SPEC 4.6. Empty between rounds. */
   readonly hands: readonly HandInPlay[];
-  /** The dealer's cards. Empty until `B6` at `BJ-8` deals them. */
-  readonly dealer: readonly Card[];
-  /** The up card SPEC 10's dealing branch reads, once it has been dealt. */
-  readonly upCard: Rank | null;
+  /**
+   * The dealer's cards **the player may see**, in deal order. SPEC 4.3.
+   *
+   * While the hole card is down this is the up card alone, which is what SPEC
+   * 11's "dealer visible hand value counts face-up cards only" is computed
+   * from: `handValue(readout.dealerVisible)` is that sentence, rather than a
+   * second reading of which cards count.
+   */
+  readonly dealerVisible: readonly Card[];
+  /**
+   * How many of the dealer's cards are face down. SPEC 4.3: 0 or 1, and 1
+   * exactly while the hole card is concealed.
+   *
+   * A count rather than a flag so that a renderer can draw that many card backs
+   * without knowing which position they are in, and so the readout says the
+   * whole truth about the dealer's hand while still not carrying the card.
+   */
+  readonly dealerConcealed: number;
   /** The timed phase's float accumulator, in seconds. DESIGN section 3. */
   readonly elapsed: number;
   /** Intents waiting for the next drain, in the order they arrived. */
   readonly queued: readonly Intent[];
   /** Rounds closed at the round boundary. Never decreases. */
   readonly rounds: number;
+  /** SPEC 4.6: splits taken this round, at most 3. Zero between rounds. */
+  readonly splits: number;
+  /** The shoe's own readout: SPEC 11's cards remaining and penetration. */
+  readonly shoe: ShoeReadout;
   /** The wallet's own readout, including SPEC 4.11's four-term identity. */
   readonly wallet: WalletReadout;
 }
@@ -491,8 +705,8 @@ export interface Table {
   /** The state, for a renderer, for a readout and for a test. */
   readout(): TableReadout;
   /**
-   * One action. Legality against the current phase first, then the layer
-   * underneath. A rejection changes nothing at all.
+   * One action. Legality against the current phase first, then availability on
+   * the hand, then the wallet. A rejection changes nothing at all.
    */
   apply(intent: Intent): IntentResult;
   /** Put an intent in the queue. DESIGN section 3 step 1. */
@@ -530,23 +744,33 @@ export interface TableOptions {
    */
   readonly table?: TableId;
   /**
-   * The rank the `dealerUp` step of SPEC 4.3's opening deal records.
+   * The house rules, as an override of `rules.ts`'s SPEC defaults. SPEC 14.
    *
-   * **The one seam this part needs, and the smallest one that works.** SPEC
-   * 10's branch at the end of the deal reads the dealer's up card, and until
-   * `B6` at `BJ-8` draws cards from the shoe the machine has no way to
-   * discover one, so `insurance` and `peek` would be unreachable and `C2`'s
-   * sweep could not attempt an intent against them. Supplying the rank lets
-   * the machine take its own branch by its own transition, which is the whole
-   * point: nothing outside this file can set a phase.
-   *
-   * It cannot build an illegal state. The type is `Rank`, every value of which
-   * `branchAfterDealing` already answers, and the answer is one of the three
-   * successors SPEC 10 gives `dealing`. `BJ-8` deletes this option: the
-   * `dealerUp` step will set the up card from the rank of the card it drew,
-   * one statement in one place, and the branch below does not change.
+   * Partial so that turning one toggle off does not mean restating the other
+   * four, which is how a default drifts out of a caller rather than out of
+   * SPEC. Read once, at construction: SPEC 14 says house-rule changes take
+   * effect at the start of the next round, so a table has no setter for them.
    */
-  readonly openingUpCard?: Rank;
+  readonly rules?: Partial<HouseRules>;
+  /**
+   * The session seed. SPEC 4.1, and item `M3`.
+   *
+   * One stream is built from it and handed to the shoe, which splits its own
+   * child off it, so the deal is stable against a consumer added beside it
+   * later. `main.ts` at `BJ-19` supplies a real one; `DEFAULT_SEED` is what a
+   * table with no options gets, because `core/` has no clock to invent one.
+   */
+  readonly seed?: number;
+  /**
+   * A shoe to deal from, instead of one built from the seed.
+   *
+   * This is how a test puts a known pair in front of a known up card without
+   * searching for a seed that happens to produce one, and it is the same device
+   * as the injected wallet above. The shoe's own composition, shuffle and cut
+   * card are items `B2` and `B3` and are graded against the real one in
+   * `tests/unit/shoe.test.ts`; what the round needs is a source of cards.
+   */
+  readonly shoe?: Shoe;
 }
 
 /** SPEC 10's opening screen, and the six other phases with no payload. */
@@ -558,14 +782,41 @@ const DEALER_TURN: Phase = Object.freeze({ kind: 'dealerTurn' });
 const SETTLING: Phase = Object.freeze({ kind: 'settling' });
 const BUST_OUT: Phase = Object.freeze({ kind: 'bustOut' });
 
+/**
+ * SPEC 4.3: the phases in which the dealer's second card is still face down.
+ *
+ * "The hole card stays concealed until the player's turn ends, except for the
+ * peek." Those are the four screens before the player's turn has ended, and the
+ * exception is what `peek` does with a card it does not hand back: `dealer.ts`
+ * returns one of two shared constants precisely so that looking leaks nothing.
+ * SPEC 10's `reveal` is where the card turns over, and the peek's natural arm
+ * goes straight to `settling`, which is past it, so a dealer natural is shown
+ * as SPEC 4.4 requires.
+ */
+const CONCEALED_PHASES: readonly PhaseKind[] = Object.freeze([
+  'dealing',
+  'peek',
+  'insurance',
+  'playerTurn',
+]);
+
 /** One timed step of a phase: how long it takes, and what it does. */
 interface TimedStep {
   readonly duration: number;
   readonly take: () => void;
 }
 
+/** SPEC 4.7's stake, from the moment it is taken until the peek settles it. */
+interface OpenStake {
+  readonly stake: number;
+  readonly evenMoney: boolean;
+  /** SPEC 4.7's unfunded remainder, read off the wallet that recorded it. */
+  readonly deferred: number;
+}
+
 /**
- * A table. SPEC 10, DESIGN sections 2 and 3, item `C2`.
+ * A table. SPEC 10, DESIGN sections 2 and 3, items `C2`, `B6` and `B9` to
+ * `B12`.
  *
  * It always opens at SPEC 10's `start`, and there is no option that says
  * otherwise. Every one of the other ten phases is reached the only way the
@@ -574,24 +825,37 @@ interface TimedStep {
  */
 export function createTable(options: TableOptions = {}): Table {
   const wallet: Wallet = options.wallet ?? createWallet();
-  const openingUpCard: Rank | null = options.openingUpCard ?? null;
+  const rules: HouseRules = houseRules(options.rules);
+  // SPEC 4.1 and item `M3`: one session stream, and the shoe splits its own
+  // child off it inside `createShoe`. A consumer added later takes another
+  // child rather than sharing the shoe's, so the deal does not shift.
+  const shoe: Shoe = options.shoe ?? createShoe(rules.decks, createRng(options.seed ?? DEFAULT_SEED));
 
   let selected: TableId = options.table ?? LOWEST_TABLE.id;
   let phase: Phase = START;
   let elapsed = 0;
   let rounds = 0;
-  let upCard: Rank | null = null;
+  let splits = 0;
   let dealQueue: DealStep[] = [];
+  /** SPEC 4.7's side wager while it is open, and `null` once it has settled. */
+  let openStake: OpenStake | null = null;
+  /** The settled side wager, carried to SPEC 12's round result. */
+  let insurance: InsuranceResult | null = null;
 
   /** This round's hands, left to right. SPEC 4.6. */
   const hands: HandInPlay[] = [];
-  /** The dealer's cards. `B6` at `BJ-8` is what puts one in here. */
+  /** The dealer's cards, up card first. SPEC 4.3. */
   const dealer: Card[] = [];
   /** Intents waiting for the next drain. DESIGN section 3. */
   const queued: Intent[] = [];
 
   function limits(): TableLimits {
     return tableLimits(selected);
+  }
+
+  /** What the availability rules of SPEC 4.5, 4.6 and 4.8 are asked against. */
+  function context(): ActionContext {
+    return Object.freeze({ rules, splits });
   }
 
   /**
@@ -627,6 +891,22 @@ export function createTable(options: TableOptions = {}): Table {
     return phase.activeHand;
   }
 
+  /**
+   * SPEC 4.7's offer, or a thrown error.
+   *
+   * The same shape as `activeHand` above and for the same reason: the offer is
+   * answerable only during the `insurance` phase, so reaching this anywhere
+   * else means the legality table let an answer through.
+   */
+  function offerNow(): InsuranceOffer {
+    if (phase.kind !== 'insurance') {
+      throw new RangeError(
+        `SPEC 4.7's offer is answered during the insurance phase; the phase is ${phase.kind}`,
+      );
+    }
+    return phase.offer;
+  }
+
   function playerTurnAt(index: number): Phase {
     return Object.freeze({ kind: 'playerTurn', activeHand: index });
   }
@@ -643,14 +923,19 @@ export function createTable(options: TableOptions = {}): Table {
    * so no other wager exists to confuse it with and none needs recording.
    * `evenMoney` is SPEC 4.7's other reading of the same stake, asked through
    * SPEC 4.2's single definition of a natural in `hand.ts` rather than through
-   * a local test for an Ace beside a ten. It is false until `BJ-8` deals the
-   * cards that could make it true, and the question is already the right one.
+   * a local test for an Ace beside a ten, and gated on the house-rule toggle
+   * SPEC 4.7 gives it.
+   *
+   * The field is what decides which of SPEC 4.7's two availability rules
+   * applies: an ordinary stake is offered "only if chips available >= the
+   * stake" and even money is "offered regardless of balance". So the shortfall
+   * of SPEC 4.7's fourth identity term can only ever arise on this branch.
    */
   function insuranceOffer(): InsuranceOffer {
     const hand = handAt(FIRST_HAND);
     return Object.freeze({
       stake: hand.wager / INSURANCE_STAKE_DIVISOR,
-      evenMoney: isNatural(hand.cards, { fromSplit: hand.fromSplit }),
+      evenMoney: rules.evenMoney && isNatural(hand.cards, { fromSplit: hand.fromSplit }),
     });
   }
 
@@ -660,31 +945,97 @@ export function createTable(options: TableOptions = {}): Table {
    * The guard is `dealer.ts`'s: `peeksOn(up)` before `peek(up, hole)`, because
    * `peek` throws on an up card SPEC 4.4 never peeks behind and answering one
    * would hand a concealed card to something with no business looking at it.
-   * With no cards dealt there is nothing to peek at and the round carries on,
-   * which is the same branch SPEC 10 takes when the dealer holds no natural.
+   * Both of the tests below are structural rather than logical: the `peek`
+   * phase is only ever entered with two dealer cards down and an up card SPEC
+   * 4.4 peeks behind, and `noUncheckedIndexedAccess` is what makes the first of
+   * them a compiler requirement.
    */
   function dealerNaturalAtPeek(): boolean {
-    const up = dealer[0];
-    const hole = dealer[1];
+    const up = dealer[UP_CARD];
+    const hole = dealer[HOLE_CARD];
     if (up === undefined || hole === undefined) {
       return false;
     }
     return peeksOn(up.rank) ? peek(up, hole).dealerNatural : false;
   }
 
+  /** The rank SPEC 10's dealing branch reads, once the up card is out. */
+  function upCardRank(): Rank | null {
+    return dealer[UP_CARD]?.rank ?? null;
+  }
+
   /**
-   * One card of SPEC 4.3's opening deal. `B6` at `BJ-8` is what fills it.
+   * SPEC 4.2 and 4.5: what a hand is doing now that a card has arrived.
    *
-   * `BJ-7` deals nothing: the shoe is not wired and dealing cards into a round
-   * is that item's. What the machine needs out of the deal is the one datum
-   * SPEC 10's branch reads, so the `dealerUp` step records it. At `BJ-8` the
-   * same step draws a card, pushes it into `dealer` and takes the rank from
-   * the card it drew, so the two cannot disagree.
+   * A natural first, because SPEC 4.2 makes it a distinct thing from a 21 and
+   * SPEC 4.6 turns the 3:2 payout on that distinction; then a bust, then SPEC
+   * 4.5's "a hand reaching exactly 21 stands automatically". A hand that is
+   * none of the three is still live and the player acts on it again.
+   *
+   * The natural test carries the hand's own split origin, so a two-card 21 on a
+   * split hand comes back as `stood` and settles at rung 7 for 1:1 rather than
+   * at rung 3 for 3:2. That is `B10`'s clause, and it is one field rather than
+   * a branch because `hand.ts` holds the definition.
+   */
+  function stateAfterCard(hand: HandInPlay): HandState {
+    if (isNatural(hand.cards, { fromSplit: hand.fromSplit })) {
+      return 'blackjack';
+    }
+    if (isBust(hand.cards)) {
+      return 'bust';
+    }
+    if (handValue(hand.cards).total === TARGET) {
+      return 'stood';
+    }
+    return 'live';
+  }
+
+  /** Replace a hand with the same hand in a new state. Frozen, like the rest. */
+  function resolve(index: number, state: HandState): void {
+    hands[index] = Object.freeze({ ...handAt(index), state });
+  }
+
+  /** Draw one card from the shoe into a hand, and hand the result back. */
+  function dealTo(index: number): HandInPlay {
+    const hand = handAt(index);
+    const grown: HandInPlay = Object.freeze({
+      ...hand,
+      cards: Object.freeze([...hand.cards, shoe.draw()]),
+    });
+    hands[index] = grown;
+    return grown;
+  }
+
+  /**
+   * One card of SPEC 4.3's opening deal, drawn from the shoe. Item `B6`.
+   *
+   * The order is `OPENING_DEAL`'s and the cards are the shoe's, so the up card
+   * SPEC 10's branch reads is the rank of the card that was actually dealt:
+   * there is no second place it could be set from and nothing outside this
+   * module can choose it. Both dealer steps push into the same array, which is
+   * what makes the up card index 0 and the hole card index 1 by the deal order
+   * rather than by a flag.
    */
   function takeDealStep(step: DealStep): void {
-    if (step === 'dealerUp') {
-      upCard = openingUpCard;
+    if (step === 'playerCard') {
+      dealTo(FIRST_HAND);
+      return;
     }
+    dealer.push(shoe.draw());
+  }
+
+  /**
+   * SPEC 10: the player acts, unless no hand is left to act on.
+   *
+   * The scan is left to right, which is SPEC 4.6's play order, and "the first
+   * live hand" is therefore also "the next one to the right": every hand left
+   * of the active one has already reached a terminal state. When none is live
+   * the player's turn is over and SPEC 10 goes to the reveal, which is the arm
+   * a player natural takes without ever being offered an action.
+   */
+  function handOverToPlayer(): Phase {
+    const next = hands.findIndex((hand) => hand.state === 'live');
+    return next === NOT_FOUND ? REVEAL : playerTurnAt(next);
   }
 
   /** One step of the `dealing` queue, then SPEC 10's branch when it empties. */
@@ -697,7 +1048,10 @@ export function createTable(options: TableOptions = {}): Table {
       phase = dealingWith(dealQueue);
       return;
     }
-    switch (branchAfterDealing(upCard)) {
+    // SPEC 4.2: the player's two cards may already be a natural, which is
+    // terminal, so the hand is read before the branch and not after it.
+    resolve(FIRST_HAND, stateAfterCard(handAt(FIRST_HAND)));
+    switch (branchAfterDealing(upCardRank())) {
       case 'insurance':
         phase = Object.freeze({ kind: 'insurance', offer: insuranceOffer() });
         return;
@@ -705,14 +1059,50 @@ export function createTable(options: TableOptions = {}): Table {
         phase = PEEK;
         return;
       case 'playerTurn':
-        phase = playerTurnAt(FIRST_HAND);
+        phase = handOverToPlayer();
         return;
     }
   }
 
-  /** SPEC 10: a dealer natural resolves the round, otherwise the player acts. */
+  /**
+   * SPEC 4.7: the side wager, resolved immediately after the peek. Item `B11`.
+   *
+   * The net is `settlement.ts`'s, computed from the stake and the bit the peek
+   * just produced, and the credit is the wallet's `stake + net`. The unfunded
+   * remainder is **not** subtracted here: on the branch where the stake is lost
+   * the credit is zero, and a balance emptied to fund the stake would go
+   * negative between this call and the hand's. `wallet.ts` releases it at the
+   * round boundary instead, after every hand has been credited, and its header
+   * carries the whole argument.
+   */
+  function settleOpenStake(dealerNatural: boolean): void {
+    if (openStake === null) {
+      return;
+    }
+    const net = insuranceNet(openStake.stake, dealerNatural);
+    insurance = Object.freeze({
+      stake: openStake.stake,
+      net,
+      credit: wallet.settleInsurance(net),
+      deferred: openStake.deferred,
+      evenMoney: openStake.evenMoney,
+    });
+    openStake = null;
+  }
+
+  /**
+   * SPEC 10: a dealer natural resolves the round, otherwise the player acts.
+   *
+   * The peek is asked once and its bit is used twice, for SPEC 4.7's side wager
+   * and for SPEC 10's branch, because two peeks would be two looks at a card
+   * SPEC 4.3 keeps concealed. On the natural arm the round goes straight to
+   * `settling`, so no split, double or surrender wager can ever be at risk to
+   * one, which SPEC 4.4 calls "the whole point of the peek".
+   */
   function applyPeek(): void {
-    phase = dealerNaturalAtPeek() ? SETTLING : playerTurnAt(FIRST_HAND);
+    const dealerNatural = dealerNaturalAtPeek();
+    settleOpenStake(dealerNatural);
+    phase = dealerNatural ? SETTLING : handOverToPlayer();
   }
 
   /**
@@ -731,14 +1121,9 @@ export function createTable(options: TableOptions = {}): Table {
     phase = inContention() ? DEALER_TURN : SETTLING;
   }
 
-  /**
-   * Take one card for the dealer. `B6` at `BJ-8` is what fills it.
-   *
-   * Returns whether a card arrived. `BJ-7` wires no shoe, so none can, and
-   * that is what ends the dealer's turn on its first tick.
-   */
-  function drawDealerCard(): boolean {
-    return false;
+  /** Take one card for the dealer, from the same shoe the player is dealt from. */
+  function drawDealerCard(): void {
+    dealer.push(shoe.draw());
   }
 
   /**
@@ -746,14 +1131,26 @@ export function createTable(options: TableOptions = {}): Table {
    *
    * The policy is `dealer.ts`'s single comparison and is asked here rather
    * than re-derived, per that module's header: the turn, its pacing and SPEC
-   * 4.9's gate are the machine's, the rule is not. Today the draw is what ends
-   * the turn, because no card can arrive; `B8` at `BJ-4` grades the policy on
-   * its own and `C1` at `BJ-20` grades the dealer's turn end to end.
+   * 4.9's gate are the machine's, the rule is not. Item `B8` at `BJ-4` grades
+   * the policy on its own and `C1` at `BJ-20` grades the dealer's turn end to
+   * end.
    */
   function dealerDrawStep(): void {
-    if (!shouldHit(dealer) || !drawDealerCard()) {
+    if (!shouldHit(dealer)) {
       phase = SETTLING;
+      return;
     }
+    drawDealerCard();
+  }
+
+  /** The player side of one settlement. SPEC 4.10, through `settlement.ts`. */
+  function playerSideOf(hand: HandInPlay): PlayerHand {
+    return Object.freeze({
+      cards: hand.cards,
+      wager: hand.wager,
+      surrendered: hand.state === 'surrendered',
+      origin: Object.freeze({ fromSplit: hand.fromSplit }),
+    });
   }
 
   /**
@@ -762,42 +1159,70 @@ export function createTable(options: TableOptions = {}): Table {
    * Every hand is settled and then the round is closed, in that order, because
    * `wallet.ts` refuses a boundary with a hand still committed and its handoff
    * puts that discipline here. The shoe's own boundary, SPEC 4.1's reshuffle
-   * when the cut card was reached, is `B3`'s `endRound` and is wired at
-   * `BJ-8` alongside the deal that consumes cards in the first place.
+   * when the cut card was reached, is `B3`'s `endRound` and is called here for
+   * the same reason: the shoe cannot see a round ending, so the round module
+   * has to tell it, and it is the only call site.
    *
-   * **A hazard `BJ-8` must resolve, written down rather than guarded against.**
-   * The index below is this module's position in `hands`, used as the wallet's
-   * hand index. The two structures agree today because a round has exactly one
-   * hand, and they agree by position rather than by anything stronger. They can
-   * come apart at the split: `wallet.ts` **appends** a new hand, while SPEC
-   * 4.6 plays hands left to right, so a resplit of the first of three hands
-   * has to **insert** the fourth beside its parent here and would leave the
-   * wallet holding a different order. `B10` at `BJ-8` owns the split, and it
-   * must take one of two decisions and say which: carry the wallet's hand index
-   * on `HandInPlay`, populated from the commit result, or keep both structures
-   * positionally aligned by inserting in both. **A hand index is not carried
-   * today on purpose**: it would be indistinguishable from the position at
-   * every reachable state, so no test could hold it and no mutation could break
-   * it, which is the standard this module already applied to the accumulator
-   * reset in `apply`. Settling the wrong hand is a wrong payout, so this is not
-   * a tidiness note.
+   * **The hazard `BJ-7` wrote down is resolved by `HandInPlay.walletHand`, and
+   * this is the settlement that depends on it.** `wallet.ts` **appends** a
+   * split hand while SPEC 4.6 plays hands left to right, so `takeSplit` below
+   * **inserts** into `hands` and the two orders come apart at the second split:
+   * a resplit of the leftmost hand of three leaves this array holding the
+   * wallet's hands in the order 0, 2, 1. `B10` decided to carry the wallet's
+   * index rather than force one order to be the other, because they are
+   * genuinely different orders, commit order and play order, and forcing them
+   * together would mean the wallet inserting too and every index a caller was
+   * holding shifting underneath it. Settling by position instead of by
+   * `walletHand` pays the doubled wager of one hand onto the undoubled wager of
+   * another, which is a wrong payout and not a tidiness note.
+   *
+   * SPEC 4.7's insurance is not settled here: it resolved at the peek, and
+   * `wallet.endRound` refuses to close a round with a stake still open.
    */
   function settleRound(): void {
-    const settled: SettledHand[] = hands.map((hand, index) =>
-      Object.freeze({ wager: hand.wager, credit: wallet.settleHand(index, UNWIRED_NET) }),
-    );
+    const dealerHand: DealerHand = Object.freeze({ cards: Object.freeze([...dealer]) });
+    const settled: SettledHand[] = hands.map((hand) => {
+      const decided = settle(playerSideOf(hand), dealerHand);
+      return Object.freeze({
+        wager: hand.wager,
+        credit: wallet.settleHand(hand.walletHand, decided.net),
+        outcome: decided.outcome,
+        rung: decided.rung,
+      });
+    });
     wallet.endRound();
+    shoe.endRound();
     rounds += 1;
-    hands.length = 0;
-    dealer.length = 0;
-    upCard = null;
     phase = Object.freeze({
       kind: 'roundResult',
       result: Object.freeze({
         hands: Object.freeze(settled),
+        insurance,
         chips: wallet.readout().chips,
       }),
     });
+  }
+
+  /**
+   * Clear the table for the next round. SPEC 10's `Next Hand`, and nowhere else.
+   *
+   * **The cards stay on the table through SPEC 10's round result, and that is
+   * deliberate.** SPEC 12 prints both hand values there and SPEC 10 keeps the
+   * play surface behind every screen, so a machine that swept the felt at the
+   * settlement would leave the round result with nothing to show and the
+   * renderer with nothing to draw. The money is a different question and does
+   * move at the settlement: `wallet.endRound` clears its own hands there,
+   * because a wager that has been credited is no longer committed.
+   *
+   * `Next Hand` is the only exit SPEC 10 gives the round result, and Deal is
+   * legal only at `betting`, which is only reachable through it, so a second
+   * clear at the deal would be a line no round could reach.
+   */
+  function clearTable(): void {
+    hands.length = 0;
+    dealer.length = 0;
+    splits = 0;
+    insurance = null;
   }
 
   /**
@@ -845,17 +1270,78 @@ export function createTable(options: TableOptions = {}): Table {
 
   /** SPEC 4.5: end play on the active hand, then move right or reveal. */
   function resolveActiveHand(state: HandState): void {
-    const index = activeHand();
-    hands[index] = Object.freeze({ ...handAt(index), state });
-    const next = hands.findIndex((hand) => hand.state === 'live');
-    phase = next === NOT_FOUND ? REVEAL : playerTurnAt(next);
+    resolve(activeHand(), state);
+    phase = handOverToPlayer();
+  }
+
+  /**
+   * SPEC 4.6's split, once it has been allowed and funded. Item `B10`.
+   *
+   * The pair is separated, the new hand is **inserted beside its parent** so
+   * that SPEC 4.6's left-to-right play order survives a resplit, and each
+   * resulting hand "immediately receives one card". `fromSplit` goes on both
+   * halves, including the parent, because SPEC 4.6's "a two-card 21 on a split
+   * hand is 21, not a natural" is about both of them; `fromSplitAces` goes on
+   * both for the same reason. Both are set here and never recomputed, which is
+   * DESIGN section 2's rule and what stops the 3:2 payout drifting.
+   *
+   * **Whether the pair was Aces is read off one card**, because `canSplit` has
+   * already proved the two match: under SPEC 4.6's equal-value comparison no
+   * other rank is worth 1, and under equal rank they are the same rank, so an
+   * Ace pairs only with an Ace under either reading. A second test on the other
+   * card would be a clause that can never differ.
+   */
+  function takeSplit(index: number, walletHand: number, wager: number): void {
+    const hand = handAt(index);
+    const first = hand.cards[0];
+    const second = hand.cards[1];
+    if (first === undefined || second === undefined) {
+      throw new RangeError('SPEC 4.6 splits a two-card hand, and this one is not');
+    }
+    const aces = isAce(first.rank);
+    splits += 1;
+    hands[index] = Object.freeze({
+      ...hand,
+      cards: Object.freeze([first]),
+      fromSplit: true,
+      fromSplitAces: aces,
+    });
+    hands.splice(
+      index + 1,
+      0,
+      Object.freeze({
+        cards: Object.freeze([second]),
+        wager,
+        state: 'live',
+        fromSplit: true,
+        fromSplitAces: aces,
+        walletHand,
+      }),
+    );
+    dealOntoSplitHand(index);
+    dealOntoSplitHand(index + 1);
+    phase = handOverToPlayer();
+  }
+
+  /**
+   * SPEC 4.6: "Each resulting hand immediately receives one card."
+   *
+   * And then, for Aces only, "Split Aces receive exactly one card each and
+   * stand automatically." That is written as a state rather than as a guard on
+   * every action, so the hand simply stops being live and the phase moves past
+   * it; a split Ace hand cannot bust on its one card, since the highest total
+   * an Ace plus one card can reach is exactly 21, so there is no branch here.
+   */
+  function dealOntoSplitHand(index: number): void {
+    const grown = dealTo(index);
+    resolve(index, grown.fromSplitAces ? 'stood' : stateAfterCard(grown));
   }
 
   /**
    * What an accepted intent does. Reached only after the phase allowed it.
    *
    * The switch is exhaustive over `IntentKind` with no `default`, so a
-   * seventeenth intent added to the union fails the typecheck here rather than
+   * nineteenth intent added to the union fails the typecheck here rather than
    * being silently legal nowhere.
    */
   function perform(intent: Intent): IntentResult {
@@ -892,6 +1378,19 @@ export function createTable(options: TableOptions = {}): Table {
         const result = wallet.repeat(limits());
         return result.ok ? accepted('repeat') : refused('repeat', 'wallet', result.reason);
       }
+      case 'changeTable': {
+        // SPEC 10: "Change Table, only with no wager placed", and SPEC 6 says
+        // it "returns to the start screen with the balance intact". A pending
+        // wager blocks it with a reason and is never silently cleared, which
+        // SPEC 10 calls 4.11's rejection principle applied to the one control
+        // that leaves the screen. The reason is the machine's rather than the
+        // wallet's: `wallet.ts` has no phases and no opinion on leaving one.
+        if (wallet.readout().wager !== NO_WAGER) {
+          return refused('changeTable', 'availability', 'pending-wager');
+        }
+        phase = START;
+        return accepted('changeTable');
+      }
       case 'deal': {
         // SPEC 10: Deal only when tableMin <= wager <= min(tableMax, chips).
         // All three bounds are `dealRefusal`'s inside `commitInitial`, which
@@ -909,48 +1408,143 @@ export function createTable(options: TableOptions = {}): Table {
             state: 'live',
             fromSplit: false,
             fromSplitAces: false,
+            walletHand: result.hand,
           }),
         );
         dealQueue = [...OPENING_DEAL];
         phase = dealingWith(dealQueue);
         return accepted('deal');
       }
-      case 'takeInsurance':
+      case 'takeInsurance': {
+        // SPEC 4.7: an ordinary stake is offered "only if chips available >=
+        // the stake", and even money is "offered regardless of balance". Those
+        // are the same side wager under two availability rules, which is why
+        // the offer carries which one it is rather than the machine deciding
+        // again here. The shortfall of SPEC 4.7's fourth identity term is
+        // reachable on the second branch and on no other.
+        const offer = offerNow();
+        if (!offer.evenMoney && wallet.readout().chips < offer.stake) {
+          return refused('takeInsurance', 'availability', 'insufficient-chips');
+        }
+        wallet.takeInsurance(offer.stake);
+        openStake = Object.freeze({
+          stake: offer.stake,
+          evenMoney: offer.evenMoney,
+          deferred: wallet.readout().deferredStake,
+        });
+        phase = PEEK;
+        return accepted('takeInsurance');
+      }
       case 'declineInsurance': {
         // SPEC 4.4 and SPEC 10: accepted or declined, the offer always closes
         // before any peek result is applied, so both answers hand to `peek`
-        // and neither can see one. Taking the stake out of the balance, the
-        // 2:1 payout, even money's deferred remainder and the `+wager` net on
-        // both of its branches are item `B11` at `BJ-8`.
+        // and neither can see one.
         phase = PEEK;
-        return accepted(intent.kind);
+        return accepted('declineInsurance');
+      }
+      case 'hit': {
+        // SPEC 4.5: one additional card, then "a hand reaching exactly 21
+        // stands automatically" and "a hand over 21 busts immediately and play
+        // moves on". A hand still under 21 stays live and the phase object is
+        // left exactly as it was, which is what keeps the rest of the frame's
+        // queue alive: `drain` compares the phase by identity.
+        //
+        // **The refusal below is the one this file cannot reach, and it is
+        // named rather than counted as covered**, on the footing `hitRefusal`
+        // uses for the same clause. Both of that function's answers are
+        // provably `null` here: `handOverToPlayer` selects the leftmost hand
+        // whose state is `live`, so the active hand is never resolved, and
+        // `dealOntoSplitHand` stands a split Ace hand the moment its one card
+        // lands, so such a hand is never selected either. The rule is still
+        // graded, directly and on hands play cannot assemble, in
+        // `tests/unit/split.test.ts`, and it carries a mutation entry there;
+        // what is unreachable is this call site, not the clause.
+        const index = activeHand();
+        const refusal = hitRefusal(handAt(index));
+        if (refusal !== null) {
+          return refused('hit', 'availability', refusal);
+        }
+        const state = stateAfterCard(dealTo(index));
+        if (state !== 'live') {
+          resolve(index, state);
+          phase = handOverToPlayer();
+        }
+        return accepted('hit');
       }
       case 'stand': {
-        // SPEC 4.5: end play on this hand. The only one of the five actions
-        // the machine can finish on its own, because it needs no card and no
-        // chip: hands play left to right per SPEC 4.6 and the turn ends when
-        // none is live, which is SPEC 4.9's precondition for the reveal.
+        // SPEC 4.5: end play on this hand. Hands play left to right per SPEC
+        // 4.6 and the turn ends when none is live, which is SPEC 4.9's
+        // precondition for the reveal.
         resolveActiveHand('stood');
         return accepted('stand');
       }
-      case 'hit':
-      case 'double':
-      case 'split':
+      case 'double': {
+        // SPEC 4.5, item `B9`: "Double this hand's wager, one card, end the
+        // hand." The increment leaves the balance when the commit is accepted,
+        // per SPEC 4.11, and the hand's wager becomes what the wallet says it
+        // is rather than a doubling computed twice.
+        //
+        // A doubled hand that busts is recorded as `bust` and not as
+        // `doubled`, because SPEC 4.9's contention gate asks whether a hand
+        // busted and a hand can be both. The wager is doubled either way and
+        // the hand ends either way; what the state records is what happened to
+        // the cards, and rung 5 of SPEC 4.10 reads the cards regardless.
+        const index = activeHand();
+        const hand = handAt(index);
+        const refusal = doubleRefusal(hand, context());
+        if (refusal !== null) {
+          return refused('double', 'availability', refusal);
+        }
+        const commit = wallet.commitDouble(hand.walletHand);
+        if (!commit.ok) {
+          return refused('double', 'wallet', commit.reason);
+        }
+        hands[index] = Object.freeze({ ...hand, wager: commit.wager });
+        const grown = dealTo(index);
+        resolve(index, isBust(grown.cards) ? 'bust' : 'doubled');
+        phase = handOverToPlayer();
+        return accepted('double');
+      }
+      case 'split': {
+        // SPEC 4.6, item `B10`. The pair test, the split-Ace rule and the cap
+        // are the availability layer's; the equal wager is the wallet's, and
+        // its refusal is what SPEC 4.6 calls "unavailable on that hand with the
+        // reason surfaced, including on the second and third split".
+        const index = activeHand();
+        const hand = handAt(index);
+        const refusal = splitRefusal(hand, context());
+        if (refusal !== null) {
+          return refused('split', 'availability', refusal);
+        }
+        const commit = wallet.commitSplit(hand.walletHand);
+        if (!commit.ok) {
+          return refused('split', 'wallet', commit.reason);
+        }
+        takeSplit(index, commit.hand, commit.wager);
+        return accepted('split');
+      }
       case 'surrender': {
-        // Accepted by the phase and inert until `BJ-8`. Each needs something
-        // this part does not have: Hit and Double need a card from the shoe,
-        // Double and Split need the wallet commits `wallet.ts` already
-        // exports, and all four need the per-hand availability rules of SPEC
-        // 4.5, 4.6 and 4.8. Those are items `B9`, `B10` and `B12`, and they
-        // arrive **under** this gate rather than beside it: the phase check
-        // above does not move, and a hand that may not double is refused by
-        // the layer the wallet occupies today.
-        return accepted(intent.kind);
+        // SPEC 4.8, item `B12`: "Returns wager / 2; the hand ends
+        // immediately." The return is not computed here. The hand is marked
+        // and rung 1 of SPEC 4.10 nets `-wager / 2` at settlement, so the
+        // balance is credited `wager - wager / 2`, which is the half SPEC 4.8
+        // returns. A credit written here would be a second arithmetic for the
+        // same sentence.
+        const index = activeHand();
+        const refusal = surrenderRefusal(handAt(index), context());
+        if (refusal !== null) {
+          return refused('surrender', 'availability', refusal);
+        }
+        resolveActiveHand('surrendered');
+        return accepted('surrender');
       }
       case 'nextHand': {
         // SPEC 10: chips < tableMin ? BUST_OUT : BETTING, asked through SPEC
         // 4.12's own predicate so there is one reading of "out at this table".
+        // The felt is swept here rather than at the settlement, so that SPEC
+        // 12's round result still has the round it is printing.
         const state = wallet.readout();
+        clearTable();
         phase = bustOut(selected, state.bestBalance, state.chips).out ? BUST_OUT : BETTING;
         return accepted('nextHand');
       }
@@ -1029,19 +1623,15 @@ export function createTable(options: TableOptions = {}): Table {
    *
    * **The comparison is the phase itself, not its tag, and the difference is a
    * defect rather than a preference.** DESIGN section 2 makes the active hand
-   * part of the `playerTurn` value, so once `BJ-8`'s split puts a second hand
-   * on the table, Stand moves `playerTurn(0)` to `playerTurn(1)`: the same tag,
-   * a different screen. Compared by tag the queue survives, and a double press
+   * part of the `playerTurn` value, so once a split puts a second hand on the
+   * table, Stand moves `playerTurn(0)` to `playerTurn(1)`: the same tag, a
+   * different screen. Compared by tag the queue survives, and a double press
    * on Stand stands the hand the player has not looked at yet, which is exactly
    * the trap above. Every phase object is built frozen at each transition and
    * never edited in place, so identity is exact here and strictly stronger than
-   * the tag on every other transition too.
-   *
-   * The distinguishing case cannot be driven yet: no `BJ-7` transition produces
-   * the same tag with a different payload, because that needs two hands.
-   * **`BJ-8` must land the two-hand discard regression test and a mutation
-   * entry regressing this compare to `phase.kind` alongside its split**, since
-   * only there can either of them fail.
+   * the tag on every other transition too. `BJ-8` brought the second hand, and
+   * `tests/unit/split.test.ts` drives that case with a mutation entry beside
+   * it that regresses this compare to `phase.kind`.
    */
   function drain(): DrainReport {
     const rejected: IntentResult[] = [];
@@ -1126,7 +1716,23 @@ export function createTable(options: TableOptions = {}): Table {
       state: hand.state,
       fromSplit: hand.fromSplit,
       fromSplitAces: hand.fromSplitAces,
+      walletHand: hand.walletHand,
     });
+  }
+
+  /**
+   * How many of the dealer's cards the player may not see. SPEC 4.3, `B6`.
+   *
+   * One while the hole card has been dealt and the player's turn has not
+   * ended, and none otherwise. The count is derived from the phase rather than
+   * carried on the cards, and that is the representation `B6` chose: **exactly
+   * one card in this game is ever face down**, and SPEC 4.3 fixes which one by
+   * the deal order. A per-card flag would be a field that reads the same on
+   * every card in every reachable state but one, which is the standard this
+   * module already applies to the accumulator reset in `apply`.
+   */
+  function concealedDealerCards(): number {
+    return CONCEALED_PHASES.includes(phase.kind) && dealer.length > HOLE_CARD ? 1 : 0;
   }
 
   /**
@@ -1139,17 +1745,29 @@ export function createTable(options: TableOptions = {}): Table {
    * phase is shared rather than copied because a phase object is built frozen
    * at each transition and never edited in place, so there is nothing to
    * protect it from.
+   *
+   * **The hole card is not in it while it is down**, which is the same stance
+   * `dealer.ts` takes on the peek's result: a caller cannot leak what it was
+   * never handed. `dealerVisible` is the face-up cards and `dealerConcealed`
+   * says how many are not, so a renderer knows how many backs to draw without
+   * holding the face, and SPEC 11's "dealer visible hand value counts face-up
+   * cards only" is `handValue(dealerVisible)` rather than a second rule about
+   * which cards count.
    */
   function readout(): TableReadout {
+    const concealed = concealedDealerCards();
     return Object.freeze({
       phase,
       table: selected,
+      rules,
       hands: Object.freeze(hands.map(copyHand)),
-      dealer: Object.freeze([...dealer]),
-      upCard,
+      dealerVisible: Object.freeze(dealer.slice(0, dealer.length - concealed)),
+      dealerConcealed: concealed,
       elapsed,
       queued: Object.freeze([...queued]),
       rounds,
+      splits,
+      shoe: shoe.readout(),
       wallet: wallet.readout(),
     });
   }
