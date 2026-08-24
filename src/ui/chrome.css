@@ -1,0 +1,400 @@
+/*
+ * The chrome stylesheet. Items `M1` and `C5`.
+ *
+ * **No literal value appears here.** Every colour, size, radius, type step and
+ * duration resolves through a custom property declared in `tokens.css`, which is
+ * item `E1`'s rule and is scanned by `tests/unit/tokens.test.ts`: a hex or a
+ * `12px` in this file fails the unit suite rather than merely looking wrong.
+ *
+ * The three exceptions are not values on any scale and could not be tokens.
+ * `100%` and `100vh` are the viewport, which QUALITY-BAR section 15 has no token
+ * for and item `F1` at `BJ-16` owns; `1fr` and `minmax(0, 1fr)` are grid
+ * fractions rather than lengths; and `0` carries no unit and needs no token.
+ *
+ * **The layout rule `C5` depends on is the grid below.** `.bj-shell` is three
+ * rows, `.bj-overlay` is absolutely positioned inside the middle one, and that
+ * is the whole of "overlays never cover a continuous readout". `position: fixed`
+ * here, or an overlay hoisted out of `.bj-body`, would break it silently, which
+ * is why `C5` measures rendered boxes rather than reading this file.
+ *
+ * **Elements the chrome toggles with `hidden` never carry a `display` of their
+ * own**, because a `display: flex` in a plain rule beats the browser's default
+ * `[hidden] { display: none }` and leaves a hidden element on screen. Every such
+ * rule below is written as `:not([hidden])`.
+ *
+ * Breakpoints are deliberately absent. Item `F1` at `BJ-16` owns the four of
+ * them, resolved by width first, and adding a media query here first would be
+ * that part's work done in the wrong place and graded nowhere.
+ */
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--bj-ground);
+  color: var(--bj-text);
+  font-family: system-ui, sans-serif;
+  font-size: var(--type-base);
+  line-height: var(--leading-body);
+}
+
+/* ---------------------------------------------------------------------------
+ * The shell. Three rows: readouts, play surface, controls.
+ * ------------------------------------------------------------------------- */
+
+.bj-shell {
+  box-sizing: border-box;
+  min-height: 100vh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: var(--space-3);
+  padding: var(--space-3);
+}
+
+.bj-top {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.bj-body {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+}
+
+.bj-stage {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+}
+
+.bj-surface {
+  display: block;
+  border-radius: var(--radius-lg);
+}
+
+.bj-controls {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-2);
+}
+
+/* ---------------------------------------------------------------------------
+ * SPEC 11's continuous readouts.
+ * ------------------------------------------------------------------------- */
+
+.bj-readouts__list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2) var(--space-5);
+  margin: 0;
+}
+
+.bj-readout {
+  display: flex;
+  flex-direction: column;
+}
+
+.bj-readout__label {
+  color: var(--bj-text-muted);
+  font-size: var(--type-xs);
+  text-transform: uppercase;
+}
+
+.bj-readout__value {
+  margin: 0;
+  font-size: var(--type-md);
+  line-height: var(--leading-tight);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------------------------------------------------------------------------
+ * Buttons and chips.
+ * ------------------------------------------------------------------------- */
+
+.bj-button,
+.bj-chip {
+  min-height: var(--target-min);
+  min-width: var(--target-min);
+  margin: 0;
+  padding: var(--space-2) var(--space-4);
+  border: var(--border-hair) solid var(--bj-text-muted);
+  border-radius: var(--radius-md);
+  background: var(--bj-elevated);
+  color: var(--bj-text);
+  font: inherit;
+  cursor: pointer;
+  transition: background-color var(--dur-2) var(--ease-out);
+}
+
+.bj-button:focus-visible,
+.bj-chip:focus-visible {
+  outline: var(--focus-ring-width) var(--focus-ring-style) var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+.bj-button[aria-pressed='true'] {
+  border-color: var(--bj-accent);
+  color: var(--bj-accent);
+}
+
+.bj-button--primary {
+  border-color: var(--bj-accent);
+  border-width: var(--border-thin);
+  color: var(--bj-accent);
+}
+
+.bj-button--quiet {
+  background: transparent;
+}
+
+.bj-chip {
+  border-radius: var(--radius-pill);
+  border-color: var(--chip-ring);
+  color: var(--chip-glyph);
+  font-variant-numeric: tabular-nums;
+}
+
+.bj-chip[data-chip='10'] {
+  background: var(--chip-10-fill);
+}
+
+.bj-chip[data-chip='50'] {
+  background: var(--chip-50-fill);
+}
+
+.bj-chip[data-chip='100'] {
+  background: var(--chip-100-fill);
+}
+
+.bj-chip[data-chip='500'] {
+  background: var(--chip-500-fill);
+}
+
+/* After the four fills, so a disabled chip stops reading as a chip. SPEC 4.11
+ * asks for exactly this state and for no other control. */
+.bj-button:disabled,
+.bj-chip:disabled {
+  background: var(--bj-elevated);
+  border-color: var(--bj-text-muted);
+  border-style: dashed;
+  color: var(--bj-text-muted);
+  cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------------------
+ * The screens of SPEC 10, one per phase, and the refusal notice.
+ * ------------------------------------------------------------------------- */
+
+.bj-notice {
+  margin: 0;
+  min-height: var(--space-5);
+  color: var(--bj-negative);
+  font-size: var(--type-sm);
+}
+
+.bj-screen:not([hidden]),
+.bj-betting:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.bj-actions:not([hidden]) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.bj-screen__title,
+.bj-panel__heading {
+  margin: 0;
+  font-size: var(--type-lg);
+  line-height: var(--leading-tight);
+}
+
+.bj-screen__prompt,
+.bj-panel__note {
+  margin: 0;
+  color: var(--bj-text-muted);
+  font-size: var(--type-sm);
+}
+
+.bj-chips,
+.bj-betting__buttons,
+.bj-screen__buttons,
+.bj-tables,
+.bj-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+/* ---------------------------------------------------------------------------
+ * SPEC 12's round result. A screen in the controls row, not an overlay.
+ * ------------------------------------------------------------------------- */
+
+.bj-screen--result:not([hidden]) {
+  flex-direction: column;
+  align-items: stretch;
+}
+
+.bj-result__hands {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-4);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.bj-result__hand {
+  border: var(--border-hair) solid var(--bj-text-muted);
+  border-radius: var(--radius-md);
+  padding: var(--space-3);
+}
+
+.bj-result__heading {
+  margin: 0;
+  font-size: var(--type-sm);
+  color: var(--bj-text-muted);
+  text-transform: uppercase;
+}
+
+.bj-result__fields {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: var(--space-1) var(--space-3);
+  margin: 0;
+}
+
+.bj-result__field {
+  display: contents;
+}
+
+.bj-result__label {
+  color: var(--bj-text-muted);
+  font-size: var(--type-sm);
+}
+
+.bj-result__value {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.bj-result__coach {
+  margin: var(--space-2) 0 0;
+  padding-left: var(--space-4);
+  color: var(--bj-text-muted);
+  font-size: var(--type-sm);
+}
+
+.bj-result__insurance,
+.bj-result__balance {
+  margin: 0;
+}
+
+.bj-result__balance {
+  font-size: var(--type-md);
+}
+
+/* ---------------------------------------------------------------------------
+ * SPEC 10's three overlays. Absolutely positioned inside the play-surface row,
+ * which is the whole of C5's first clause.
+ * ------------------------------------------------------------------------- */
+
+.bj-overlay-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.bj-overlay:not([hidden]) {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+}
+
+.bj-overlay {
+  position: absolute;
+  inset: 0;
+  overflow: auto;
+  box-sizing: border-box;
+  padding: var(--space-4);
+  border: var(--border-thin) solid var(--bj-accent);
+  border-radius: var(--radius-lg);
+  background: var(--bj-ground);
+}
+
+.bj-overlay__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--space-3);
+}
+
+.bj-overlay__title {
+  margin: 0;
+  font-size: var(--type-xl);
+  line-height: var(--leading-tight);
+}
+
+.bj-overlay__subtitle {
+  margin: 0;
+  color: var(--bj-text-muted);
+  font-size: var(--type-sm);
+}
+
+.bj-panel > * + * {
+  margin-top: var(--space-3);
+}
+
+.bj-stats {
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: var(--space-1) var(--space-4);
+  margin: 0;
+  justify-content: start;
+}
+
+.bj-stat {
+  display: contents;
+}
+
+.bj-stat__label {
+  color: var(--bj-text-muted);
+}
+
+.bj-stat__value {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.bj-milestones,
+.bj-history {
+  margin: 0;
+  padding-left: var(--space-5);
+}
+
+.bj-milestone[data-awarded='false'] {
+  color: var(--bj-text-muted);
+}
+
+.bj-milestone[data-awarded='true'] {
+  color: var(--bj-positive);
+}
+
+.bj-history__entry {
+  font-size: var(--type-sm);
+}

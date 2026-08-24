@@ -22,10 +22,11 @@
  * and it moves only by a settled outcome. `BJ-6` pinned two of the four at zero
  * and put them in the readout anyway; `BJ-8` moved them, through `takeInsurance`
  * and `settleInsurance` below, and the expression did not change shape when it
- * did. Writing the three-term form and widening it later is the exact defect the
- * soak `H6` at `BJ-12` carries as its negative control: it passes every round
- * until the first insured one. `B15` at `BJ-15` grades the identity at the
- * controls and `B11` at `BJ-8` grades the two terms themselves.
+ * did. Writing the two-term form `chips + committed` and widening it later is the
+ * exact defect the soak `H6` at `BJ-12` carries as its negative control: that
+ * form passes every round until the first insured one. `B15` at `BJ-15` grades
+ * the identity at the controls and `B11` at `BJ-8` grades the two terms
+ * themselves.
  *
  * **The balance never goes negative, at any single application and not merely at
  * rest**, which is `B11`'s last clause. Three things make that true rather than
@@ -499,6 +500,26 @@ export function dealRefusal(wager: number, limits: TableLimits, chips: number): 
   return null;
 }
 
+/**
+ * Whether the balance covers one more wager of a given size. SPEC 4.5 and 4.6.
+ *
+ * "Chips available >= the hand's wager", which is the funding half of Double
+ * Down and of Split. **One reading, and this is it.** `commitDouble` and
+ * `commitSplit` below ask it before they spend, `strategy.ts` asks it to decide
+ * whether the coach may recommend an action the player cannot pay for, and the
+ * chrome at `BJ-15` asks it to grey the two controls out before they are
+ * pressed. Three call sites and one comparison: the coach and the chrome cannot
+ * ask the commits themselves, because a commit **spends** what it checks, and
+ * three separate spellings of `>=` would agree until a house rule moved.
+ *
+ * Exported at `BJ-15` for the reason the `BJ-9` handoff gave: the chrome needed
+ * the same answer, and a third inline reading is what the export exists to
+ * prevent.
+ */
+export function canFund(wager: number, chips: number): boolean {
+  return wager <= chips;
+}
+
 // ---------------------------------------------------------------------------
 // The wallet
 // ---------------------------------------------------------------------------
@@ -763,7 +784,7 @@ export function createWallet(options: WalletOptions = {}): Wallet {
       throw new RangeError(`hand ${String(hand)} has settled and cannot take another chip`);
     }
     const increment = state.wager;
-    if (increment > chips) {
+    if (!canFund(increment, chips)) {
       return Object.freeze({ ok: false, reason: 'insufficient-chips' });
     }
     chips -= increment;
@@ -785,7 +806,7 @@ export function createWallet(options: WalletOptions = {}): Wallet {
       throw new RangeError(`hand ${String(hand)} has settled and cannot be split`);
     }
     const equal = state.wager;
-    if (equal > chips) {
+    if (!canFund(equal, chips)) {
       return Object.freeze({ ok: false, reason: 'insufficient-chips' });
     }
     chips -= equal;

@@ -83,6 +83,7 @@ import type { HouseRules } from './rules';
 import type { ActionContext, TableReadout } from './table';
 import { doubleRefusal, hitRefusal, splitRefusal, surrenderRefusal } from './table';
 import type { HandInPlay, IntentKind } from './types';
+import { canFund } from './wallet';
 
 // ---------------------------------------------------------------------------
 // The alphabet of a decision
@@ -644,12 +645,15 @@ export function situationAt(readout: TableReadout): CoachSituation | null {
  * Whether the balance covers one more wager the size of this hand's.
  *
  * SPEC 4.5's "chips available >= the hand's wager" and SPEC 4.6's "requires
- * chips available >= that hand's wager", which `wallet.ts` implements once each
- * as `increment > chips` against the hand's own wager. Written as `<=` here so
- * the sentence reads the way both spec sections write it.
+ * chips available >= that hand's wager". **The comparison is `wallet.ts`'s
+ * `canFund` and is not spelled again here**: `BJ-9` wrote it out because the
+ * wallet exposed no pure predicate and only decided the question inside the two
+ * commits, which spend what they check; `BJ-15` needed the same answer for the
+ * chrome and exported one, so the coach, the chrome and both commits now ask a
+ * single comparison. What is left here is which figures to ask it about.
  */
 function fundsAnEqualWager(situation: CoachSituation): boolean {
-  return situation.hand.wager <= situation.chips;
+  return canFund(situation.hand.wager, situation.chips);
 }
 
 /**

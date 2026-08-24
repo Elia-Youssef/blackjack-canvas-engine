@@ -5,8 +5,19 @@
  * `E1` at BJ-1, `B1` at BJ-2, `B2` and `B3` at BJ-3, `B7` and `B8` at BJ-4,
  * `B13` and `B14` at BJ-5, `J1` and `J2` at BJ-6, `C2` at BJ-7, `B6`, `B9`,
  * `B10`, `B11` and `B12` at BJ-8, `J3` at BJ-9, `J5` and `J6` at BJ-10,
- * `I1`, `I2` and `I3` at BJ-11, `H6`, `M5`, `B5` and `B16` at BJ-12, and
- * `E3`, `E4` and `E5` at BJ-13.
+ * `I1`, `I2` and `I3` at BJ-11, `H6`, `M5`, `B5` and `B16` at BJ-12,
+ * `E3`, `E4` and `E5` at BJ-13, and `M1`, `C5`, `C8` and `B15` at BJ-15.
+ *
+ * The `BJ-15` block is the first to be measured by the **browser** gate rather
+ * than by `npm run test`. Its three items are graded in Playwright over the
+ * built `dist/`, because a DOM element, a rendered box and a real round cannot
+ * be seen from a unit test, so a mutation to a component, to the stylesheet or
+ * to the composition root's frame is invisible to the unit suite and has to be
+ * required red by the gate that actually watches it. `browserGate` below builds
+ * one command per spec, so an entry names the gate it breaks. Four entries in
+ * that block still go to `npm run test`: the refusal sentences, the scene
+ * arrangement and the frame loop's one conversion are arithmetic and are
+ * covered by `tests/unit/chrome.test.ts`.
  *
  * The `BJ-11` block breaks the storage seam, the versioned envelope and the
  * field-by-field salvage. Two of its entries are additions rather than edits,
@@ -91,6 +102,38 @@ const LINT = {
   bin: join(PROJECT_ROOT, 'node_modules', 'eslint', 'bin', 'eslint.js'),
   argv: ['.', '--ignore-pattern', 'tests/lint/fixtures/**'],
 };
+
+/**
+ * The browser gate, one spec at a time, on Chromium. Added at BJ-15.
+ *
+ * The three chrome items are graded in Playwright over the built `dist/`, so a
+ * mutation to a component or to the stylesheet is invisible to `npm run test`
+ * and has to be required red by the gate that actually watches it. One command
+ * per spec rather than one for all three, so a line below names the gate it
+ * breaks rather than "some browser test went red".
+ *
+ * **The preview server must not already be running.** `playwright.config.ts`
+ * reuses an existing server outside CI, and a reused server serves the `dist/`
+ * that was built before the mutation was applied. Every invocation here starts
+ * its own, which rebuilds; the baseline check below would also catch a stale one
+ * the moment a mutation stopped being visible, but the cheaper answer is not to
+ * leave a preview server running while this script is.
+ *
+ * Chromium alone. The merge gate runs all three engines; what these entries have
+ * to show is that the assertion can fail, and a second and third engine would
+ * triple the wall clock to show it twice more.
+ */
+function browserGate(spec) {
+  return {
+    label: `npm run test:browser -- ${spec} (chromium)`,
+    bin: join(PROJECT_ROOT, 'node_modules', '@playwright', 'test', 'cli.js'),
+    argv: ['test', '--project=chromium', '--reporter=line', `tests/browser/${spec}`],
+  };
+}
+
+const BETTING = browserGate('betting.spec.ts');
+const OVERLAYS = browserGate('overlays.spec.ts');
+const ROUND_RESULT = browserGate('round-result.spec.ts');
 
 /**
  * Mutations that edit an existing file.
@@ -1327,10 +1370,13 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The guard reads `canFund` since BJ-15 collapsed the three spellings of
+    // SPEC 4.5's funding rule into one exported comparison. The mutation is
+    // unchanged in meaning: the double must refuse one chip lower than it does.
     item: 'B15',
     name: 'the double refuses at exactly the balance it needs',
     file: 'src/core/wallet.ts',
-    find: '    if (increment > chips) {',
+    find: '    if (!canFund(increment, chips)) {',
     replace: '    if (increment >= chips) {',
     detectedBy: UNIT,
   },
@@ -1346,7 +1392,7 @@ const EDITS = [
     item: 'B15',
     name: 'the split refuses at exactly the balance it needs',
     file: 'src/core/wallet.ts',
-    find: '    if (equal > chips) {',
+    find: '    if (!canFund(equal, chips)) {',
     replace: '    if (equal >= chips) {',
     detectedBy: UNIT,
   },
@@ -2613,22 +2659,23 @@ const EDITS = [
     item: 'J3',
     name: 'the coach stops asking whether the balance funds the increment',
     file: 'src/core/strategy.ts',
-    find: '  return situation.hand.wager <= situation.chips;',
+    find: '  return canFund(situation.hand.wager, situation.chips);',
     replace: '  void situation;\n  return true;',
     detectedBy: UNIT,
   },
   {
     // The off-by-one the whole-clause mutation above cannot reach. SPEC 4.5 and
-    // 4.6 both say "chips available **>=** the hand's wager", and `wallet.ts`
-    // refuses only when `increment > chips`, so a balance of exactly the wager
-    // funds the double. A strict comparison here disagrees with the wallet on
-    // one balance and on no other, which is why the boundary is driven at the
-    // wager and at one chip under it rather than at a comfortable balance.
+    // 4.6 both say "chips available **>=** the hand's wager", so a balance of
+    // exactly the wager funds the double. BJ-15 collapsed the coach's reading
+    // and the wallet's into `canFund`, so the strict comparison now sits in
+    // `wallet.ts`; breaking it there breaks the coach and the two commits at
+    // once, which is what one reading means. The boundary is driven at the wager
+    // and at one chip under it rather than at a comfortable balance.
     item: 'J3',
     name: 'the funding comparison goes strict, refusing a balance of exactly the wager',
-    file: 'src/core/strategy.ts',
-    find: '  return situation.hand.wager <= situation.chips;',
-    replace: '  return situation.hand.wager < situation.chips;',
+    file: 'src/core/wallet.ts',
+    find: '  return wager <= chips;',
+    replace: '  return wager < chips;',
     detectedBy: UNIT,
   },
   {
@@ -4090,6 +4137,210 @@ const EDITS = [
     replace: "  'translate',",
     detectedBy: UNIT,
   },
+
+  // -------------------------------------------------------------------------
+  // BJ-15. The DOM chrome: B15's betting rules at the controls, C5's overlays,
+  // C8's round result. Every one of these is invisible to `npm run test`,
+  // because the thing it breaks is a component, a stylesheet rule or the
+  // composition root's frame, so each is required red by the browser gate that
+  // grades the item.
+  // -------------------------------------------------------------------------
+
+  {
+    item: 'B15',
+    name: 'a chip tap over the ceiling is clamped instead of refused',
+    file: 'src/core/wallet.ts',
+    find: "  if (next > wagerCeiling(limits, chips)) {\n    return refused('above-ceiling');\n  }",
+    replace:
+      '  if (next > wagerCeiling(limits, chips)) {\n' +
+      '    return accepted(wagerCeiling(limits, chips));\n' +
+      '  }',
+    detectedBy: BETTING,
+  },
+  {
+    item: 'B15',
+    name: 'the chip rack disables the 500 by name instead of by the ceiling',
+    file: 'src/ui/components/betting.ts',
+    find: '        const enabled = chipEnabled(denomination, limits, balance);',
+    replace: '        const enabled = denomination !== 500;',
+    detectedBy: BETTING,
+  },
+  {
+    item: 'B15',
+    name: 'a chip button computes a wager instead of adding its denomination',
+    file: 'src/ui/components/betting.ts',
+    find: "        actions.queue({ kind: 'tapChip', chip: denomination });",
+    replace: "        actions.queue({ kind: 'max' });",
+    detectedBy: BETTING,
+  },
+  {
+    item: 'B15',
+    name: 'Deal stops being blocked below the table minimum',
+    file: 'src/core/wallet.ts',
+    find: "  if (wager < limits.minimum) {\n    return 'below-minimum';\n  }",
+    replace: '  if (wager < limits.minimum) {\n    return null;\n  }',
+    detectedBy: BETTING,
+  },
+  {
+    item: 'B15',
+    name: 'Max stops flooring onto the 10 grid',
+    file: 'src/core/wallet.ts',
+    find: '  return Math.floor(wagerCeiling(limits, chips) / WAGER_GRID) * WAGER_GRID;',
+    replace: '  return wagerCeiling(limits, chips);',
+    detectedBy: BETTING,
+  },
+  {
+    item: 'B15',
+    name: 'a refusal stops surfacing its reason to the player',
+    file: 'src/ui/components/notice.ts',
+    find: '      setText(root, reasonText(notice.reason));',
+    replace: "      setText(root, '');",
+    detectedBy: BETTING,
+  },
+  {
+    // The same break the `UNIT` entry above makes to the readout's field list,
+    // made to the published sum and required red by the gate that grades `B15`.
+    // It is only reachable on an insured round: on every other round the third
+    // term is identically zero and the four-term form and the two-term one
+    // agree on every frame, which is why the betting spec drives seed 4.
+    item: 'B15',
+    name: 'the published identity drops the insurance stake, at the controls',
+    file: 'src/core/wallet.ts',
+    find: '      conserved: chips + committed() + insuranceStake - deferredStake,',
+    replace: '      conserved: chips + committed() - deferredStake,',
+    detectedBy: BETTING,
+  },
+  {
+    item: 'C5',
+    name: 'the overlay leaves the play-surface row and covers the readouts',
+    file: 'src/ui/chrome.css',
+    find: '.bj-overlay {\n  position: absolute;',
+    replace: '.bj-overlay {\n  position: fixed;',
+    detectedBy: OVERLAYS,
+  },
+  {
+    item: 'C5',
+    name: 'the overlay host is mounted on the shell instead of inside the body row',
+    file: 'src/ui/chrome.ts',
+    find: '  shell.body.append(overlays.host);',
+    replace: '  shell.root.append(overlays.host);',
+    detectedBy: OVERLAYS,
+  },
+  {
+    item: 'C5',
+    name: 'opening an overlay reaches into the game and clears the wager',
+    file: 'src/main.ts',
+    find: '    openOverlay(id: OverlayId): void {\n      overlay = id;\n    },',
+    replace:
+      '    openOverlay(id: OverlayId): void {\n' +
+      '      overlay = id;\n' +
+      "      table.queue({ kind: 'clear' });\n" +
+      '    },',
+    detectedBy: OVERLAYS,
+  },
+  {
+    item: 'C5',
+    name: 'the frame loop pauses while an overlay is open',
+    file: 'src/main.ts',
+    find: '    drainInput();\n    table.update(dt);',
+    replace: '    drainInput();\n    table.update(overlay === null ? dt : 0);',
+    detectedBy: OVERLAYS,
+  },
+  {
+    item: 'C8',
+    name: 'the round result prints the dealer value as the player value',
+    file: 'src/ui/components/round-result.ts',
+    find: "      field('Your hand', 'player-value', formatChips(playerValue)),",
+    replace: "      field('Your hand', 'player-value', formatChips(dealerValue)),",
+    detectedBy: ROUND_RESULT,
+  },
+  {
+    item: 'C8',
+    name: 'the round result prints a fixed reason instead of the deciding rung',
+    file: 'src/ui/components/round-result.ts',
+    find: "      field('Reason', 'reason', rungText(settled.rung)),",
+    replace: "      field('Reason', 'reason', rungText(7)),",
+    detectedBy: ROUND_RESULT,
+  },
+  {
+    item: 'C8',
+    name: 'the round result prints a fixed outcome',
+    file: 'src/ui/components/round-result.ts',
+    find: "      field('Outcome', 'outcome', outcomeText(settled.outcome)),",
+    replace: "      field('Outcome', 'outcome', outcomeText('PUSH')),",
+    detectedBy: ROUND_RESULT,
+  },
+  {
+    item: 'C8',
+    name: 'the chip delta forgets that the wager already left the balance',
+    file: 'src/ui/components/round-result.ts',
+    find: "      field('Chips', 'delta', formatDelta(settled.credit - settled.wager)),",
+    replace: "      field('Chips', 'delta', formatDelta(settled.credit)),",
+    detectedBy: ROUND_RESULT,
+  },
+  {
+    item: 'C8',
+    name: 'the insurance result is never shown',
+    file: 'src/ui/components/round-result.ts',
+    find: '      setHidden(insurance, side === null);',
+    replace: '      setHidden(insurance, true);',
+    detectedBy: ROUND_RESULT,
+  },
+  {
+    // SPEC 12 prints the result per hand. A constant index passes every
+    // single-hand round in the suite, which is why the spec drives a split.
+    item: 'C8',
+    name: 'every verdict is filed under the first hand rather than the hand it was made on',
+    file: 'src/ui/components/round-result.ts',
+    find: '    const mine = verdicts.filter((entry) => entry.hand === index);',
+    replace: '    const mine = verdicts.filter((entry) => entry.hand === 0);',
+    detectedBy: ROUND_RESULT,
+  },
+  {
+    item: 'C8',
+    name: 'a round played with the coach off records verdicts as if it were on',
+    file: 'src/main.ts',
+    find: "      if (applied.kind === 'deal') {\n        verdicts = coachMode === 'off' ? null : [];\n      }",
+    replace: "      if (applied.kind === 'deal') {\n        verdicts = [];\n      }",
+    detectedBy: ROUND_RESULT,
+  },
+
+  // The unit armour BJ-15 added beside the browser specs: the sentences, the
+  // scene arrangement and the loop's one conversion, none of which needs a page.
+  {
+    item: 'B15',
+    name: 'two refusals collapse onto one sentence',
+    file: 'src/ui/text.ts',
+    find: "    case 'below-minimum':\n      return 'That is below the table minimum.';",
+    replace:
+      "    case 'below-minimum':\n" +
+      "      return 'That is more than the table maximum or your balance allows.';",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M1',
+    name: 'a hand stops being centred on the point it is laid out at',
+    file: 'src/render/scene.ts',
+    find: '  const left = centreX - total / 2;',
+    replace: '  const left = centreX;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M1',
+    name: 'the felt stops rebaking when the device pixel ratio changes',
+    file: 'src/render/scene.ts',
+    find: '    current.dpr !== next.dpr ||',
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M1',
+    name: 'the frame loop invents a delta for the frame it cannot measure',
+    file: 'src/ui/loop.ts',
+    find: '    const dt = previous === null ? 0 : (timestamp - previous) / MS_PER_SECOND;',
+    replace: '    const dt = previous === null ? 1 / 60 : (timestamp - previous) / MS_PER_SECOND;',
+    detectedBy: UNIT,
+  },
 ];
 
 /**
@@ -4257,12 +4508,19 @@ function main() {
   console.log('');
 
   console.log('Baseline:');
-  const unitGreen = passes(UNIT);
-  const lintGreen = passes(LINT);
-  console.log(`  ${unitGreen ? 'green' : 'RED  '}  ${UNIT.label}`);
-  console.log(`  ${lintGreen ? 'green' : 'RED  '}  ${LINT.label}`);
+  // Every command any mutation below is measured against, so a gate that is
+  // already red cannot be read as a mutation being detected. BJ-15 added the
+  // three browser specs to this list for exactly that reason: a stale preview
+  // server or a broken build would otherwise report fifteen false detections.
+  const commands = [UNIT, LINT, ...new Set(EDITS.concat(ADDITIONS).map((m) => m.detectedBy))];
+  let baselineGreen = true;
+  for (const command of new Set(commands)) {
+    const green = passes(command);
+    baselineGreen &&= green;
+    console.log(`  ${green ? 'green' : 'RED  '}  ${command.label}`);
+  }
   console.log('');
-  if (!unitGreen || !lintGreen) {
+  if (!baselineGreen) {
     console.error('The unmutated tree is not green. Fix that before reading anything below.');
     process.exitCode = 1;
     return;

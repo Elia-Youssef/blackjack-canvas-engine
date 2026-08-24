@@ -12,6 +12,12 @@ import { defineConfig } from 'vite';
 //                     which differs between two otherwise identical trees.
 //   No define() of  process.env or import.meta.env values: nothing about the
 //                     build environment may reach the emitted bytes.
+//
+// Nothing was added at BJ-15. The emitted entry chunk is a facade for
+// index.html and carries no exports, which is Rollup's behaviour for an
+// application entry and is left alone: the browser gate reaches the composition
+// root through a harness bundled at test time, exactly as BJ-13's render demo
+// does, so no seam for a test reaches the shipped bytes.
 export default defineConfig({
   base: './',
   build: {
