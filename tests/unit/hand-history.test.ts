@@ -25,6 +25,16 @@
  * mapped set. A field quietly added fails as loudly as one quietly dropped,
  * which is what stops the entry drifting into SPEC 12's round result.
  *
+ * **One test here is armour rather than evidence.** `BJ-11` built SPEC 13's
+ * `localStorage` document, so the serialise round trip above can now be run as a
+ * store round trip: the list is written through the real persistence write and
+ * read back through the real loader. It is added because the sanitiser at
+ * `BJ-11` reads every SPEC 8 field and a silent disagreement between the two
+ * modules would be invisible to either one's own suite. **It closes no item.**
+ * `J5`'s "survives a reload" is still read here as the serialisable-value claim
+ * the paragraph above states, and whether the sheet should say more than that is
+ * a question that remains the user's. `I1` and `I4` are unaffected.
+ *
  * **What this file does not claim.** The eleven milestones and the two scopes
  * of counters are item `J6` in `tests/unit/milestones.test.ts`. The overlay
  * that reviews this list is chrome, at `BJ-15`. The action journal on
@@ -46,6 +56,8 @@ import { actionOf, compare, situationAt, strategyTable } from '../../src/core/st
 import type { Table, TableReadout } from '../../src/core/table';
 import { PLAYER_ACTIONS, createTable } from '../../src/core/table';
 import type { Intent, PlayerAction } from '../../src/core/types';
+import { createPersistence } from '../../src/storage/persistence';
+import { createMemoryStore } from '../../src/storage/store';
 
 import { scriptedShoe } from './support/stacked-shoe';
 
@@ -770,10 +782,40 @@ describe('J5: SPEC 8 hand history', () => {
       expect(Object.keys(back)).toContain('coach');
       expect(back.coach).toBeNull();
     });
+
+    /**
+     * Armour for the reload clause, and it closes nothing. See the header.
+     *
+     * The serialise round trip above proves the value survives `JSON`. This one
+     * puts it through the store instead: `BJ-11`'s writer, `BJ-11`'s envelope
+     * and `BJ-11`'s field-by-field loader, which reads every SPEC 8 field and
+     * would drop an entry it disagreed with. Neither module's own suite can see
+     * that disagreement, because each is testing itself.
+     */
+    it('survives a store round trip through the BJ-11 document, claiming nothing', () => {
+      const table = createTable({ seed: 9 });
+      let history: History = NO_HISTORY;
+      for (let round = 0; round < 4; round += 1) {
+        const played = playRound(table, { observing: round % 2 === 0 });
+        history = record(history, played.readout, played.verdicts);
+        nextHand(table);
+      }
+      expect(history).toHaveLength(4);
+
+      const store = createMemoryStore();
+      const written = createPersistence({ store, durable: true, failure: null });
+      expect(written.update({ history }).ok).toBe(true);
+
+      const reopened = createPersistence({ store, durable: true, failure: null });
+      expect(reopened.readout().load.source).toBe('stored');
+      expect(reopened.readout().load.repairs).toEqual([]);
+      expect(reopened.document().history).toEqual(history);
+      expect(reopened.session().history).toEqual(history);
+    });
   });
 
   describe('cleared only by a full data reset', () => {
-    it('clears to empty, which is item I5 control at BJ-21', () => {
+    it('clears to empty, which is item I5 control at BJ-20', () => {
       const history = record(NO_HISTORY, playRound(dealing(PLAIN)).readout, null);
       expect(history).toHaveLength(1);
       expect(clear()).toHaveLength(0);

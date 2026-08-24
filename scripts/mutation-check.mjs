@@ -4,7 +4,16 @@
  * One entry per gate, added by the part that builds it: `M3` and `A6` at BJ-0,
  * `E1` at BJ-1, `B1` at BJ-2, `B2` and `B3` at BJ-3, `B7` and `B8` at BJ-4,
  * `B13` and `B14` at BJ-5, `J1` and `J2` at BJ-6, `C2` at BJ-7, `B6`, `B9`,
- * `B10`, `B11` and `B12` at BJ-8, `J3` at BJ-9, and `J5` and `J6` at BJ-10.
+ * `B10`, `B11` and `B12` at BJ-8, `J3` at BJ-9, `J5` and `J6` at BJ-10, and
+ * `I1`, `I2` and `I3` at BJ-11.
+ *
+ * The `BJ-11` block breaks the storage seam, the versioned envelope and the
+ * field-by-field salvage. Two of its entries are additions rather than edits,
+ * because the two claims they break are about an absence: that no file under
+ * `src/` carries a bare `catch`, and that exactly one of them names the platform
+ * storage globals. A scanner that finds nothing is indistinguishable from a
+ * scanner that cannot see, so a file carrying each is dropped into the real
+ * `src/storage/` and the suite has to go red.
  *
  * The `BJ-10` block's `J5` entries also break the per-round action journal that
  * part added to `table.ts`. No acceptance item is claimed for the journal; it
@@ -3280,6 +3289,438 @@ const EDITS = [
     replace: 'lifetime: scope(stats.lifetime, coach.session),',
     detectedBy: UNIT,
   },
+
+  // ------------------------------------------------------------------
+  // BJ-11: the versioned document, the salvage and the store seam
+  // ------------------------------------------------------------------
+
+  {
+    item: 'I1',
+    name: 'the envelope is sealed at a version this build does not write',
+    file: 'src/storage/migrations.ts',
+    find: 'return Object.freeze({ version: DOCUMENT_VERSION, data });',
+    replace: 'return Object.freeze({ version: DOCUMENT_VERSION + 1, data });',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I1',
+    name: 'the storage key stops being namespaced',
+    file: 'src/storage/document.ts',
+    find: 'export const STORAGE_KEY = `${STORAGE_NAMESPACE}.${STORAGE_GAME}`;',
+    replace: 'export const STORAGE_KEY = STORAGE_GAME;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I1',
+    name: 'a document from the future is read instead of discarded',
+    file: 'src/storage/migrations.ts',
+    find: '  if (envelope.version > to) {',
+    replace: '  if (envelope.version > to && Boolean(0)) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I1',
+    name: 'a missing migration step quietly becomes an identity step',
+    file: 'src/storage/migrations.ts',
+    find: '    const step = steps.get(version);',
+    replace: '    const step = steps.get(version) ?? ((data) => data);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I1',
+    name: 'a migration step that throws stops being caught',
+    file: 'src/storage/migrations.ts',
+    find: '      data = step(data);\n    } catch (error) {',
+    replace: '      data = step(data);\n    } catch (error) {\n      throw error;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I1',
+    name: 'a throwing step is reported as a missing one',
+    file: 'src/storage/migrations.ts',
+    find: "        reason: 'migration-failed',",
+    replace: "        reason: 'no-migration',",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I1',
+    name: 'a step is registered for a version no document can claim',
+    file: 'src/storage/migrations.ts',
+    find: 'export const MIGRATIONS: ReadonlyMap<number, Migration> = new Map<number, Migration>();',
+    replace:
+      'export const MIGRATIONS: ReadonlyMap<number, Migration> = new Map<number, Migration>([[0, (data) => data]]);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I1',
+    name: 'a version below the first schema is accepted as a version',
+    file: 'src/storage/migrations.ts',
+    find:
+      "  return typeof value === 'number' && Number.isSafeInteger(value) && value >= MIN_DOCUMENT_VERSION;",
+    replace: "  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0;",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I1',
+    name: 'a fractional version is accepted as a version',
+    file: 'src/storage/migrations.ts',
+    find:
+      "  return typeof value === 'number' && Number.isSafeInteger(value) && value >= MIN_DOCUMENT_VERSION;",
+    replace:
+      "  return typeof value === 'number' && Number.isFinite(value) && value >= MIN_DOCUMENT_VERSION;",
+    detectedBy: UNIT,
+  },
+
+  {
+    item: 'I1',
+    name: 'the loader reports a walked document as one that never moved',
+    file: 'src/storage/persistence.ts',
+    find: "      source: walked.steps > 0 ? 'migrated' : 'stored',",
+    replace: "      source: 'stored',",
+    detectedBy: UNIT,
+  },
+
+  {
+    item: 'I2',
+    name: 'the envelope read stops catching an unparseable string',
+    file: 'src/storage/migrations.ts',
+    find: '    parsed = JSON.parse(text);\n  } catch (error) {',
+    replace: '    parsed = JSON.parse(text);\n  } catch (error) {\n    throw error;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a parsed value that is not an object is read as an envelope anyway',
+    file: 'src/storage/migrations.ts',
+    find: '  if (!isRecord(parsed)) {',
+    replace: '  if (!isRecord(parsed) && Boolean(0)) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'the persisted mark floor drops below SPEC 4.11 starting bankroll',
+    file: 'src/storage/document.ts',
+    find:
+      "  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= STARTING_CHIPS) {",
+    replace: "  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) {",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a fractional persisted mark reaches the wallet',
+    file: 'src/storage/document.ts',
+    find:
+      "  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= STARTING_CHIPS) {",
+    replace:
+      "  if (typeof value === 'number' && Number.isFinite(value) && value >= STARTING_CHIPS) {",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a table SPEC 6 does not name is seated',
+    file: 'src/storage/document.ts',
+    find: "  if (typeof value === 'string' && isTableId(value)) {",
+    replace: "  if (typeof value === 'string') {",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'the SPEC 11 counter identity stops being checked',
+    file: 'src/storage/document.ts',
+    find: '  if (wins + losses + pushes !== handsPlayed || blackjacks > handsPlayed) {',
+    replace: '  if (blackjacks > handsPlayed) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'more blackjacks than hands played stops being checked',
+    file: 'src/storage/document.ts',
+    find: '  if (wins + losses + pushes !== handsPlayed || blackjacks > handsPlayed) {',
+    replace: '  if (wins + losses + pushes !== handsPlayed) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a milestone SPEC 9 does not name is kept',
+    file: 'src/storage/document.ts',
+    find: '    if (!isMember(entry, MILESTONES)) {',
+    replace: '    if (!isMember(entry, MILESTONES) && Boolean(0)) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a milestone stored twice is awarded twice',
+    file: 'src/storage/document.ts',
+    find: '    if (kept.includes(entry)) {',
+    replace: '    if (kept.includes(entry) && Boolean(0)) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a history longer than SPEC 8 keeps is kept whole',
+    file: 'src/storage/document.ts',
+    find:
+      '  const source = value.length > HISTORY_LIMIT ? value.slice(0, HISTORY_LIMIT) : value;',
+    replace: '  const source = value;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'the history is truncated from the newest end rather than the oldest',
+    file: 'src/storage/document.ts',
+    find:
+      '  const source = value.length > HISTORY_LIMIT ? value.slice(0, HISTORY_LIMIT) : value;',
+    replace: '  const source = value.length > HISTORY_LIMIT ? value.slice(-HISTORY_LIMIT) : value;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a coach scope with more matches than decisions is kept',
+    file: 'src/storage/document.ts',
+    find: '  if (matched > decisions) {',
+    replace: '  if (matched > decisions && Boolean(0)) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a setting naming nothing the spec defines is accepted',
+    file: 'src/storage/document.ts',
+    find: '  if (isMember(value, allowed)) {',
+    replace: '  if (isMember(value, allowed) || true) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a numeric setting outside the listed set is accepted',
+    file: 'src/storage/document.ts',
+    find: '  if (isNumberMember(value, allowed)) {',
+    replace: '  if (isNumberMember(value, allowed) || true) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a volume above the ceiling is accepted',
+    file: 'src/storage/document.ts',
+    find: '    value <= MAX_VOLUME',
+    replace: '    value <= Number.MAX_VALUE',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a negative count is accepted as a count',
+    file: 'src/storage/document.ts',
+    find:
+      "  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;",
+    replace:
+      "  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a payload that is not an object is read field by field anyway',
+    file: 'src/storage/document.ts',
+    find: "  if (!isRecord(value)) {\n    note('', 'not-a-document');",
+    replace: "  if (!isRecord(value) && Boolean(0)) {\n    note('', 'not-a-document');",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a malformed history entry is kept instead of dropped',
+    file: 'src/storage/document.ts',
+    find:
+      '  if (hands === null || dealer === null || dealerValue === null || actions === null) {',
+    replace:
+      '  if ((hands === null || dealer === null || dealerValue === null || actions === null) && Boolean(0)) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a card outside SPEC 4.1 composition is accepted',
+    file: 'src/storage/document.ts',
+    find: '  if (!isMember(rank, RANKS) || !isMember(suit, SUITS)) {',
+    replace: '  if ((!isMember(rank, RANKS) || !isMember(suit, SUITS)) && Boolean(0)) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'an outcome SPEC 4.10 does not name is accepted',
+    file: 'src/storage/document.ts',
+    find: '  if (!isOutcome(outcome) || !isRung(rung)) {',
+    replace: '  if ((!isOutcome(outcome) || !isRung(rung)) && Boolean(0)) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'an action SPEC 4.5 does not name is accepted',
+    file: 'src/storage/document.ts',
+    find: '    if (!isMember(entry, PLAYER_ACTIONS)) {',
+    replace: '    if (!isMember(entry, PLAYER_ACTIONS) && Boolean(0)) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a coach that was off is read as an unreadable entry',
+    file: 'src/storage/document.ts',
+    find:
+      'function verdictsOfEntry(value: unknown): readonly CoachVerdict[] | null | undefined {\n  if (value === null) {\n    return null;\n  }',
+    replace:
+      'function verdictsOfEntry(value: unknown): readonly CoachVerdict[] | null | undefined {\n  if (value === null) {\n    return undefined;\n  }',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'a chip balance somebody stored survives into the document',
+    file: 'src/storage/document.ts',
+    find: "    howToPlaySeen: flag(value['howToPlaySeen'], 'howToPlaySeen', false, note),",
+    replace:
+      "    howToPlaySeen: flag(value['howToPlaySeen'], 'howToPlaySeen', false, note),\n    chips: value['chips'],",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'the loaded statistics no longer have a session opened on them',
+    file: 'src/storage/document.ts',
+    find: '    statistics: openStatisticsSession(document.statistics),',
+    replace: '    statistics: document.statistics,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'the loaded coach record no longer has a session opened on it',
+    file: 'src/storage/document.ts',
+    find: '    coach: openCoachSession(document.coach),',
+    replace: '    coach: document.coach,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I2',
+    name: 'an absent document is read as a corrupt one',
+    file: 'src/storage/persistence.ts',
+    find: '  if (text === null) {',
+    replace: '  if (text === null && Boolean(0)) {',
+    detectedBy: UNIT,
+  },
+
+  {
+    item: 'I3',
+    name: 'the probe stops catching the property access',
+    file: 'src/storage/store.ts',
+    find: "    return degraded(describeFailure('probe', error));",
+    replace: '    throw error;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'the adapter swallows the refusal the platform store raised',
+    file: 'src/storage/store.ts',
+    find: '      storage.setItem(key, value);',
+    replace:
+      '      try {\n        storage.setItem(key, value);\n      } catch (error) {\n        void error;\n      }',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'an empty storage property is adapted instead of refused',
+    file: 'src/storage/store.ts',
+    find: '    if (storage === null || storage === undefined) {',
+    replace: '    if (storage === null && Boolean(0)) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'every degraded probe shares one fallback store',
+    file: 'src/storage/store.ts',
+    find:
+      'function degraded(failure: StoreFailure): StoreProbe {\n  return Object.freeze({ store: createMemoryStore(), durable: false, failure });\n}',
+    replace:
+      'const SHARED_FALLBACK = createMemoryStore();\nfunction degraded(failure: StoreFailure): StoreProbe {\n  return Object.freeze({ store: SHARED_FALLBACK, durable: false, failure });\n}',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'the shipped source stops reading the platform property',
+    file: 'src/storage/store.ts',
+    find: 'export const browserStorage: StorageSource = () => window.localStorage;',
+    replace: 'export const browserStorage: StorageSource = () => null;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: "a thrown value's name stops being read",
+    file: 'src/storage/store.ts',
+    find: "  return error instanceof Error ? error.name : 'NonError';",
+    replace: "  return 'Error';",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'the in-memory document only moves when the write lands',
+    file: 'src/storage/persistence.ts',
+    find: '    current = next;\n    return record(saveDocument(probe.store, next));',
+    replace:
+      '    const attempt = record(saveDocument(probe.store, next));\n    if (attempt.ok) {\n      current = next;\n    }\n    return attempt;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'a write that lands no longer clears the degradation',
+    file: 'src/storage/persistence.ts',
+    find: '      carryFailing = false;\n    } else {',
+    replace: '    } else {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'a write that throws is raised instead of recorded',
+    file: 'src/storage/persistence.ts',
+    find: "    return Object.freeze({ ok: false, failure: describeFailure('write', error) });",
+    replace: '    throw error;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'the session scope stops being projected out at the write',
+    file: 'src/storage/persistence.ts',
+    find:
+      '    store.write(STORAGE_KEY, JSON.stringify(sealEnvelope(openDocumentSession(document))));',
+    replace: '    store.write(STORAGE_KEY, JSON.stringify(sealEnvelope(document)));',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'a read that throws is raised instead of defaulted',
+    file: 'src/storage/persistence.ts',
+    find:
+      "    return defaulted('unreadable', [Object.freeze({ field: '', reason: 'unreadable' })], failure);",
+    replace: '    throw error;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'a reset only clears memory when the remove lands',
+    file: 'src/storage/persistence.ts',
+    find:
+      '    current = DEFAULT_DOCUMENT;\n    restored = restoreFrom(current);\n    try {\n      probe.store.remove(STORAGE_KEY);',
+    replace:
+      '    try {\n      probe.store.remove(STORAGE_KEY);\n      current = DEFAULT_DOCUMENT;\n      restored = restoreFrom(current);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'a reset stops rebuilding the session, so the old wallet survives it',
+    file: 'src/storage/persistence.ts',
+    find: '    restored = restoreFrom(current);',
+    replace: '    void current;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'a missing mark is spelled as an undefined key rather than an absent one',
+    file: 'src/storage/persistence.ts',
+    find: '  return mark === undefined ? {} : { bestBalance: mark };',
+    replace: '  return { bestBalance: mark as number };',
+    detectedBy: UNIT,
+  },
 ];
 
 /**
@@ -3350,6 +3791,27 @@ const ADDITIONS = [
     name: 'a colour literal is added to renderer code',
     file: 'src/render/__mutation__.ts',
     content: "export const felt = 'rgba(20, 80, 58, 0.5)';\n",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'a bare catch is added to the real src/storage/',
+    file: 'src/storage/__mutation__.ts',
+    content:
+      'export function read(text: string): unknown {\n' +
+      '  try {\n' +
+      '    return JSON.parse(text);\n' +
+      '  } catch {\n' +
+      '    return null;\n' +
+      '  }\n' +
+      '}\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'a platform storage global is named outside the one seam',
+    file: 'src/storage/__mutation__.ts',
+    content: 'export const store = (): unknown => window.localStorage;\n',
     detectedBy: UNIT,
   },
 ];

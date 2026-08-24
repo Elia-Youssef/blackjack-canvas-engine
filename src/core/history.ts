@@ -223,7 +223,7 @@ export function record(
  * SPEC 8's "cleared only by a full data reset".
  *
  * It takes no argument because there is no partial clear and nothing to keep:
- * item `I5` at `BJ-21` puts the one control behind a confirmation in Settings,
+ * item `I5` at `BJ-20` puts the one control behind a confirmation in Settings,
  * and this is what that control calls. **SPEC 4.12's free bankroll reset is not
  * it**: that reset preserves the history, because SPEC 8 names a full data
  * reset and SPEC 4.12 names the balance. The test drives a bust-out and a reset

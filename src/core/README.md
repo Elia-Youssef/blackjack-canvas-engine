@@ -8,6 +8,15 @@ the round those phases play out, with the house-rule record it reads, `BJ-9` the
 reads that round without touching it, and `BJ-10` the statistics, milestones and hand history that read it
 the same way. Thirteen modules. The remaining ones follow the active Blackjack build plan.
 
+**`BJ-11` added none of them, and that is the boundary working.** SPEC 13's persistence lives in
+[`src/storage/`](../storage) instead, because `localStorage` is a BOM API this directory forbids in a value
+or a type position. It reads **eleven** of the thirteen modules below, everything except `dealer.ts` and
+`rng.ts`: `cards.ts`, `hand.ts`, `history.ts`, `rules.ts`, `settlement.ts`, `shoe.ts`, `statistics.ts`,
+`strategy.ts`, `table.ts`, `types.ts` and `wallet.ts`. Most of those are type-only or a published constant
+list the saved document has to be validated against; `table.ts` is the one substantive edge, and it is there
+for `PLAYER_ACTIONS`, the runtime list behind SPEC 8's "every action taken". **None of the eleven imports
+`storage/`**, so the dependency runs one way, exactly as the chrome's will.
+
 | Module | What it owns | Part | Item |
 |---|---|---|---|
 | `cards.ts` | `Rank`, `Suit`, `Card`, the card factory, and what a rank is worth | `BJ-2` | `B1` |
