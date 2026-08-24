@@ -150,6 +150,48 @@ export const TIMINGS = Object.freeze({
 export const FAST_SPEED_MULTIPLIER = 0.6;
 
 /**
+ * SPEC 5's Speed setting, as a value. SPEC 14 lists the control.
+ *
+ * **It lives here, beside the constants it scales.** `BJ-11` had to name the
+ * setting before anything read it, so the type was declared in
+ * `src/storage/document.ts` with a note that a later part should move it to the
+ * module that reads it. This is that part and this is that module: `timedStep`
+ * below multiplies by it, and a persisted document now takes the same type from
+ * here exactly as it already takes `HouseRules` and `CoachMode` from `core/`.
+ *
+ * Speed is presentation in SPEC 14's sense, "takes effect immediately, mid-round
+ * included, because neither can change an outcome", and it is still simulation
+ * timing in the only sense that matters to this file: it changes how long a
+ * phase lasts, not which phases there are and not what they decide. That is why
+ * the machine may read it while the reduced-motion flag never reaches `core/` at
+ * all: reduced motion removes animation, which this file has none of.
+ */
+export type Speed = 'normal' | 'fast';
+
+/** Both values, in SPEC 14's order, for a control and for a sweep. */
+export const SPEEDS = ['normal', 'fast'] as const satisfies readonly Speed[];
+
+/**
+ * SPEC 5 states its reference timings as the unscaled ones and Fast as a
+ * multiplier over them, so Normal is the documented reading of the default
+ * rather than a preference chosen here. It is also what keeps every schedule
+ * derived before this part unchanged: at Normal the multiplier is exactly 1.
+ */
+export const DEFAULT_SPEED: Speed = 'normal';
+
+/**
+ * What a Speed multiplies a pacing constant by. SPEC 5, item `E9`.
+ *
+ * Exactly 1 at Normal, so `duration * speedMultiplier('normal')` is the same
+ * float as `duration`: IEEE multiplication by 1 is exact, which is what lets the
+ * scaling below sit on the single code path rather than behind a branch that a
+ * Normal-speed test would never enter.
+ */
+export function speedMultiplier(speed: Speed): number {
+  return speed === 'fast' ? FAST_SPEED_MULTIPLIER : 1;
+}
+
+/**
  * How long the `peek` phase lasts, on both of its branches.
  *
  * SPEC 5 lists no peek constant, so this is derived rather than invented: the
@@ -758,6 +800,19 @@ export interface Table {
   drain(): DrainReport;
   /** Advance the timers. DESIGN section 3 step 3. */
   update(dt: number): void;
+  /**
+   * SPEC 5's Speed, applied from the next `update`. Item `E9`.
+   *
+   * A setter rather than a construction-time option alone, because SPEC 14 says
+   * Speed "takes effect immediately, mid-round included, because neither can
+   * change an outcome". It is the one thing about a table a caller may change
+   * after it is built, and it is safe to be exactly because it decides no
+   * transition: `timedStep` reads it, `apply` does not, and the accumulator is
+   * left alone so a phase already half spent stays half spent.
+   */
+  setSpeed(next: Speed): void;
+  /** The Speed in force, so a caller need not keep a second copy of it. */
+  speed(): Speed;
 }
 
 /** What a table is built from. Every field has a default. */
@@ -804,6 +859,14 @@ export interface TableOptions {
    * table with no options gets, because `core/` has no clock to invent one.
    */
   readonly seed?: number;
+  /**
+   * SPEC 5's Speed at construction. SPEC 13 persists it and `BJ-20` restores it.
+   *
+   * Defaults to Normal, which leaves every schedule derived before `BJ-14`
+   * exactly as it was: the multiplier is 1 and the durations are the floats
+   * `TIMINGS` holds. `setSpeed` is the mid-round route SPEC 14 asks for.
+   */
+  readonly speed?: Speed;
   /**
    * A shoe to deal from, instead of one built from the seed.
    *
@@ -875,6 +938,8 @@ export function createTable(options: TableOptions = {}): Table {
   const shoe: Shoe = options.shoe ?? createShoe(rules.decks, createRng(options.seed ?? DEFAULT_SEED));
 
   let selected: TableId = options.table ?? LOWEST_TABLE.id;
+  /** SPEC 5's Speed, as `timedStep` reads it. SPEC 14 changes it mid-round. */
+  let speed: Speed = options.speed ?? DEFAULT_SPEED;
   let phase: Phase = START;
   let elapsed = 0;
   let rounds = 0;
@@ -1298,8 +1363,11 @@ export function createTable(options: TableOptions = {}): Table {
    * **This is where `E9`'s Speed multiplier belongs**, on the duration returned
    * below and nowhere else. Scaling a copy of `TIMINGS` instead would leave
    * every alias of it, `PEEK_PAUSE` among them, bound to the unscaled number.
+   * `timedStep` applies it; this function is the unscaled reading and is private
+   * so that nothing can consume a duration the Speed setting has not been
+   * through.
    */
-  function timedStep(): TimedStep | null {
+  function phaseStep(): TimedStep | null {
     switch (phase.kind) {
       case 'dealing':
         return { duration: TIMINGS.dealInterval, take: dealOneStep };
@@ -1319,6 +1387,30 @@ export function createTable(options: TableOptions = {}): Table {
       case 'bustOut':
         return null;
     }
+  }
+
+  /**
+   * The step the current phase is counting down, at the Speed in force.
+   *
+   * **One multiplication, on one duration, and every pacing constant the machine
+   * counts goes through it.** Five of SPEC 5's seven pace a phase and all five
+   * arrive here; the peek arrives as `PEEK_PAUSE`, which is `TIMINGS.holeCardFlip`
+   * read once at module load, so it is scaled by the same expression as the deal
+   * and the reveal rather than by an alias that a scaled copy of `TIMINGS` would
+   * have missed. That is the timing tell SPEC 4.4 forbids and item `E6` grades,
+   * written out as a single line instead of as a warning.
+   *
+   * The remaining two constants, `cardTravel` and `handRecentre`, pace tweens
+   * rather than phases; `src/render/animate.ts` scales those by the same
+   * `speedMultiplier` and asserts against this file's constants, so there is one
+   * multiplier and one set of numbers on both sides of the boundary.
+   */
+  function timedStep(): TimedStep | null {
+    const step = phaseStep();
+    if (step === null) {
+      return null;
+    }
+    return { duration: step.duration * speedMultiplier(speed), take: step.take };
   }
 
   function accepted(kind: IntentKind): IntentResult {
@@ -1844,5 +1936,17 @@ export function createTable(options: TableOptions = {}): Table {
     });
   }
 
-  return Object.freeze({ readout, apply, queue, drain, update });
+  function setSpeed(next: Speed): void {
+    speed = next;
+  }
+
+  return Object.freeze({
+    readout,
+    apply,
+    queue,
+    drain,
+    update,
+    setSpeed,
+    speed: () => speed,
+  });
 }

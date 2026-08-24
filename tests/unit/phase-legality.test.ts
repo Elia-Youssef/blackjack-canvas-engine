@@ -728,9 +728,27 @@ describe('C2: the sweep drives a real machine into every phase', () => {
   it('opens at SPEC 10 start and exposes no way to be put anywhere else', () => {
     const table = createTable();
     expect(table.readout().phase.kind).toBe('start');
-    // DESIGN section 3's frame, and nothing else. A phase setter would make
-    // every assertion below a statement about a fixture instead of a machine.
-    expect(Object.keys(table)).toEqual(['readout', 'apply', 'queue', 'drain', 'update']);
+    // DESIGN section 3's frame, plus SPEC 5's Speed, and nothing else. A phase
+    // setter would make every assertion below a statement about a fixture
+    // instead of a machine.
+    //
+    // **`setSpeed` is not that, and the list is asserted rather than loosened so
+    // that saying why is compulsory.** `BJ-14` added it for item `E9`, because
+    // SPEC 14 says Speed "takes effect immediately, mid-round included, because
+    // neither can change an outcome". It writes one field, that field is read
+    // only by `timedStep`'s multiplication, and `apply` never consults it, so it
+    // can change how long a phase lasts and cannot change which phase is next or
+    // what any phase decides. The sweep below is unaffected for the same reason:
+    // every cell of it is an `apply` against a phase, and no duration is in it.
+    expect(Object.keys(table)).toEqual([
+      'readout',
+      'apply',
+      'queue',
+      'drain',
+      'update',
+      'setSpeed',
+      'speed',
+    ]);
     expect(Object.isFrozen(table)).toBe(true);
   });
 
@@ -745,7 +763,7 @@ describe('C2: the sweep drives a real machine into every phase', () => {
     expect(reached.length).toBe(11);
   });
 
-  it('carries the eleven phases and seventeen intents SPEC 10 names, and no others', () => {
+  it('carries the eleven phases and eighteen intents SPEC 10 names, and no others', () => {
     expect([...PHASE_KINDS]).toEqual([...PHASES]);
     expect([...INTENT_KINDS]).toEqual([...INTENTS]);
     expect(PHASES.length).toBe(11);

@@ -39,8 +39,14 @@ import type { ChromeActions, ChromeState, Component } from './state';
 /** The assembled chrome: its shell, and the one sync step. */
 export interface Chrome {
   readonly shell: Shell;
-  /** DESIGN section 3 step 5. Called once per frame, after the render. */
-  sync(state: ChromeState): void;
+  /**
+   * DESIGN section 3 step 5. Called once per frame, after the render.
+   *
+   * `dt` is the seconds since the previous frame, handed on to the components.
+   * Only SPEC 5's balance count-up uses it; every other component is a pure
+   * function of the state and ignores it.
+   */
+  sync(state: ChromeState, dt: number): void;
 }
 
 /** Build every component, mount it in its region, and return the sync step. */
@@ -82,15 +88,25 @@ export function createChrome(actions: ChromeActions): Chrome {
 
   return {
     shell,
-    sync(state: ChromeState): void {
+    sync(state: ChromeState, dt: number): void {
       // The phase on the shell, so a stylesheet can respond to the screen
       // without a component telling it to, and so a test can wait for one.
       setAttribute(shell.root, 'data-phase', state.readout.phase.kind);
       setAttribute(shell.root, 'data-overlay', state.overlay);
+      // The motion mode on the shell as well, so the browser gate can read what
+      // the page resolved rather than what it emulated, and so a later part has
+      // a hook for the reduced-motion setting SPEC 14 lists. It is written from
+      // the same boolean the play surface was handed, so the canvas and the
+      // chrome cannot disagree about which mode the frame is in.
+      setAttribute(shell.root, 'data-motion', state.motion.reducedMotion ? 'reduce' : 'full');
+      // Named apart from the Speed control's own `data-speed`, so a selector
+      // for one cannot resolve to the other: the shell says what the frame
+      // resolved and the button says what it would choose.
+      setAttribute(shell.root, 'data-motion-speed', state.motion.speed);
       for (const component of components) {
-        component.update(state);
+        component.update(state, dt);
       }
-      overlays.update(state);
+      overlays.update(state, dt);
     },
   };
 }

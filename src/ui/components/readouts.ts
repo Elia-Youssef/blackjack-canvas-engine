@@ -21,6 +21,7 @@
 
 import { handValue } from '../../core/hand';
 import { tableLimits } from '../../core/wallet';
+import { countUp } from '../../render/animate';
 import { el, setText } from '../dom';
 import { NOTHING_YET, chips, percent } from '../format';
 import type { ChromeState, Component } from '../state';
@@ -32,6 +33,9 @@ interface ReadoutRow {
   readonly label: string;
   readonly value: (state: ChromeState) => string;
 }
+
+/** SPEC 11's chip balance. The one readout SPEC 5 asks to count rather than snap. */
+const BALANCE_KEY = 'chips';
 
 /**
  * The hand SPEC 11 calls "active", or `null` when there is not one.
@@ -56,7 +60,7 @@ function activeHandValue(state: ChromeState): string {
 
 /** SPEC 11's list, in SPEC 11's order. */
 const ROWS: readonly ReadoutRow[] = Object.freeze([
-  { key: 'chips', label: 'Chips', value: (s) => chips(s.readout.wallet.chips) },
+  { key: BALANCE_KEY, label: 'Chips', value: (s) => chips(s.readout.wallet.chips) },
   { key: 'wager', label: 'Wager', value: (s) => chips(s.readout.wallet.wager) },
   { key: 'hand-value', label: 'Hand', value: activeHandValue },
   {
@@ -86,10 +90,40 @@ const ROWS: readonly ReadoutRow[] = Object.freeze([
   { key: 'streak', label: 'Streak', value: (s) => chips(s.statistics.streak) },
 ]);
 
+/**
+ * SPEC 5: "the balance counts up rather than snapping".
+ *
+ * The one piece of the chrome that holds presentation state across frames, and
+ * the only place in `src/ui/` where the sync step is not a pure function of the
+ * frame's `ChromeState`. It holds the number currently on screen and walks it
+ * toward the machine's, over `PACING.balanceCountUp`.
+ *
+ * **Under reduced motion it holds nothing.** `motion.progress` answers 1 from
+ * the first frame, so the shown value is the target on the frame the balance
+ * moves and the readout snaps, which is exactly what QUALITY-BAR section 4 asks
+ * for: the animation removed entirely, the value unchanged.
+ *
+ * **The count never lies about where it ended.** `countUp` is exactly the target
+ * at a progress of 1 and is rounded on the way out, so the readout finishes on
+ * the machine's integer and never shows a fraction of a chip. A test that polls
+ * a balance therefore reaches the exact number rather than approaching it.
+ */
+interface Counting {
+  /** The number the readout is showing. */
+  shown: number;
+  /** Where the count started. */
+  from: number;
+  /** Where it is going: the balance the machine last published. */
+  to: number;
+  /** Seconds since the count started. */
+  age: number;
+}
+
 /** Build the readout panel. */
 export function createReadouts(): Component {
   const values = new Map<string, HTMLElement>();
   const list = el('dl', { className: 'bj-readouts__list' });
+  let counting: Counting | null = null;
 
   for (const row of ROWS) {
     const value = el('dd', { className: 'bj-readout__value', text: NOTHING_YET });
@@ -109,13 +143,37 @@ export function createReadouts(): Component {
     children: [list],
   });
 
+  /** The balance to print this frame: the count's value, or the machine's. */
+  function balanceText(state: ChromeState, dt: number): string {
+    const target = state.readout.wallet.chips;
+    if (counting === null) {
+      // The first frame of a session shows the balance it starts on. A count-up
+      // from nowhere would be a readout animating before anything happened.
+      counting = { shown: target, from: target, to: target, age: 0 };
+      return chips(target);
+    }
+    if (counting.to !== target) {
+      counting.from = counting.shown;
+      counting.to = target;
+      counting.age = 0;
+    } else {
+      counting.age = Math.min(counting.age + dt, state.motion.seconds('balanceCountUp'));
+    }
+    counting.shown = countUp(
+      counting.from,
+      counting.to,
+      state.motion.progress('balanceCountUp', counting.age),
+    );
+    return chips(counting.shown);
+  }
+
   return {
     root,
-    update(state: ChromeState): void {
+    update(state: ChromeState, dt: number): void {
       for (const row of ROWS) {
         const node = values.get(row.key);
         if (node !== undefined) {
-          setText(node, row.value(state));
+          setText(node, row.key === BALANCE_KEY ? balanceText(state, dt) : row.value(state));
         }
       }
     },

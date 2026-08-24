@@ -5,6 +5,31 @@ const BASE_URL = `http://localhost:${String(PORT)}`;
 const isCI = process.env['CI'] !== undefined;
 
 /**
+ * Whether an already-running preview server may be reused. `BJ-14`.
+ *
+ * **Reuse is off by default, and the default is the safe one.** The hazard is
+ * specific: the server serves `dist/`, and `dist/` is only rebuilt by the
+ * `webServer` command this config starts. A run that reuses a server somebody
+ * else started therefore grades **whatever was built last**, which is silently
+ * wrong rather than red. It bit this project at `BJ-14`:
+ * `scripts/mutation-check.mjs` runs one browser spec per mutation, back to back,
+ * and a `vite preview` process that outlived the run which spawned it, as
+ * happens when the process tree is torn down on Windows, left four mutations
+ * reported UNDETECTED that a fresh server catches at once. Two of the four were
+ * `BJ-15`'s own entries, so the hole had been open for a part.
+ *
+ * The polarity follows from what each mistake costs. A forgotten variable under
+ * the old default cost **validity**: a green run over a stale bundle. Under this
+ * one it costs a rebuild. So reuse became the explicit opt-in
+ * `BJ_REUSE_SERVER`, for the case it was always for, iterating on one spec
+ * against `npm run preview` in another terminal, where the person setting the
+ * variable is the person who knows what is built.
+ *
+ * CI is unchanged: it never reused, and the flag cannot turn reuse on there.
+ */
+const reuseServer = !isCI && process.env['BJ_REUSE_SERVER'] !== undefined;
+
+/**
  * Browser gate.
  *
  * The server here is `vite preview` over the built `dist/`, never the dev
@@ -46,7 +71,7 @@ export default defineConfig({
   webServer: {
     command: 'npm run build && npm run preview',
     url: BASE_URL,
-    reuseExistingServer: !isCI,
+    reuseExistingServer: reuseServer,
     timeout: 120_000,
   },
 });

@@ -93,7 +93,8 @@ import {
   UP_CARDS,
   openSession as openCoachSession,
 } from '../core/strategy';
-import { PLAYER_ACTIONS } from '../core/table';
+import type { Speed } from '../core/table';
+import { DEFAULT_SPEED, PLAYER_ACTIONS, SPEEDS } from '../core/table';
 import type { PlayerAction } from '../core/types';
 import type { TableId } from '../core/wallet';
 import { LOWEST_TABLE, STARTING_CHIPS, isTableId } from '../core/wallet';
@@ -143,25 +144,23 @@ export const MIN_DOCUMENT_VERSION = 1;
 // ---------------------------------------------------------------------------
 
 /**
- * SPEC 5's Speed setting.
+ * SPEC 5's Speed setting, re-exported from the module that now owns it.
  *
- * The type lives here rather than beside `table.ts`'s `FAST_SPEED_MULTIPLIER`
- * because the persisted document is the first thing in the build that has to
- * name the setting: SPEC 13 persists it and `BJ-15` builds the control. Later
- * parts may move it to the module that reads it; nothing here depends on where
- * it ends up.
+ * `BJ-11` declared the type here because the persisted document was the first
+ * thing in the build that had to name the setting, and said in as many words
+ * that a later part should move it to the module that reads it. `BJ-14` is that
+ * part: `core/table.ts` reads it in `timedStep`, so the type, the list and the
+ * default live there beside `TIMINGS` and `FAST_SPEED_MULTIPLIER`, and this file
+ * takes them the way it already takes `HouseRules`, `CoachMode` and
+ * `PLAYER_ACTIONS`. No new import edge was created: `table.ts` was already in
+ * this module's import list.
+ *
+ * They are re-exported rather than merely imported so that every reader of the
+ * persisted shape still finds the setting where the document names it, and so
+ * the move cost no caller an edit.
  */
-export type Speed = 'normal' | 'fast';
-
-/** Both values, for a settings control to enumerate and for a sweep. */
-export const SPEEDS = ['normal', 'fast'] as const satisfies readonly Speed[];
-
-/**
- * SPEC 5's reference timings are the Normal ones and Fast is stated as a
- * multiplier applied to them, so Normal is the documented reading of the default
- * rather than a value chosen here.
- */
-export const DEFAULT_SPEED: Speed = 'normal';
+export type { Speed };
+export { SPEEDS, DEFAULT_SPEED };
 
 /** QUALITY-BAR section 4's play-surface size, in percent. */
 export type SurfaceSize = 100 | 125 | 150 | 200;
