@@ -4,7 +4,12 @@
  * One entry per gate, added by the part that builds it: `M3` and `A6` at BJ-0,
  * `E1` at BJ-1, `B1` at BJ-2, `B2` and `B3` at BJ-3, `B7` and `B8` at BJ-4,
  * `B13` and `B14` at BJ-5, `J1` and `J2` at BJ-6, `C2` at BJ-7, `B6`, `B9`,
- * `B10`, `B11` and `B12` at BJ-8, and `J3` at BJ-9.
+ * `B10`, `B11` and `B12` at BJ-8, `J3` at BJ-9, and `J5` and `J6` at BJ-10.
+ *
+ * The `BJ-10` block's `J5` entries also break the per-round action journal that
+ * part added to `table.ts`. No acceptance item is claimed for the journal; it
+ * is labelled `J5` because SPEC 8's "every action taken" is the field it exists
+ * to fill and `J5` is the item that grades that list.
  *
  * The `BJ-6` block carries entries labelled `B15` as well. The betting rules and
  * the four-term identity are built at `BJ-6` and unit tested there, and `B15`
@@ -1408,6 +1413,11 @@ const EDITS = [
     // first answers the same way on most inputs and names the wrong reason
     // on the rest, and on a player action it reaches a hand that is not
     // there. C2's counted wallet is what sees it.
+    //
+    // Re-anchored at `BJ-10`, which put SPEC 8's action journal between the
+    // phase gate and the return and so retired the `return perform(intent);`
+    // this used to hang on. The mutation is the same one: `perform` runs
+    // before the gate, and the gate then refuses what it has already done.
     item: 'C2',
     name: 'the wallet is consulted before the phase is asked',
     file: 'src/core/table.ts',
@@ -1415,13 +1425,12 @@ const EDITS = [
       '    if (!LEGAL[phase.kind].includes(intent.kind)) {\n' +
       "      return refused(intent.kind, 'phase', 'wrong-phase');\n" +
       '    }\n' +
-      '    return perform(intent);',
+      '    const result = perform(intent);',
     replace:
       '    const result = perform(intent);\n' +
       '    if (!LEGAL[phase.kind].includes(intent.kind)) {\n' +
       "      return refused(intent.kind, 'phase', 'wrong-phase');\n" +
-      '    }\n' +
-      '    return result;',
+      '    }',
     detectedBy: UNIT,
   },
   {
@@ -2787,6 +2796,488 @@ const EDITS = [
     file: 'src/core/strategy.ts',
     find: "export const COACH_MODES: readonly CoachMode[] = Object.freeze(['off', 'hint', 'review']);",
     replace: "export const COACH_MODES: readonly CoachMode[] = Object.freeze(['off', 'hint']);",
+    detectedBy: UNIT,
+  },
+
+  // -------------------------------------------------------------------------
+  // BJ-10: SPEC 8's hand history (`J5`) and SPEC 9's eleven milestones (`J6`)
+  // -------------------------------------------------------------------------
+  //
+  // The `J5` block covers `history.ts` and the per-round action journal `BJ-10`
+  // added to `table.ts` to fill SPEC 8's "every action taken". No acceptance
+  // item is claimed for the journal; it is labelled `J5` because that is the
+  // item whose field list it exists to complete.
+
+  {
+    item: 'J5',
+    name: 'the ring stops evicting, because SPEC 8 fifty becomes fifty-one',
+    file: 'src/core/history.ts',
+    find: 'export const HISTORY_LIMIT = 50;',
+    replace: 'export const HISTORY_LIMIT = 51;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'the ring keeps the oldest rounds instead of the newest',
+    file: 'src/core/history.ts',
+    find: 'return Object.freeze([entry, ...history].slice(0, HISTORY_LIMIT));',
+    replace: 'return Object.freeze([...history, entry].slice(0, HISTORY_LIMIT));',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'a stored hand value drifts off the cards it was computed from',
+    file: 'src/core/history.ts',
+    find: 'value: handValue(inPlay.cards).total,',
+    replace: 'value: 0,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'the dealer value stops being computed from the dealer hand',
+    file: 'src/core/history.ts',
+    find: 'dealerValue: handValue(readout.dealerVisible).total,',
+    replace: 'dealerValue: 0,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'the round chip delta quietly drops SPEC 4.7 side wager',
+    file: 'src/core/history.ts',
+    find: '(insurance === null ? 0 : insurance.net),',
+    replace: '(insurance === null ? 0 : 0),',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'a hand chip delta becomes the credit rather than SPEC 4.10 net',
+    file: 'src/core/history.ts',
+    find: 'delta: hand.credit - hand.wager,',
+    replace: 'delta: hand.credit,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'the entry grows a field SPEC 8 does not name',
+    file: 'src/core/history.ts',
+    find: '    coach: coach === null ? null : Object.freeze([...coach]),',
+    replace:
+      '    coach: coach === null ? null : Object.freeze([...coach]),\n    table: readout.table,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'the entry loses the action journal SPEC 8 names',
+    file: 'src/core/history.ts',
+    find: '    actions: phase.result.actions,\n',
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'a coach that was off records an empty list rather than nothing',
+    file: 'src/core/history.ts',
+    find: 'coach: coach === null ? null : Object.freeze([...coach]),',
+    replace: 'coach: Object.freeze([...(coach ?? [])]),',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'the hole-card guard stops firing, so a one-card dealer hand records',
+    file: 'src/core/history.ts',
+    find: 'if (readout.dealerConcealed !== 0) {',
+    replace: 'if (readout.dealerConcealed !== 0 && Boolean(0)) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'the round-result guard stops firing in the recorder',
+    file: 'src/core/history.ts',
+    find: "if (phase.kind !== 'roundResult') {",
+    replace: "if (phase.kind !== 'roundResult' && Boolean(0)) {",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'the empty history is not empty, so a full data reset clears nothing',
+    file: 'src/core/history.ts',
+    find: 'export const NO_HISTORY: History = Object.freeze([]);',
+    replace:
+      'export const NO_HISTORY: History = Object.freeze([\n' +
+      '  Object.freeze({\n' +
+      '    hands: Object.freeze([]),\n' +
+      '    dealer: Object.freeze([]),\n' +
+      '    dealerValue: 0,\n' +
+      '    actions: Object.freeze([]),\n' +
+      '    wager: 0,\n' +
+      '    delta: 0,\n' +
+      '    coach: null,\n' +
+      '  }),\n' +
+      ']);',
+    detectedBy: UNIT,
+  },
+  {
+    // Caught by `tests/unit/hand-history.test.ts`, "records what was taken and
+    // not what was attempted", and by nothing else. **`C2`'s legality sweep
+    // does not bite on this**, which is worth writing down because it looks as
+    // though it should: that sweep compares 180 rejections, but it compares
+    // them through `TableReadout`, which never exposes the journal, and
+    // `RoundResult.actions` is only copied out at `settleRound`. A refused
+    // intent that had been journalled would leave every `C2` assertion equal
+    // and show up only in a recorded history.
+    item: 'J5',
+    name: 'the journal records actions the machine refused as well as took',
+    file: 'src/core/table.ts',
+    find: 'if (result.ok && action !== null) {',
+    replace: 'if (action !== null) {',
+    detectedBy: UNIT,
+  },
+  {
+    // Caught by the two rounds `hand-history.test.ts` drives for exactly this,
+    // and by the set comparison against `PLAYER_ACTIONS` beside them. Before
+    // `BJ-10`'s review no test recorded a doubled or a surrendered round, so
+    // either action could be dropped from SPEC 4.5's list with the suite green
+    // and SPEC 8's field quietly missing a move the player made.
+    item: 'J5',
+    name: 'SPEC 4.5 action list loses Double Down',
+    file: 'src/core/table.ts',
+    find: "  'double',\n  'split',\n  'surrender',\n]);",
+    replace: "  'split',\n  'surrender',\n]);",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'SPEC 4.5 action list loses Surrender',
+    file: 'src/core/table.ts',
+    find: "  'split',\n  'surrender',\n]);",
+    replace: "  'split',\n]);",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'the journal is not cleared with the felt, so it spans rounds',
+    file: 'src/core/table.ts',
+    find: '    journal.length = 0;\n',
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'the journal stops recording anything at all',
+    file: 'src/core/table.ts',
+    find: '      journal.push(action);\n',
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'SPEC 4.5 action list loses the two insurance decisions',
+    file: 'src/core/table.ts',
+    find:
+      'export const PLAYER_ACTIONS: readonly PlayerAction[] = Object.freeze([\n' +
+      "  'takeInsurance',\n  'declineInsurance',\n",
+    replace: 'export const PLAYER_ACTIONS: readonly PlayerAction[] = Object.freeze([\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'every intent counts as a SPEC 4.5 action, including the deal',
+    file: 'src/core/table.ts',
+    find: '  const found = PLAYER_ACTIONS.find((action) => action === kind);\n  return found ?? null;',
+    replace: '  return kind as PlayerAction;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J5',
+    name: 'the result keeps the live journal, which Next Hand then empties',
+    file: 'src/core/table.ts',
+    find: 'actions: Object.freeze([...journal]),',
+    replace: 'actions: journal,',
+    detectedBy: UNIT,
+  },
+
+  {
+    item: 'J6',
+    name: 'a milestone can be awarded a second time',
+    file: 'src/core/statistics.ts',
+    find: 'const awarded = MILESTONES.filter((id) => met[id] && !stats.milestones.includes(id));',
+    replace: 'const awarded = MILESTONES.filter((id) => met[id]);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'milestones stop being appended, so an award replaces the record',
+    file: 'src/core/statistics.ts',
+    find: ': Object.freeze([...stats.milestones, ...awarded]),',
+    replace: ': Object.freeze([...awarded]),',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'awards stop coming out in SPEC 9 table order',
+    file: 'src/core/statistics.ts',
+    find: 'const awarded = MILESTONES.filter((id) => met[id] && !stats.milestones.includes(id));',
+    replace:
+      'const awarded = [...MILESTONES]\n' +
+      '    .reverse()\n' +
+      '    .filter((id) => met[id] && !stats.milestones.includes(id));',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'a push breaks a win streak instead of leaving it alone',
+    file: 'src/core/statistics.ts',
+    find: 'streak = net > 0 ? streak + 1 : net < 0 ? 0 : streak;',
+    replace: 'streak = net > 0 ? streak + 1 : 0;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'a loss no longer ends a win streak',
+    file: 'src/core/statistics.ts',
+    find: 'streak = net > 0 ? streak + 1 : net < 0 ? 0 : streak;',
+    replace: 'streak = net > 0 ? streak + 1 : streak;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'the streak rows read the run left standing rather than its peak',
+    file: 'src/core/statistics.ts',
+    find: 'peak = streak > peak ? streak : peak;',
+    replace: 'peak = streak;',
+    detectedBy: UNIT,
+  },
+  {
+    // Both thresholds are broken here because both were driven symbolically
+    // before `BJ-10`'s review: a test that runs `SHORT_WIN_STREAK - 1` hands
+    // and then one more passes for any value the constant could hold. The
+    // suite now asserts the literals SPEC 9 prints as well.
+    item: 'J6',
+    name: 'SPEC 9 row 3 five-hand streak becomes a four-hand streak',
+    file: 'src/core/statistics.ts',
+    find: 'export const SHORT_WIN_STREAK = 5;',
+    replace: 'export const SHORT_WIN_STREAK = 4;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'SPEC 9 row 4 ten-hand streak becomes a nine-hand streak',
+    file: 'src/core/statistics.ts',
+    find: 'export const LONG_WIN_STREAK = 10;',
+    replace: 'export const LONG_WIN_STREAK = 9;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'a natural that met the dealer own stops counting as a natural',
+    file: 'src/core/statistics.ts',
+    find: 'const NATURAL_RUNGS: readonly Rung[] = Object.freeze([2, 3]);',
+    replace: 'const NATURAL_RUNGS: readonly Rung[] = Object.freeze([3]);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'Bronze becomes a milestone, which SPEC 9 says it is not',
+    file: 'src/core/statistics.ts',
+    find: 'Object.freeze({\n  bronze: null,',
+    replace: "Object.freeze({\n  bronze: 'reachedSilver',",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'SPEC 9 eleven becomes ten',
+    file: 'src/core/statistics.ts',
+    find: "  'survivedAndRecovered',\n]);",
+    replace: ']);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'doubling the bankroll reads the balance rather than the high-water mark',
+    file: 'src/core/statistics.ts',
+    find: 'doubledBankroll: best >= DOUBLED_BANKROLL,',
+    replace: 'doubledBankroll: chips >= DOUBLED_BANKROLL,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'the doubled target drifts off SPEC 4.11 starting bankroll',
+    file: 'src/core/statistics.ts',
+    find: 'export const DOUBLED_BANKROLL = STARTING_CHIPS * 2;',
+    replace: 'export const DOUBLED_BANKROLL = STARTING_CHIPS * 3;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'SPEC 9 ten percent stops being a percentage',
+    file: 'src/core/statistics.ts',
+    find: 'export const LOW_WATER_CHIPS = (STARTING_CHIPS * LOW_WATER_PERCENT) / 100;',
+    replace: 'export const LOW_WATER_CHIPS = STARTING_CHIPS * LOW_WATER_PERCENT;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'the low-water latch fires at ten percent rather than below it',
+    file: 'src/core/statistics.ts',
+    find: 'const belowLowWater = stats.belowLowWater || chips < LOW_WATER_CHIPS;',
+    replace: 'const belowLowWater = stats.belowLowWater || chips <= LOW_WATER_CHIPS;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'recovery is awarded short of SPEC 9 starting amount',
+    file: 'src/core/statistics.ts',
+    find: 'survivedAndRecovered: belowLowWater && chips >= STARTING_CHIPS,',
+    replace: 'survivedAndRecovered: belowLowWater && chips >= STARTING_CHIPS - 1,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'SPEC 4.12 free reset stops clearing the low-water latch',
+    file: 'src/core/statistics.ts',
+    find: '    rounds: stats.rounds,\n    milestones: stats.milestones,\n    belowLowWater: false,',
+    replace:
+      '    rounds: stats.rounds,\n' +
+      '    milestones: stats.milestones,\n' +
+      '    belowLowWater: stats.belowLowWater,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'a fresh launch stops clearing the low-water latch',
+    file: 'src/core/statistics.ts',
+    find: '    rounds: 0,\n    milestones: stats.milestones,\n    belowLowWater: false,',
+    replace:
+      '    rounds: 0,\n    milestones: stats.milestones,\n    belowLowWater: stats.belowLowWater,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'a new session clears the lifetime counters as well as the session ones',
+    file: 'src/core/statistics.ts',
+    find: '    session: NO_COUNTERS,\n    lifetime: stats.lifetime,\n    streak: 0,',
+    replace: '    session: NO_COUNTERS,\n    lifetime: NO_COUNTERS,\n    streak: 0,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'SPEC 4.12 free reset wipes the session counters, which it preserves',
+    file: 'src/core/statistics.ts',
+    find: '    session: stats.session,\n    lifetime: stats.lifetime,\n    streak: stats.streak,',
+    replace: '    session: NO_COUNTERS,\n    lifetime: stats.lifetime,\n    streak: stats.streak,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'the thousand-hand row reads the session scope rather than the lifetime',
+    file: 'src/core/statistics.ts',
+    find: 'thousandHands: lifetime.handsPlayed >= THOUSAND_HANDS,',
+    replace: 'thousandHands: session.handsPlayed >= THOUSAND_HANDS,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'the hundred-hand row awards at ninety-nine',
+    file: 'src/core/statistics.ts',
+    find: 'export const HUNDRED_HANDS = 100;',
+    replace: 'export const HUNDRED_HANDS = 99;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'the accuracy row reads the coach session scope rather than the lifetime',
+    file: 'src/core/statistics.ts',
+    find: 'const { decisions, matched } = coach.lifetime;',
+    replace: 'const { decisions, matched } = coach.session;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'the accuracy row awards below SPEC 9 ninety percent',
+    file: 'src/core/statistics.ts',
+    find: 'return decisions >= ACCURACY_DECISIONS && matched * 100 >= ACCURACY_PERCENT * decisions;',
+    replace:
+      'return decisions >= ACCURACY_DECISIONS && matched * 100 >= (ACCURACY_PERCENT - 1) * decisions;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'the accuracy row drops SPEC 9 hundred-decision floor',
+    file: 'src/core/statistics.ts',
+    find: 'return decisions >= ACCURACY_DECISIONS && matched * 100 >= ACCURACY_PERCENT * decisions;',
+    replace: 'return matched * 100 >= ACCURACY_PERCENT * decisions;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'a split win stops requiring the hand to have come from a split',
+    file: 'src/core/statistics.ts',
+    find: 'splitWin = splitWin || (inPlay.fromSplit && net > 0);',
+    replace: 'splitWin = splitWin || net > 0;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'a split win stops requiring the split hand to have won',
+    file: 'src/core/statistics.ts',
+    find: 'splitWin = splitWin || (inPlay.fromSplit && net > 0);',
+    replace: 'splitWin = splitWin || inPlay.fromSplit;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'a push is counted as a win',
+    file: 'src/core/statistics.ts',
+    find: 'wins: counters.wins + (net > 0 ? 1 : 0),',
+    replace: 'wins: counters.wins + (net < 0 ? 0 : 1),',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'SPEC 4.8 surrender is counted as a push rather than a loss',
+    file: 'src/core/statistics.ts',
+    find: 'pushes: counters.pushes + (net > 0 || net < 0 ? 0 : 1),',
+    replace: 'pushes: counters.pushes + (net > 0 ? 0 : 1),',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'SPEC 11 blackjack tally stops counting',
+    file: 'src/core/statistics.ts',
+    find: 'blackjacks: counters.blackjacks + (natural ? 1 : 0),',
+    replace: 'blackjacks: counters.blackjacks,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'the round-boundary guard stops firing, so a round can be counted twice',
+    file: 'src/core/statistics.ts',
+    find: 'if (readout.rounds !== stats.rounds + 1) {',
+    replace: 'if (readout.rounds !== stats.rounds + 1 && Boolean(0)) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'the round-result guard stops firing in the counters',
+    file: 'src/core/statistics.ts',
+    find: "if (phase.kind !== 'roundResult') {",
+    replace: "if (phase.kind !== 'roundResult' && Boolean(0)) {",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'SPEC 11 best balance is invented here rather than read from the wallet',
+    file: 'src/core/statistics.ts',
+    find: 'bestBalance: wallet.bestBalance,',
+    replace: 'bestBalance: STARTING_CHIPS,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J6',
+    name: 'the two readout scopes are handed the same coach counters',
+    file: 'src/core/statistics.ts',
+    find: 'lifetime: scope(stats.lifetime, coach.lifetime),',
+    replace: 'lifetime: scope(stats.lifetime, coach.session),',
     detectedBy: UNIT,
   },
 ];
