@@ -152,6 +152,30 @@ export interface RoundResult {
   readonly insurance: InsuranceResult | null;
   /** SPEC 12's "resulting balance", read after every hand has settled. */
   readonly chips: number;
+  /**
+   * SPEC 8's "every action taken", in the order the machine accepted them.
+   *
+   * **Accepted only.** SPEC 4.11 blocks an illegal action "with a reason
+   * surfaced" and changes nothing at all when it does, so a refused Split is an
+   * action the player attempted and did not take. A journal that recorded
+   * attempts would make the history disagree with the cards beside it.
+   *
+   * **Here rather than derived at `BJ-10`, because it cannot be derived.** Every
+   * other field SPEC 8 names can be read back off a finished round: the hand
+   * values from the cards, the outcome and its reason from `SettledHand`, the
+   * split count from the number of hands. A **declined** insurance offer leaves
+   * no trace anywhere, so a round that was offered insurance and refused it is
+   * indistinguishable afterwards from one that was never offered it. That is the
+   * whole reason this field exists, and it is why it is recorded as it happens.
+   *
+   * The list is this round's alone: `table.ts` clears it at `Next Hand`, with
+   * the felt, and no accepted action can arrive after the settlement because
+   * SPEC 10 gives `settling` no legal intent.
+   *
+   * No acceptance item is claimed for it. It is what item `J5`'s SPEC 8 entry
+   * is built from, and `BJ-10` added it for that.
+   */
+  readonly actions: readonly PlayerAction[];
 }
 
 /**
@@ -263,6 +287,36 @@ export type Intent =
   | { readonly kind: 'nextHand' }
   | { readonly kind: 'dropTable'; readonly table: TableId }
   | { readonly kind: 'resetBankroll' };
+
+/**
+ * One of SPEC 4.5's player actions, as a round records having taken it.
+ *
+ * SPEC 8 asks a hand-history entry for "every action taken", and SPEC 4.5's
+ * table is what an action is: Hit, Stand, Double Down, Split, Insurance and
+ * Surrender. SPEC 4.7 splits the insurance row into the two intents SPEC 10
+ * offers, taking it and declining it, and both are actions the player took.
+ *
+ * **Seven of SPEC 10's eighteen intents, and the other eleven are not
+ * actions.** Choosing a table, building or clearing a wager, dealing, asking
+ * for the next hand and the two bust-out routes are screens and money, not
+ * moves on a hand; SPEC 8 lists the wager as its own field, so recording the
+ * deal beside it would be the same number twice.
+ *
+ * Written as an `Extract` of `IntentKind` rather than as a fresh union, so an
+ * intent renamed in SPEC 10 fails to compile here instead of quietly leaving a
+ * dead arm behind. `table.ts` owns the list and the mapping, next to the
+ * legality table they are read against.
+ *
+ * Added at `BJ-10` for item `J5`, which cannot be closed without it: a declined
+ * insurance offer leaves **no** trace on the felt, in the wallet or in the
+ * settlement, so the action sequence is the one part of SPEC 8's entry that
+ * cannot be recomputed from a finished round. No acceptance item is claimed for
+ * the journal itself.
+ */
+export type PlayerAction = Extract<
+  IntentKind,
+  'takeInsurance' | 'declineInsurance' | 'hit' | 'stand' | 'double' | 'split' | 'surrender'
+>;
 
 // ---------------------------------------------------------------------------
 // The hand a round is played on. DESIGN section 2.

@@ -4,9 +4,9 @@ The rules and the simulation. Headless: no DOM, no canvas, no renderer, no wall 
 
 **Built so far.** `BJ-2` landed the first two modules, `BJ-3` the next two, `BJ-4` the dealer, `BJ-5`
 settlement, `BJ-6` the wallet, `BJ-7` the phase machine with the type unions it is written in, `BJ-8`
-the round those phases play out, with the house-rule record it reads, and `BJ-9` the strategy coach that
-reads that round without touching it. Eleven modules. The remaining ones follow the active Blackjack build
-plan.
+the round those phases play out, with the house-rule record it reads, `BJ-9` the strategy coach that
+reads that round without touching it, and `BJ-10` the statistics, milestones and hand history that read it
+the same way. Thirteen modules. The remaining ones follow the active Blackjack build plan.
 
 | Module | What it owns | Part | Item |
 |---|---|---|---|
@@ -33,6 +33,9 @@ plan.
 | `rules.ts` | SPEC 14's house-rule record: shoe size, DAS, surrender, even money, the split comparison | `BJ-8` | none |
 | `strategy.ts` | SPEC 7's three surfaces, generated per house-rule record, as preference lists | `BJ-9` | `J3` |
 | `strategy.ts` | The three coach modes and the two accuracy counters. **Graded by `J4`** at `BJ-20` | `BJ-9` | `J4` |
+| `statistics.ts` | SPEC 11's counters in SPEC 13's two scopes, and SPEC 9's eleven milestones | `BJ-10` | `J6` |
+| `history.ts` | SPEC 8's last 50 completed rounds, with every field that section names | `BJ-10` | `J5` |
+| `table.ts` | SPEC 8's per-round journal of accepted player actions. No item; `J5` consumes it | `BJ-10` | none |
 
 **This directory is a lint boundary, not a convention.** Nothing under `core/` may import `render/`, `ui/`,
 `@js-games/engine/render`, or any DOM or canvas type, and nothing here may call `Math.random()`. All
@@ -362,6 +365,50 @@ one without, and the whole readout is serialised at every step: the phase and it
 timers, the shoe's counters and the wallet's four-term identity. The transcripts have to be equal step for
 step, and the run with the coach on has to have produced hundreds of recommendations and counted hundreds of
 decisions, because otherwise the comparison would pass just as well against a coach that did nothing.
+
+## The counters, the milestones and the history observe the round and own none of it
+
+`statistics.ts` and `history.ts` are both folds over one `TableReadout` taken at SPEC 10's `roundResult`,
+which is the phase where the money has settled and the cards are still on the felt. Neither holds a copy of
+anything that already has an owner: the best chip balance stays `wallet.ts`'s high-water mark, so SPEC 9's
+two table milestones ask `isUnlocked` rather than restating SPEC 6's thresholds and SPEC 11's readout reads
+it straight off the wallet; SPEC 7's two accuracy counters stay `strategy.ts`'s `CoachRecord` and are passed
+in where they are needed. That is what settles milestone 10's reading without a branch: `strategy.observe`
+returns the record untouched while the coach is off, and nothing here counts a decision of its own, so a
+session played with the coach off cannot accrue toward it.
+
+**One extension to the machine, and it is the one field that cannot be recomputed.** SPEC 8 asks a history
+entry for "every action taken". Every other field it names can be read back off a finished round, but a
+**declined** insurance offer leaves no trace in the cards, the wallet or the settlement, so a round that
+refused insurance and one that was never offered it are otherwise identical afterwards. `BJ-10` therefore
+added a per-round journal of **accepted** actions to `table.ts`, appended at the single point every intent
+passes through and cleared with the felt at `Next Hand`, and published it on `RoundResult`. It claims no
+acceptance item; `J5` is the item whose field list it exists to complete. The journal is SPEC 4.5's six-row
+action table with SPEC 4.7's insurance row read as the two intents SPEC 10 offers, which is a different list
+from `strategy.actionOf`'s five basic-strategy decisions, deliberately: folding them together would put an
+insurance decision into the coach's accuracy.
+
+**SPEC 9 leaves five things open, and each one is a documented reading with a test that pins it.** A push
+leaves a win streak exactly where it was, since a hand the player did not lose is no reason to take a run
+away from them. "Doubling the bankroll" is measured on the wallet's high-water mark rather than the balance
+at rest, because a bankroll doubled and then lost was still doubled. Row 11's "below 10 percent" is
+`chips < 100` at rest and its recovery is `chips >= 1,000` at rest, and **the latch is cleared by SPEC 4.12's
+free reset and by a fresh launch**: both hand the player 1,000 chips, and a latch that survived either would
+award the row to everyone who ever busted out and pressed the button. A win is a settled hand whose net is
+positive, read from the net rather than the outcome name so that SPEC 4.8's surrender lands in losses without
+a fourth bucket SPEC 11 does not have. And the streak rows are decided on the longest run the round reached
+rather than the run it ended on, so a five-hand streak the last hand of a split round broke still counts.
+
+**Two guards, because a caller cannot be asked to be careful.** `observeRound` refuses a readout that is not
+at `roundResult` and refuses a round it has already counted, which is what a chrome polling the readout every
+frame would hand it. `record` refuses the same two things and also refuses a result whose hole card is still
+down, so SPEC 8's "the dealer hand and its value" cannot quietly become the up card alone.
+
+**Neither document persists anything, and both are shaped so `BJ-11` can.** They are plain frozen values of
+numbers, booleans and strings, and both suites prove the round trip: `JSON.parse(JSON.stringify(x))` is
+deep-equal and re-serialises byte for byte, awarded milestones stay awarded, and a `null` coach verdict stays
+`null` rather than losing its key. The `localStorage` document itself is item `I1` and the fresh launch is
+item `I4`, both at `BJ-11`.
 
 ## The timers are accumulators, and the module has no clock in it
 
