@@ -275,7 +275,15 @@ export interface LaunchChoice {
  * SPEC 13 persists the unlocks and the selected table in the same document, so
  * that pair is inconsistent rather than merely unaffordable, and answering with
  * a locked table would seat the player somewhere SPEC 6 says they cannot sit.
- * Item `I2` at `BJ-11` is what keeps such a document from being loaded at all.
+ *
+ * **That document is loaded rather than refused, and this function is what
+ * resolves it.** `BJ-11` reads the mark and the selected table as two
+ * independently salvaged fields, so the pair can disagree even when neither
+ * value is corrupt and item `I2`'s criterion, that nothing saved stops the game
+ * starting, would not be met by refusing the load. `src/storage/document.ts`
+ * states the same division from the other side: it salvages field by field and
+ * deliberately holds no opinion about this pair, because SPEC 13 already names
+ * the function that does.
  */
 export function launchTable(persisted: TableId, bestBalance: number): LaunchChoice {
   if (canEnter(persisted, bestBalance, STARTING_CHIPS)) {
