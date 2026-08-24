@@ -3,8 +3,8 @@
  *
  * One entry per gate, added by the part that builds it: `M3` and `A6` at BJ-0,
  * `E1` at BJ-1, `B1` at BJ-2, `B2` and `B3` at BJ-3, `B7` and `B8` at BJ-4,
- * `B13` and `B14` at BJ-5, `J1` and `J2` at BJ-6, `C2` at BJ-7, and `B6`, `B9`,
- * `B10`, `B11` and `B12` at BJ-8.
+ * `B13` and `B14` at BJ-5, `J1` and `J2` at BJ-6, `C2` at BJ-7, `B6`, `B9`,
+ * `B10`, `B11` and `B12` at BJ-8, and `J3` at BJ-9.
  *
  * The `BJ-6` block carries entries labelled `B15` as well. The betting rules and
  * the four-term identity are built at `BJ-6` and unit tested there, and `B15`
@@ -2411,6 +2411,382 @@ const EDITS = [
     file: 'src/core/rules.ts',
     find: '  return Object.freeze({ ...DEFAULT_RULES, ...overrides });',
     replace: '  return Object.freeze({ ...DEFAULT_RULES });',
+    detectedBy: UNIT,
+  },
+  // ------------------------------------------------------------------
+  // J3. The strategy coach at BJ-9. Three failure modes, and they fail
+  // differently:
+  //
+  //   1. A cell is simply wrong. Caught by the 3,040 cell sweep against
+  //      the committed reference charts.
+  //   2. A house rule is resolved wrongly, or stops being resolved at
+  //      all. Caught by the same sweep on the combinations that rule
+  //      moves, and by the two exact-set controls.
+  //   3. The walk, the legality it borrows from `table.ts` and
+  //      `wallet.ts`, the modes and the counters. Caught by the unit
+  //      tests around each.
+  //
+  // The last six break the test's own reading rather than the game's
+  // code, which is the B1, B3 and J1 precedent: a sweep that had stopped
+  // covering a cell, a combination or a wrong-cell set would pass a
+  // generator that was wrong in exactly that place.
+  // ------------------------------------------------------------------
+  {
+    item: 'J3',
+    name: 'the hard 16 surrender clause drops the Ace column',
+    file: 'src/core/strategy.ts',
+    find: "    if (rules.surrender && against(up, ['9', '10', 'A'])) {",
+    replace: "    if (rules.surrender && against(up, ['9', '10'])) {",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'a hard 15 surrenders against an Ace, which is the hit-soft-17 cell',
+    file: 'src/core/strategy.ts',
+    find: "    if (rules.surrender && up === '10') {",
+    replace: "    if (rules.surrender && (up === '10' || up === 'A')) {",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'a hard 11 doubles into an Ace, which is the hit-soft-17 cell',
+    file: 'src/core/strategy.ts',
+    find: "    return up === 'A' ? HIT : DOUBLE_OR_HIT;",
+    replace: '    return DOUBLE_OR_HIT;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'a soft 18 doubles against a 2 instead of standing',
+    file: 'src/core/strategy.ts',
+    find: "    if (against(up, ['3', '4', '5', '6'])) {\n      return DOUBLE_OR_STAND;",
+    replace: "    if (against(up, ['2', '3', '4', '5', '6'])) {\n      return DOUBLE_OR_STAND;",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'a soft 18 hits against an 8 instead of standing',
+    file: 'src/core/strategy.ts',
+    find: "    if (against(up, ['9', '10', 'A'])) {\n      return HIT;\n    }",
+    replace: "    if (against(up, ['8', '9', '10', 'A'])) {\n      return HIT;\n    }",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'a hard 12 stands against a 3',
+    file: 'src/core/strategy.ts',
+    find: "    return against(up, ['4', '5', '6']) ? STAND : HIT;",
+    replace: "    return against(up, ['3', '4', '5', '6']) ? STAND : HIT;",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'a hard 9 doubles against a 2',
+    file: 'src/core/strategy.ts',
+    find:
+      '  if (total === 9) {\n' +
+      "    return against(up, ['3', '4', '5', '6']) ? DOUBLE_OR_HIT : HIT;\n" +
+      '  }',
+    replace:
+      '  if (total === 9) {\n' +
+      "    return against(up, ['2', '3', '4', '5', '6']) ? DOUBLE_OR_HIT : HIT;\n" +
+      '  }',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the 2,2 and 3,3 row stops reading Double after split',
+    file: 'src/core/strategy.ts',
+    find:
+      "    case '2':\n" +
+      "    case '3':\n" +
+      '      return rules.doubleAfterSplit\n' +
+      "        ? against(up, ['2', '3', '4', '5', '6', '7'])\n" +
+      "        : against(up, ['4', '5', '6', '7']);",
+    replace:
+      "    case '2':\n" +
+      "    case '3':\n" +
+      "      return against(up, ['2', '3', '4', '5', '6', '7']);",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the 4,4 row stops reading Double after split',
+    file: 'src/core/strategy.ts',
+    find: "      return rules.doubleAfterSplit && against(up, ['5', '6']);",
+    replace: "      return against(up, ['5', '6']);",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the 6,6 row stops reading Double after split',
+    file: 'src/core/strategy.ts',
+    find:
+      '      return rules.doubleAfterSplit\n' +
+      '        ? against(up, DEALER_STIFF)\n' +
+      "        : against(up, ['3', '4', '5', '6']);",
+    replace: '      return against(up, DEALER_STIFF);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'a pair of 9s is split against a 7',
+    file: 'src/core/strategy.ts',
+    find: "      return against(up, ['2', '3', '4', '5', '6', '8', '9']);",
+    replace: "      return against(up, ['2', '3', '4', '5', '6', '7', '8', '9']);",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'a ten-value pair is split, which no reading of SPEC 4.6 does',
+    file: 'src/core/strategy.ts',
+    find:
+      "    case '10':\n" +
+      "      // Never, under either reading of SPEC 4.6's pair test. This is the cell\n" +
+      '      // SPEC 7 names as the reason the equal-value and equal-rank toggle\n' +
+      '      // changes no recommendation: a 20 is not a hand to take apart.\n' +
+      '      return false;',
+    replace: "    case '10':\n      return true;",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'a pair cell loses the fall-through the walk needs',
+    file: 'src/core/strategy.ts',
+    find: '  return Object.freeze([SPLIT, ...tail]);',
+    replace: '  void tail;\n  return Object.freeze([SPLIT]);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the walk returns the first preference rather than the first legal one',
+    file: 'src/core/strategy.ts',
+    find: '    if (legal(action, table, situation)) {',
+    replace: '    if (cell.preference.length > 0) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the coach stops asking whether the balance funds the increment',
+    file: 'src/core/strategy.ts',
+    find: '  return situation.hand.wager <= situation.chips;',
+    replace: '  void situation;\n  return true;',
+    detectedBy: UNIT,
+  },
+  {
+    // The off-by-one the whole-clause mutation above cannot reach. SPEC 4.5 and
+    // 4.6 both say "chips available **>=** the hand's wager", and `wallet.ts`
+    // refuses only when `increment > chips`, so a balance of exactly the wager
+    // funds the double. A strict comparison here disagrees with the wallet on
+    // one balance and on no other, which is why the boundary is driven at the
+    // wager and at one chip under it rather than at a comfortable balance.
+    item: 'J3',
+    name: 'the funding comparison goes strict, refusing a balance of exactly the wager',
+    file: 'src/core/strategy.ts',
+    find: '  return situation.hand.wager <= situation.chips;',
+    replace: '  return situation.hand.wager < situation.chips;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'Double availability is re-derived instead of asked of table.ts',
+    file: 'src/core/strategy.ts',
+    find: '      return doubleRefusal(hand, context) === null && fundsAnEqualWager(situation);',
+    replace:
+      "      return hand.cards.length === 2 && hand.state === 'live' && fundsAnEqualWager(situation);",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the live-hand guard is dropped, so a bust hand reaches the lookup',
+    file: 'src/core/strategy.ts',
+    find:
+      "  if (situation.hand.state !== 'live') {\n" +
+      '    return null;\n' +
+      '  }\n' +
+      '  const cell = table.cellFor(situation.hand.cards, situation.up);',
+    replace: '  const cell = table.cellFor(situation.hand.cards, situation.up);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the chart stops folding the face cards onto the 10 column',
+    file: 'src/core/strategy.ts',
+    find: "  if (rank === '10' || rank === 'J' || rank === 'Q' || rank === 'K') {",
+    replace: "  if (rank === '10') {",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the hard surface stops covering 2,2',
+    file: 'src/core/strategy.ts',
+    find: 'export const LOWEST_HARD_TOTAL = 4;',
+    replace: 'export const LOWEST_HARD_TOTAL = 5;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the soft surface stops covering A,A',
+    file: 'src/core/strategy.ts',
+    find: 'export const LOWEST_SOFT_TOTAL = 12;',
+    replace: 'export const LOWEST_SOFT_TOTAL = 13;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the soft surface is generated from the hard rules',
+    file: 'src/core/strategy.ts',
+    find:
+      '  const softSurface = buildSurface(SOFT_TOTALS, (total, up) => softPreference(total, up));',
+    replace:
+      '  const softSurface = buildSurface(SOFT_TOTALS, (total, up) => hardPreference(total, up, rules));',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the coach counts a decision while SPEC 7 has it switched off',
+    file: 'src/core/strategy.ts',
+    find:
+      "  if (mode === 'off') {\n" +
+      '    return Object.freeze({ record, verdict: null });\n' +
+      '  }\n' +
+      '  const verdict = compare(table, situation, played);',
+    replace: '  void mode;\n  const verdict = compare(table, situation, played);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the accuracy percentage reads zero before the first decision',
+    file: 'src/core/strategy.ts',
+    find: '  if (counters.decisions === 0) {\n    return null;\n  }',
+    replace: '  if (counters.decisions === 0) {\n    return 0;\n  }',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'a new session clears the lifetime counters too',
+    file: 'src/core/strategy.ts',
+    find: '  return Object.freeze({ session: NO_COUNTERS, lifetime: record.lifetime });',
+    replace: '  return Object.freeze({ session: NO_COUNTERS, lifetime: NO_COUNTERS });',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the coach reads the first hand rather than the active one',
+    file: 'src/core/strategy.ts',
+    find: '  const hand = readout.hands[phase.activeHand];',
+    replace: '  const hand = readout.hands[0];',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'an insurance intent is counted as a basic strategy decision',
+    file: 'src/core/strategy.ts',
+    find: "    case 'surrender':\n      return 'surrender';\n    default:\n      return null;",
+    replace:
+      "    case 'surrender':\n" +
+      "      return 'surrender';\n" +
+      "    case 'takeInsurance':\n" +
+      "      return 'stand';\n" +
+      '    default:\n' +
+      '      return null;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'hint mode answers in review mode as well',
+    file: 'src/core/strategy.ts',
+    find: "  return mode === 'hint' ? recommend(table, situation) : null;",
+    replace: "  return mode === 'off' ? null : recommend(table, situation);",
+    detectedBy: UNIT,
+  },
+  {
+    // The B1, B3 and J1 precedent: break the test's own reading rather than
+    // the game's code. A reference chart that no longer says what published
+    // basic strategy says would agree with a generator wrong in that same
+    // cell, which is the whole failure the chart exists to stop.
+    item: 'J3',
+    name: 'the reference chart drops surrender from hard 16 against an Ace',
+    file: 'tests/unit/reference/basic-strategy-charts.ts',
+    find: "  16: ['S', 'S', 'S', 'S', 'S', 'H', 'H', 'Rh', 'Rh', 'Rh'],",
+    replace: "  16: ['S', 'S', 'S', 'S', 'S', 'H', 'H', 'Rh', 'Rh', 'H'],",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the reference chart doubles a soft 18 against a 2',
+    file: 'tests/unit/reference/basic-strategy-charts.ts',
+    find: "  18: ['S', 'Ds', 'Ds', 'Ds', 'Ds', 'S', 'S', 'H', 'H', 'H'],",
+    replace: "  18: ['Ds', 'Ds', 'Ds', 'Ds', 'Ds', 'S', 'S', 'H', 'H', 'H'],",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the sweep quietly stops covering one of the 8 rule combinations',
+    file: 'tests/unit/reference/basic-strategy-charts.ts',
+    find: '  { decks: 8, doubleAfterSplit: false, surrender: false },\n];',
+    replace: '];',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the sweep own count of the hard rows drifts off the surface',
+    file: 'tests/unit/strategy-coach.test.ts',
+    find: 'const HARD_ROW_COUNT = 18;',
+    replace: 'const HARD_ROW_COUNT = 17;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the DAS control expected cell set loses 6,6 against a 2',
+    file: 'tests/unit/strategy-coach.test.ts',
+    find: "  'pair 4 vs 6',\n  'pair 6 vs 2',\n];",
+    replace: "  'pair 4 vs 6',\n];",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the surrender control expected cell set loses 8,8 against an Ace',
+    file: 'tests/unit/strategy-coach.test.ts',
+    find: "  'pair 8 vs 10',\n  'pair 8 vs A',\n];",
+    replace: "  'pair 8 vs 10',\n];",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the reference chart starts importing from the code it checks',
+    file: 'tests/unit/reference/basic-strategy-charts.ts',
+    find: '/** One cell as a published chart abbreviates it. */',
+    replace:
+      "import { TARGET } from '../../../src/core/hand';\n\n" +
+      '/** One cell as a published chart abbreviates it. */\n' +
+      'export const LIMIT = TARGET;\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'a preference list is handed out unfrozen',
+    file: 'src/core/strategy.ts',
+    find: "const DOUBLE_OR_HIT: PreferenceList = Object.freeze(['double', 'hit']);",
+    replace: "const DOUBLE_OR_HIT: PreferenceList = ['double', 'hit'];",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'the machine starts importing the coach, so an action could route through it',
+    file: 'src/core/table.ts',
+    find: 'export function hitRefusal(hand: HandInPlay): RejectionReason | null {',
+    replace:
+      "import { strategyTable } from './strategy'; void strategyTable; " +
+      'export function hitRefusal(hand: HandInPlay): RejectionReason | null {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'J3',
+    name: 'one of the three coach modes drops off the published list',
+    file: 'src/core/strategy.ts',
+    find: "export const COACH_MODES: readonly CoachMode[] = Object.freeze(['off', 'hint', 'review']);",
+    replace: "export const COACH_MODES: readonly CoachMode[] = Object.freeze(['off', 'hint']);",
     detectedBy: UNIT,
   },
 ];
