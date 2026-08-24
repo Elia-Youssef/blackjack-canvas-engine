@@ -4,8 +4,8 @@
  * One entry per gate, added by the part that builds it: `M3` and `A6` at BJ-0,
  * `E1` at BJ-1, `B1` at BJ-2, `B2` and `B3` at BJ-3, `B7` and `B8` at BJ-4,
  * `B13` and `B14` at BJ-5, `J1` and `J2` at BJ-6, `C2` at BJ-7, `B6`, `B9`,
- * `B10`, `B11` and `B12` at BJ-8, `J3` at BJ-9, `J5` and `J6` at BJ-10, and
- * `I1`, `I2` and `I3` at BJ-11.
+ * `B10`, `B11` and `B12` at BJ-8, `J3` at BJ-9, `J5` and `J6` at BJ-10,
+ * `I1`, `I2` and `I3` at BJ-11, and `H6`, `M5`, `B5` and `B16` at BJ-12.
  *
  * The `BJ-11` block breaks the storage seam, the versioned envelope and the
  * field-by-field salvage. Two of its entries are additions rather than edits,
@@ -14,6 +14,16 @@
  * storage globals. A scanner that finds nothing is indistinguishable from a
  * scanner that cannot see, so a file carrying each is dropped into the real
  * `src/storage/` and the suite has to go red.
+ *
+ * The `BJ-12` block breaks the properties the soak, the determinism harness
+ * and the frame-independence harness grade: the four-term identity's published
+ * sum and the release of the deferred remainder, the shoe's in-play
+ * accounting, the defensive rebuild's subtraction, its attempt counter and its
+ * trigger, the clamp's negative and ceiling clauses, the drain loop's raw
+ * delta, carried remainder and multiplicity, the resume, the session seed and
+ * the shoe's split stream. Several are also caught by older suites, which is
+ * layering rather than redundancy; each one is required red by `npm run test`
+ * with the three BJ-12 files in it.
  *
  * The `BJ-10` block's `J5` entries also break the per-round action journal that
  * part added to `table.ts`. No acceptance item is claimed for the journal; it
@@ -3719,6 +3729,134 @@ const EDITS = [
     file: 'src/storage/persistence.ts',
     find: '  return mark === undefined ? {} : { bestBalance: mark };',
     replace: '  return { bestBalance: mark as number };',
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // BJ-12. The soak, the determinism harness and the frame-independence
+  // harness. H6 is the conservation audit between every two observations,
+  // B5 the rebuild that must never fire and must subtract what it owes when
+  // forced, M5 the clamp, the drain and the schedule at six frame rates,
+  // B16 the seeded transcripts and the shoe's own split stream.
+  // ------------------------------------------------------------------
+  {
+    item: 'H6',
+    name: 'the wallet readout drops the fourth identity term',
+    file: 'src/core/wallet.ts',
+    find: '      conserved: chips + committed() + insuranceStake - deferredStake,',
+    replace: '      conserved: chips + committed() + insuranceStake,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'H6',
+    name: 'the round boundary waives the deferred remainder instead of taking it back',
+    file: 'src/core/wallet.ts',
+    find: '    chips -= deferredStake;\n    deferredStake = 0;',
+    replace: '    deferredStake = 0;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'H6',
+    name: 'the shoe stops clearing in-play cards at the round boundary',
+    file: 'src/core/shoe.ts',
+    find: '  function endRound(): boolean {\n    inPlay.length = 0;',
+    replace: '  function endRound(): boolean {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'H6',
+    name: 'a drawn card is no longer recorded as in play',
+    file: 'src/core/shoe.ts',
+    find: '    inPlay.push(drawn);',
+    replace: '    void drawn;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B5',
+    name: 'the forced rebuild stops subtracting the cards in play',
+    file: 'src/core/shoe.ts',
+    find: '      if (outstanding > 0) {\n        owed.set(key, outstanding - 1);\n        continue;\n      }',
+    replace: '      void outstanding;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B5',
+    name: 'the rebuild counter stops counting attempts',
+    file: 'src/core/shoe.ts',
+    find: '    rebuilds += 1;',
+    replace: '    rebuilds += 0;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B5',
+    name: 'an exhausted shoe throws instead of attempting the rebuild',
+    file: 'src/core/shoe.ts',
+    find: '    if (dealt >= stack.length) {\n      rebuild();\n    }',
+    replace: '    if (dealt > stack.length) {\n      rebuild();\n    }',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M5',
+    name: 'a negative delta is consumed instead of treated as zero',
+    file: 'src/core/table.ts',
+    find: '  if (!Number.isFinite(dt) || dt <= 0) {',
+    replace: '  if (!Number.isFinite(dt)) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M5',
+    name: 'the per-frame ceiling comes off the clamp',
+    file: 'src/core/table.ts',
+    find: '  return Math.min(dt, MAX_STEP);',
+    replace: '  return dt;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M5',
+    name: 'the accumulator consumes the raw delta rather than the clamped one',
+    file: 'src/core/table.ts',
+    find: '    elapsed += clampDelta(dt);',
+    replace: '    elapsed += dt;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M5',
+    name: 'the drain drops the remainder instead of carrying it',
+    file: 'src/core/table.ts',
+    find: '      elapsed -= step.duration;',
+    replace: '      elapsed = 0;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M5',
+    name: 'a resume returns without emptying the accumulator',
+    file: 'src/core/table.ts',
+    find: '    if (Number.isFinite(dt) && dt > RESUME_GAP) {\n      elapsed = 0;\n      return;\n    }',
+    replace: '    if (Number.isFinite(dt) && dt > RESUME_GAP) {\n      return;\n    }',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M5',
+    name: 'the drain loop degrades to one step per frame',
+    file: 'src/core/table.ts',
+    find: '    while (step !== null && elapsed >= step.duration) {',
+    replace: '    if (step !== null && elapsed >= step.duration) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B16',
+    name: 'the table ignores the seed it was given',
+    file: 'src/core/table.ts',
+    find: 'createRng(options.seed ?? DEFAULT_SEED)',
+    replace: 'createRng(DEFAULT_SEED)',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B16',
+    name: 'the shoe shares the session stream instead of splitting its own',
+    file: 'src/core/shoe.ts',
+    find: '  const stream = source.split();',
+    replace: '  const stream = source;',
     detectedBy: UNIT,
   },
 ];

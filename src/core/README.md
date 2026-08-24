@@ -17,6 +17,17 @@ list the saved document has to be validated against; `table.ts` is the one subst
 for `PLAYER_ACTIONS`, the runtime list behind SPEC 8's "every action taken". **None of the eleven imports
 `storage/`**, so the dependency runs one way, exactly as the chrome's will.
 
+**`BJ-12` added none of them either, and closed the core phase.** Its whole footprint is three harnesses
+under `tests/unit/`: `soak.test.ts` plays 50,000 seeded rounds against SPEC 4.11's four-term identity,
+audited between every two observations, with the defensive rebuild never firing and then forced and proven
+to return no in-play card; `determinism.test.ts` replays a seeded session identically across runs and
+across both shoe sizes and proves the shoe's `split()` stream load-bearing against a drawing sibling;
+`frame-independence.test.ts` holds the same seeded rounds to one derived wall-clock schedule from 15 to
+1000 frames per second, and to the same sequence of states and outcomes on an unstable clock with zero
+and negative deltas, whose wall time the schedule half deliberately does not claim. Items `H6`, `M5`,
+`B5` and `B16`, each with mutation entries in `scripts/mutation-check.mjs` that prove the new gates can
+fail.
+
 | Module | What it owns | Part | Item |
 |---|---|---|---|
 | `cards.ts` | `Rank`, `Suit`, `Card`, the card factory, and what a rank is worth | `BJ-2` | `B1` |
