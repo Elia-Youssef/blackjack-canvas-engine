@@ -3,7 +3,7 @@
 The buildable project. Requirements live one directory up in [SPEC.md](../SPEC.md); this file is only how to
 build, run and verify what is here.
 
-**State: parts `BJ-0` through `BJ-12`.** The toolchain, the CI gates, the design tokens, and the whole
+**State: parts `BJ-0` through `BJ-13`.** The toolchain, the CI gates, the design tokens, and the whole
 headless game: cards, hand evaluation, the seeded stream, the shoe, the dealer, settlement, the wallet
 with the three tables and the betting arithmetic, the phase machine and its type unions, the round itself
 with every player action and both side offers behind an availability gate, the house-rule record, the
@@ -17,9 +17,17 @@ load-bearing, and the same seeded rounds transcribe identically from 15 to 1000 
 to a derived wall-clock schedule, with the sequence of states and outcomes unchanged on an unstable
 clock with zero and negative deltas. A complete round plays out headlessly from the
 wager to the payout; the saved document is built and proven but not yet wired to a launch, because the
-composition root is a later part. There is still nothing to look at: `src/render/` and `src/ui/` hold
-the token layer and nothing else, nothing is drawn, and no core module is wired into the entry point.
-See [../../docs/BUILD-PLAN.md](../../docs/BUILD-PLAN.md) for what fills them and in what order.
+composition root is a later part. `BJ-13` added the play surface under `src/render/`: the surface
+wrapper that owns the device-pixel-ratio backing store and the two ordered passes, the felt baked once
+into an offscreen canvas with its rail, grain and printed house rules, cards with rank and suit indices
+in both opposing corners and the classic centre pip layouts, and chip stacks in the conventional
+denominational colours with a visible offset. Items `E3`, `E4` and `E5` are method D and close at the
+demonstration session; what is merged here is the behaviour, its scene hooks in
+`tests/browser/support/render-demo.ts`, and the automated armour under all three, at unit level against
+a recording context and at browser level against real pixels on all three engines. The shipped page
+still shows none of it: nothing imports `render/` from the entry point, because the composition root is
+`BJ-15`. See [../../docs/BUILD-PLAN.md](../../docs/BUILD-PLAN.md) for what fills the rest and in what
+order.
 
 ## Prerequisites
 
@@ -81,8 +89,8 @@ npx playwright install chromium firefox webkit
 | `npm run verify:policy` | The same record from inside the project, so CI can enforce it without the workspace documents |
 | `npm run typecheck` | `tsc --noEmit`, strict, plus `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` |
 | `npm run lint` | ESLint, including the `core/` boundary and the `Math.random()` ban. Item `M3` |
-| `npm run test` | Vitest. Includes the boundary fixture assertion, the token layer against its two specs, hand evaluation against an independently written evaluator, the shuffle against a measured uniformity band, the dealer's policy against a hit-soft-17 control that must disagree on exactly the soft 17 hands, the peek result against structural leak assertions on both branches, the settlement ladder against three reordered ladders that must disagree on exactly the equal-naturals, both-bust and surrendered-against-a-natural cases and nowhere else, the tables and betting rules against eleven controls: a threshold-blind and an affordability-blind entry predicate, a lowest-first launch fallback, an unlock read off the current balance and one read off the balance plus what is still committed, a clamping chip tap, an unfloored Max and a Max that forgot the balance, both misreadings of Repeat, and a fabricated step list the conservation checker has to flag, and the phase machine over all 187 intent-and-phase cells against three misread legality tables that must disagree on exactly 170, 4 and 40 of them and a branch that peeks before it offers, which must disagree on exactly the Ace, the full round through the machine with split, double, surrender, insurance and even money each driven and each rejected by layer, the coach table against hand-written reference charts over all 8 rule combinations, 3,040 cells compared, the counters, the eleven milestones and the fifty-round history against double-count and naive-reload traps, and the versioned storage document against 73 corrupt fixtures, a real migration walk, a throwing write and a store that refuses to exist, each booting the game anyway, and the three BJ-12 harnesses: a 50,000-round soak auditing the four-term identity between every two observations with the three-term form failing as its negative control and the rebuild forced and proven to return no in-play card, seeded round transcripts reproduced across runs and across both shoe sizes with a sibling consumer proven unable to shift the deal, and the same seeded rounds transcribed at 15, 30, 60, 144, 240 and 1000 fps against a derived wall-clock schedule that must reject a per-frame stepper, with the sequence and outcomes unchanged on an unstable clock with zero and negative deltas |
-| `npm run test:browser` | Playwright on Chromium, Firefox and WebKit against the built `dist/` |
+| `npm run test` | Vitest. Includes the boundary fixture assertion, the token layer against its two specs, hand evaluation against an independently written evaluator, the shuffle against a measured uniformity band, the dealer's policy against a hit-soft-17 control that must disagree on exactly the soft 17 hands, the peek result against structural leak assertions on both branches, the settlement ladder against three reordered ladders that must disagree on exactly the equal-naturals, both-bust and surrendered-against-a-natural cases and nowhere else, the tables and betting rules against eleven controls: a threshold-blind and an affordability-blind entry predicate, a lowest-first launch fallback, an unlock read off the current balance and one read off the balance plus what is still committed, a clamping chip tap, an unfloored Max and a Max that forgot the balance, both misreadings of Repeat, and a fabricated step list the conservation checker has to flag, and the phase machine over all 187 intent-and-phase cells against three misread legality tables that must disagree on exactly 170, 4 and 40 of them and a branch that peeks before it offers, which must disagree on exactly the Ace, the full round through the machine with split, double, surrender, insurance and even money each driven and each rejected by layer, the coach table against hand-written reference charts over all 8 rule combinations, 3,040 cells compared, the counters, the eleven milestones and the fifty-round history against double-count and naive-reload traps, and the versioned storage document against 73 corrupt fixtures, a real migration walk, a throwing write and a store that refuses to exist, each booting the game anyway, and the three BJ-12 harnesses: a 50,000-round soak auditing the four-term identity between every two observations with the three-term form failing as its negative control and the rebuild forced and proven to return no in-play card, seeded round transcripts reproduced across runs and across both shoe sizes with a sibling consumer proven unable to shift the deal, and the same seeded rounds transcribed at 15, 30, 60, 144, 240 and 1000 fps against a derived wall-clock schedule that must reject a per-frame stepper, with the sequence and outcomes unchanged on an unstable clock with zero and negative deltas, and the BJ-13 render armour against a recording context: the pip layout table held to core's pip values with every layout symmetric under a half turn except the 7, both corner indices with the far one rotated, the face-down card proven to draw nothing it knows, the wager decomposition checked against an independent minimiser, the stack offset and per-denomination fills, the felt's four printed lines per table with the bake deterministic to the instruction and the per-frame path a single blit, the DPR backing store with fractional ratios, the two-pass frame order with explicit state at each pass top, and a directory scan keeping DPR arithmetic, clocks and randomness out of every render module but the surface wrapper |
+| `npm run test:browser` | Playwright on Chromium, Firefox and WebKit against the built `dist/`. From BJ-13 it also rasterises the play surface for real: the test-time harness bundle draws the three demonstration scenes on a page canvas and the suite reads pixels back, holding the felt, rail and print to their tokens, the card margin to a measured 3:1 against all three felts, every denomination of the 680 wager visible in one stack, the backing store to integer and fractional device pixel ratios, and the felt bake byte-identical across two runs on each engine |
 | `npm run verify:build` | Two builds, hashed and compared. Item `A6`. Writes `artifacts/reports/build.md` |
 | `npm run verify:mutations` | Not a gate. Breaks every gate above, one mutation per property it protects, and requires each break to be caught |
 
@@ -161,6 +169,10 @@ BlackJack/BlackJack/
       history.ts             the fifty-round hand history, read from the round journal. Item J5
     render/                  canvas play surface. BJ-13 onward
       tokens.ts              the renderer token record. Item E1
+      surface.ts             context, the one DPR backing store, the two ordered passes
+      felt.ts                table ground, rail, grain, insurance divider, printed rules. Item E5
+      card.ts                face, back, corner indices, centre pip layouts. Item E3
+      chips.ts               denominations, wager decomposition, stacks. Item E4
     ui/                      DOM chrome. BJ-15 onward
       tokens.css             the design tokens. Item E1
     storage/                 the saved document and its store. Items I1, I2, I3. Wired at BJ-19
@@ -173,9 +185,15 @@ BlackJack/BlackJack/
       soak.test.ts           the 50,000-round soak against the four-term identity. Items H6, B5
       determinism.test.ts    seeded transcripts across runs and both shoe sizes. Item B16
       frame-independence.test.ts  the same rounds at 15 to 1000 fps on one schedule. Item M5
+      render-card.test.ts    E3 armour: layouts, corners, inks, the concealed back
+      render-chips.test.ts   E4 armour: decomposition, offset, fills, the value glyph
+      render-felt.test.ts    E5 armour: the printed lines, rail, grain, the one-blit frame
+      render-surface.test.ts the DPR store, the pass order, the render directory scans
       reference/             second implementations, written from the spec, never importing src/
-      support/               stacked shoes and storage fixtures for the tests that drive them
+      support/               stacked shoes, storage fixtures, and the recording canvas context
     browser/                 Playwright
+      render-surface.spec.ts E3, E4 and E5 as rendered pixels, on all three engines
+      support/render-demo.ts the demonstration scenes, bundled at test time, never shipped
     lint/fixtures/           the deliberately violating fixture, and its controls
   tools/
     eslint-plugin-core-boundary/
