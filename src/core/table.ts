@@ -92,6 +92,7 @@ import type {
   IntentKind,
   Phase,
   PhaseKind,
+  PlayerAction,
   SettledHand,
 } from './types';
 import type { Refusal, TableId, TableLimits, Wallet, WalletReadout } from './wallet';
@@ -332,6 +333,48 @@ export const INTENT_KINDS: readonly IntentKind[] = Object.freeze([
   'dropTable',
   'resetBankroll',
 ]);
+
+/**
+ * SPEC 4.5's player actions, in SPEC 10's intent order. Seven of the eighteen.
+ *
+ * SPEC 8 asks a history entry for "every action taken", and this is the list of
+ * what an action is: SPEC 4.5's six-row table, with SPEC 4.7's insurance row
+ * read as the two intents SPEC 10 actually offers. Exported so a caller and a
+ * test can enumerate them without writing the list a second time, next to
+ * `INTENT_KINDS` and the legality table they are the subset of.
+ *
+ * **The two insurance intents are actions and the eleven others are not.**
+ * Declining insurance is a decision the player made at a screen SPEC 10 gives
+ * them, and it is the one action that leaves nothing behind to recover it from.
+ * Choosing a table, building a wager, dealing and asking for the next hand are
+ * screens and money, and SPEC 8 lists the wager as its own field.
+ */
+export const PLAYER_ACTIONS: readonly PlayerAction[] = Object.freeze([
+  'takeInsurance',
+  'declineInsurance',
+  'hit',
+  'stand',
+  'double',
+  'split',
+  'surrender',
+]);
+
+/**
+ * The action an intent counts as for SPEC 8's journal, or `null` when it is not
+ * one of SPEC 4.5's.
+ *
+ * Here rather than at the recorder, so that what counts as an action is decided
+ * once, inside `core/`, where a sweep over `INTENT_KINDS` can drive it. It is
+ * the same shape as `strategy.actionOf` and deliberately not the same answer:
+ * that one is SPEC 7's "decisions made", which basic strategy has an opinion
+ * about and which excludes both insurance intents for the reason `CoachAction`
+ * gives. Two questions, two lists, and folding them together would put an
+ * insurance decision into the coach's accuracy.
+ */
+export function playerActionOf(kind: IntentKind): PlayerAction | null {
+  const found = PLAYER_ACTIONS.find((action) => action === kind);
+  return found ?? null;
+}
 
 /**
  * The legality table. SPEC 10's diagram, read as a row per phase.
@@ -846,6 +889,16 @@ export function createTable(options: TableOptions = {}): Table {
   const hands: HandInPlay[] = [];
   /** The dealer's cards, up card first. SPEC 4.3. */
   const dealer: Card[] = [];
+  /**
+   * SPEC 8's "every action taken", this round, in acceptance order.
+   *
+   * Appended in `apply` and nowhere else, so an action reaches it exactly when
+   * the machine accepted it; cleared in `clearTable`, with the felt, so an
+   * entry belongs to one round. `BJ-10` added it for item `J5` and claims no
+   * item for it: SPEC 8 names the field and a declined insurance offer is the
+   * one thing in that list a finished round cannot be asked for.
+   */
+  const journal: PlayerAction[] = [];
   /** Intents waiting for the next drain. DESIGN section 3. */
   const queued: Intent[] = [];
 
@@ -1199,6 +1252,10 @@ export function createTable(options: TableOptions = {}): Table {
         hands: Object.freeze(settled),
         insurance,
         chips: wallet.readout().chips,
+        // SPEC 8's "every action taken". Copied out frozen, so the entry a
+        // recorder keeps is a value and not this round's array, which
+        // `clearTable` is about to empty.
+        actions: Object.freeze([...journal]),
       }),
     });
   }
@@ -1223,6 +1280,10 @@ export function createTable(options: TableOptions = {}): Table {
     dealer.length = 0;
     splits = 0;
     insurance = null;
+    // SPEC 8's journal goes with the felt, and for the same reason: the round
+    // result still needs it, and `Next Hand` is where this round stops being
+    // the round. `settleRound` has already copied it into the result.
+    journal.length = 0;
   }
 
   /**
@@ -1599,7 +1660,18 @@ export function createTable(options: TableOptions = {}): Table {
     if (!LEGAL[phase.kind].includes(intent.kind)) {
       return refused(intent.kind, 'phase', 'wrong-phase');
     }
-    return perform(intent);
+    const result = perform(intent);
+    // SPEC 8's journal, at the one point every action passes through and after
+    // the action has actually been taken. A refusal from any of the three
+    // layers changes nothing at all, so it is not an action taken and does not
+    // reach the history; `BJ-10`'s `RoundResult.actions` says so in as many
+    // words. Nothing accepted can arrive after `settleRound` has copied the
+    // list, because SPEC 10 gives `settling` no legal intent.
+    const action = playerActionOf(intent.kind);
+    if (result.ok && action !== null) {
+      journal.push(action);
+    }
+    return result;
   }
 
   function queue(intent: Intent): void {
