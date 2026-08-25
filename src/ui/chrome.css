@@ -398,3 +398,57 @@ body {
 .bj-history__entry {
   font-size: var(--type-sm);
 }
+
+/* ---------------------------------------------------------------------------
+ * Motion. Item `E7`, Critical, and `BJ-14`.
+ *
+ *   "prefers-reduced-motion removes every animation entirely, including panel
+ *    and overlay transitions, while leaving the sequence of states and the
+ *    outcome identical."
+ *
+ * These are the panel and overlay transitions that clause names, and the button
+ * transition further up is the third. **Every one of them is removed by the
+ * token layer rather than by a rule here.** `tokens.css` redefines every
+ * `--dur-*` to `--dur-0` inside the media query, so an animation declared here
+ * runs for zero milliseconds under the flag: it does not play, and its
+ * `animationend` still fires, so nothing sequenced on the event stops arriving
+ * and the order of states is untouched. That is the whole reason the reduced
+ * -motion handling is a token redefinition and not a blanket `animation: none`,
+ * which would cancel the events with the animation.
+ *
+ * The browser gate reads the computed `animation-duration` and
+ * `transition-duration` in both modes rather than reading this file, and
+ * requires them positive under no-preference: an animation that was never
+ * declared would satisfy "removed" and none of its point.
+ * ------------------------------------------------------------------------- */
+
+@keyframes bj-overlay-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--space-3));
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes bj-panel-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+/* `both` so a zero-duration run still lands on the end state. */
+.bj-overlay:not([hidden]) {
+  animation: bj-overlay-in var(--dur-3) var(--ease-out) both;
+}
+
+.bj-panel:not([hidden]) {
+  animation: bj-panel-in var(--dur-2) var(--ease-out) both;
+}

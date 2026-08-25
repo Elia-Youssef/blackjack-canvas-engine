@@ -26,15 +26,25 @@
  * be a fifth thing an overlay does to the game, and SPEC 10 gives it none.
  *
  * The Settings panel here is deliberately partial: it carries SPEC 7's coach
- * control, because `C8` needs the coach to be switchable, and it states the
- * house rules in force. SPEC 14's editable toggles, the Speed control, the
- * play-surface size, sound, theme and Reset all data are item `I5` at `BJ-20`,
- * and a control that did nothing would be worse than an absent one.
+ * control, because `C8` needs the coach to be switchable, and SPEC 5's Speed
+ * control, which item `E9` at `BJ-14` grades, and it states the house rules in
+ * force. SPEC 14's editable house-rule toggles, the play-surface size, sound,
+ * theme, the reduced-motion setting and Reset all data are item `I5` at
+ * `BJ-20`, and a control that did nothing would be worse than an absent one.
+ *
+ * **Speed is the first real setting in this panel**, and it is here rather than
+ * at `BJ-20` because `E9` grades it: SPEC 14 says Speed "takes effect
+ * immediately, mid-round included, because neither can change an outcome", so
+ * the control hands the value straight to `table.setSpeed` through
+ * `ChromeActions` and nothing waits for a round boundary. Its persistence is the
+ * one clause of `E9` this part does not close; `BJ-20`'s reload specs do, and
+ * `tests/browser/speed-setting.spec.ts` says so in its own header.
  */
 
 import type { CoachMode } from '../../core/strategy';
 import type { History, HistoryEntry } from '../../core/history';
 import { MILESTONES, type MilestoneId } from '../../core/statistics';
+import { SPEEDS, type Speed } from '../../core/table';
 import { button, el, empty, setAttribute, setHidden, setText } from '../dom';
 import { NOTHING_YET, chips as formatChips, delta as formatDelta, percentOfHundred } from '../format';
 import {
@@ -61,6 +71,18 @@ const OFFERED_MODES: readonly { readonly mode: CoachMode; readonly label: string
   { mode: 'off', label: 'Off' },
   { mode: 'review', label: 'Review' },
 ]);
+
+/**
+ * SPEC 5's two speeds, with the words SPEC 5 and SPEC 14 both use.
+ *
+ * Built from `SPEEDS`, which `core/table.ts` exports beside the multiplier, so
+ * a third speed added there appears here as a missing label rather than as a
+ * control nobody wrote. Item `E9` iterates the same list.
+ */
+const SPEED_LABELS: Readonly<Record<Speed, string>> = Object.freeze({
+  normal: 'Normal',
+  fast: 'Fast',
+});
 
 /** One labelled statistic. */
 function stat(label: string, name: string): { row: HTMLElement; value: HTMLElement } {
@@ -115,6 +137,24 @@ function settingsPanel(actions: ChromeActions): Component {
     group.append(control);
   }
 
+  // SPEC 5's Speed. Item `E9`, and SPEC 14's "takes effect immediately".
+  const speedButtons = new Map<Speed, HTMLButtonElement>();
+  const speeds = el('div', {
+    className: 'bj-modes',
+    attributes: { role: 'group', 'aria-label': 'Speed' },
+  });
+  for (const speed of SPEEDS) {
+    const control = button(
+      SPEED_LABELS[speed],
+      () => {
+        actions.setSpeed(speed);
+      },
+      { className: 'bj-button', attributes: { 'data-speed': speed } },
+    );
+    speedButtons.set(speed, control);
+    speeds.append(control);
+  }
+
   const rules = el('p', { className: 'bj-rules', attributes: { 'data-field': 'house-rules' } });
 
   const root = el('div', {
@@ -127,6 +167,14 @@ function settingsPanel(actions: ChromeActions): Component {
         text: 'Review names the correct action in the round result when yours differed.',
       }),
       group,
+      el('h3', { className: 'bj-panel__heading', text: 'Speed' }),
+      el('p', {
+        className: 'bj-panel__note',
+        // SPEC 5's own sentence, and SPEC 14's: the pacing shortens, nothing
+        // else does. Written out so a player knows it cannot cost them a hand.
+        text: 'Fast shortens every pause and deal. It changes no card and no outcome.',
+      }),
+      speeds,
       el('h3', { className: 'bj-panel__heading', text: 'House rules' }),
       rules,
     ],
@@ -137,6 +185,9 @@ function settingsPanel(actions: ChromeActions): Component {
     update(state: ChromeState): void {
       for (const [mode, control] of modeButtons) {
         setAttribute(control, 'aria-pressed', String(mode === state.coachMode));
+      }
+      for (const [speed, control] of speedButtons) {
+        setAttribute(control, 'aria-pressed', String(speed === state.motion.speed));
       }
       const house = state.readout.rules;
       setText(
@@ -289,7 +340,8 @@ export interface Overlays {
   readonly controls: HTMLElement;
   /** The panel itself. Placed inside the play-surface row. */
   readonly host: HTMLElement;
-  update(state: ChromeState): void;
+  /** One frame's sync. `dt` is passed to the open panel and used by none yet. */
+  update(state: ChromeState, dt: number): void;
 }
 
 export function createOverlays(actions: ChromeActions): Overlays {
@@ -341,7 +393,7 @@ export function createOverlays(actions: ChromeActions): Overlays {
   return {
     controls,
     host,
-    update(state: ChromeState): void {
+    update(state: ChromeState, dt: number): void {
       const open = state.overlay;
       setHidden(host, open === null);
       for (const id of OVERLAY_IDS) {
@@ -359,7 +411,7 @@ export function createOverlays(actions: ChromeActions): Overlays {
         return;
       }
 
-      panels[open].update(state);
+      panels[open].update(state, dt);
       setText(title, OVERLAY_TITLES[open]);
       setText(note, subtitle(state));
       setAttribute(host, 'aria-label', OVERLAY_TITLES[open]);

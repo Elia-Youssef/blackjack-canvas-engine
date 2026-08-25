@@ -34,7 +34,7 @@
  * be reached without options, and says which tests those are.
  */
 
-import { boot, type BootOptions, type Game } from '../../../src/main';
+import { boot, type BootOptions, type Game, type MotionProbe } from '../../../src/main';
 
 /**
  * The options a spec may pass across the Playwright boundary.
@@ -65,19 +65,66 @@ export interface WalletSample {
   readonly conserved: number;
 }
 
+/**
+ * One frame's reading of everything item `E7` calls an animation. `BJ-14`.
+ *
+ * Sampled per frame for the same reason the wallet is: an animation is visible
+ * only while it is running, and "removes every animation entirely" is a claim
+ * about **every frame**, not about the frames a spec happened to look at. Four
+ * readings, and each carries one clause:
+ *
+ *   - `tweens` is what the play surface had in flight, which is the canvas half.
+ *   - `balance` is SPEC 11's chip readout as the page rendered it and `chips` is
+ *     what the machine held on the same frame. Equal on every frame means the
+ *     count-up did not run; differing on some frame means it did. That is the
+ *     DOM half, and it needs both numbers, because a readout that agreed with
+ *     the machine because both were wrong would still be a snap.
+ *   - `phase` is SPEC 10's screen, which is the sequence of states the criterion
+ *     requires identical between the two modes.
+ */
+export interface MotionSample {
+  readonly at: number;
+  readonly phase: string;
+  readonly tweens: number;
+  readonly reducedMotion: boolean;
+  readonly speed: string;
+  /** SPEC 11's chip readout, as text, exactly as the page rendered it. */
+  readonly balance: string;
+  /** The balance the machine held on the same frame. */
+  readonly chips: number;
+}
+
+/** No trace runs longer than this, so a spec cannot hang on a stuck page. */
+const TRACE_FRAME_LIMIT = 4000;
+
 /** What the specs may ask the page for. Read-only, plus the one boot. */
 export interface GameHarness {
   boot(options: HarnessBootOptions): void;
   readout(): ReturnType<Game['readout']>;
   session(): ReturnType<Game['session']>;
+  /** What the last frame resolved for motion. Items `E7` and `E9`. */
+  motion(): MotionProbe;
   /** Begin sampling the wallet every frame, until SPEC 10's round result. */
   watch(): void;
   /** Everything `watch` has sampled, oldest first. */
   samples(): readonly WalletSample[];
+  /** Begin sampling the motion state every frame, until `stopTrace`. */
+  trace(): void;
+  /** Stop the motion sampler. */
+  stopTrace(): void;
+  /** Everything `trace` has sampled, oldest first. */
+  motionTrace(): readonly MotionSample[];
 }
 
 let game: Game | null = null;
 const recorded: WalletSample[] = [];
+const traced: MotionSample[] = [];
+let tracing = false;
+
+/** SPEC 11's chip readout, as the page has it rendered right now. */
+function balanceText(): string {
+  return document.querySelector('[data-readout="chips"] .bj-readout__value')?.textContent ?? '';
+}
 
 function running(): Game {
   if (game === null) {
@@ -94,6 +141,37 @@ const harness: GameHarness = {
   },
   readout: () => running().readout(),
   session: () => running().session(),
+  motion: () => running().motion(),
+
+  trace(): void {
+    traced.length = 0;
+    tracing = true;
+    let frames = 0;
+    const tick = (): void => {
+      const probe = running().motion();
+      const snapshot = running().readout();
+      traced.push({
+        at: performance.now(),
+        phase: snapshot.phase.kind,
+        tweens: probe.tweensInFlight,
+        reducedMotion: probe.reducedMotion,
+        speed: probe.speed,
+        balance: balanceText(),
+        chips: snapshot.wallet.chips,
+      });
+      frames += 1;
+      if (tracing && frames < TRACE_FRAME_LIMIT) {
+        requestAnimationFrame(tick);
+      }
+    };
+    requestAnimationFrame(tick);
+  },
+
+  stopTrace(): void {
+    tracing = false;
+  },
+
+  motionTrace: () => traced,
 
   watch(): void {
     recorded.length = 0;
@@ -118,10 +196,25 @@ const harness: GameHarness = {
   samples: () => recorded,
 };
 
+/**
+ * One entry of the shipped page's own phase log. `BJ-14`, item `E9`.
+ *
+ * Recorded by a `MutationObserver` on the shell's `data-phase` attribute rather
+ * than by anything in this file, so the timings it produces are a measurement of
+ * the **shipped** bundle driven through its own controls, with nothing injected
+ * and no game booted from source. `tests/browser/support/game.ts` installs it.
+ */
+export interface PhaseTiming {
+  readonly phase: string;
+  readonly at: number;
+}
+
 declare global {
   interface Window {
     /** Assigned by the harness, never by the product. */
     __bjGame?: GameHarness;
+    /** Assigned by the phase observer in `game.ts`, never by the product. */
+    __bjPhaseLog?: PhaseTiming[];
   }
 }
 

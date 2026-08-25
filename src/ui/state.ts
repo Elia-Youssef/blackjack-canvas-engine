@@ -20,8 +20,9 @@
 import type { History } from '../core/history';
 import type { MilestoneId, StatisticsReadout } from '../core/statistics';
 import type { CoachMode, CoachVerdict } from '../core/strategy';
-import type { RejectionLayer, RejectionReason, TableReadout } from '../core/table';
+import type { RejectionLayer, RejectionReason, Speed, TableReadout } from '../core/table';
 import type { Intent, IntentKind } from '../core/types';
+import type { Motion } from '../render/animate';
 
 /** SPEC 10's three overlays, and there is no fourth. */
 export type OverlayId = 'settings' | 'howToPlay' | 'statistics';
@@ -98,6 +99,14 @@ export interface ChromeState {
   readonly notice: Notice | null;
   /** Which overlay is open, or `null`. Chrome state, never the machine's. */
   readonly overlay: OverlayId | null;
+  /**
+   * The frame's resolved motion policy. `BJ-14`, items `E7` and `E9`.
+   *
+   * It carries SPEC 5's Speed as well as the reduced-motion flag, so the Speed
+   * control reads its own pressed state off the same value the machine and the
+   * play surface were given rather than off a third copy kept in the chrome.
+   */
+  readonly motion: Motion;
 }
 
 /**
@@ -118,10 +127,29 @@ export interface ChromeActions {
   closeOverlay(): void;
   /** SPEC 7 and SPEC 14: the coach is "toggleable at any time". */
   setCoachMode(mode: CoachMode): void;
+  /**
+   * SPEC 5's Speed. SPEC 14: it "takes effect immediately, mid-round included".
+   *
+   * Not an intent, and for the same reason the overlays are not: it decides no
+   * transition, so a row in SPEC 10's legality table saying it is legal in all
+   * eleven phases would say nothing. The composition root passes it straight to
+   * `table.setSpeed`, which is the only thing about a built table that moves.
+   */
+  setSpeed(speed: Speed): void;
 }
 
 /** One assembled piece of chrome: its root element, and how it is synced. */
 export interface Component {
+  /**
+   * One frame's sync.
+   *
+   * `dt` is the seconds since the previous frame, the same delta the machine and
+   * the play surface were given. Every component but the readouts ignores it:
+   * the sync step is a pure function of `state` and running it twice on one
+   * state produces the same DOM. SPEC 5's balance count-up is the one exception
+   * in the whole chrome, it holds the number it is currently showing, and its
+   * own header says so.
+   */
+  update(state: ChromeState, dt: number): void;
   readonly root: HTMLElement;
-  update(state: ChromeState): void;
 }

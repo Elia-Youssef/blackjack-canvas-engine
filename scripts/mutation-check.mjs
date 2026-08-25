@@ -6,7 +6,8 @@
  * `B13` and `B14` at BJ-5, `J1` and `J2` at BJ-6, `C2` at BJ-7, `B6`, `B9`,
  * `B10`, `B11` and `B12` at BJ-8, `J3` at BJ-9, `J5` and `J6` at BJ-10,
  * `I1`, `I2` and `I3` at BJ-11, `H6`, `M5`, `B5` and `B16` at BJ-12,
- * `E3`, `E4` and `E5` at BJ-13, and `M1`, `C5`, `C8` and `B15` at BJ-15.
+ * `E3`, `E4` and `E5` at BJ-13, `M1`, `C5`, `C8` and `B15` at BJ-15, and `E6`,
+ * `E7` and `E9` at BJ-14.
  *
  * The `BJ-15` block is the first to be measured by the **browser** gate rather
  * than by `npm run test`. Its three items are graded in Playwright over the
@@ -134,6 +135,14 @@ function browserGate(spec) {
 const BETTING = browserGate('betting.spec.ts');
 const OVERLAYS = browserGate('overlays.spec.ts');
 const ROUND_RESULT = browserGate('round-result.spec.ts');
+
+// BJ-14's three, added by the part that built them. `E7` and `E9` are graded
+// over the built `dist/`, and `E6`'s browser armour drives the demonstration
+// hook, so a mutation to the motion layer, the stylesheet or the composition
+// root is required red by the gate that watches the page.
+const REDUCED_MOTION = browserGate('reduced-motion.spec.ts');
+const SPEED_SETTING = browserGate('speed-setting.spec.ts');
+const MOTION_DEMO = browserGate('motion-demo.spec.ts');
 
 /**
  * Mutations that edit an existing file.
@@ -4341,6 +4350,261 @@ const EDITS = [
     replace: '    const dt = previous === null ? 1 / 60 : (timestamp - previous) / MS_PER_SECOND;',
     detectedBy: UNIT,
   },
+
+  // ------------------------------------------------------------------
+  // BJ-14: the motion layer, reduced motion and the Speed setting.
+  //
+  // `E6` is method D and closes at the demonstration session, so its entries
+  // prove the automated armour under it can fail rather than proving the item.
+  // `E7` and `E9` are method T and are graded by the two browser specs, so the
+  // mutations only a page can see are required red by the gate that actually
+  // watches one: a removed CSS animation, a composition root that stops asking
+  // the platform and a Speed control that never reaches the machine are all
+  // invisible to `npm run test`.
+  //
+  // The first two are the ones worth reading. `timedStep` exempting the peek
+  // from the Speed multiplier is the exact defect `table.ts`'s own header warns
+  // about, and it is the timing tell SPEC 4.4 forbids; `PACING.peekPause`
+  // restating 0.3 instead of importing `PEEK_PAUSE` is the same defect written
+  // the other way round, an alias that stopped following what it aliases.
+  // ------------------------------------------------------------------
+  {
+    item: 'E9',
+    name: 'Fast stops being a multiplier and runs at Normal speed',
+    file: 'src/core/table.ts',
+    find: "  return speed === 'fast' ? FAST_SPEED_MULTIPLIER : 1;",
+    replace: '  return 1;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E6',
+    name: 'the Speed multiplier is applied to every phase except the peek',
+    file: 'src/core/table.ts',
+    find: '    return { duration: step.duration * speedMultiplier(speed), take: step.take };',
+    replace:
+      "    const scale = phase.kind === 'peek' ? 1 : speedMultiplier(speed);\n" +
+      '    return { duration: step.duration * scale, take: step.take };',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E6',
+    name: 'the render layer restates the peek pause instead of importing it',
+    file: 'src/render/animate.ts',
+    find: '  peekPause: PEEK_PAUSE,',
+    replace: '  peekPause: 0.3,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E6',
+    name: 'the hole card gets thin and thick again without turning over',
+    file: 'src/render/animate.ts',
+    find: '  return Math.abs(Math.cos(Math.PI * clampProgress(progress)));',
+    replace: '  return 0.2 + 0.8 * Math.abs(Math.cos(Math.PI * clampProgress(progress)));',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E6',
+    name: 'the flip shows its face while the card still has width',
+    file: 'src/render/animate.ts',
+    find: '  return clampProgress(progress) >= DONE / 2;',
+    replace: '  return clampProgress(progress) >= DONE / 4;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E6',
+    name: 'a dealt card slides in a straight line instead of on an arc',
+    file: 'src/render/animate.ts',
+    find: '    y: lerp(from.y, to.y, t) - lift * Math.sin(Math.PI * clampProgress(progress)),',
+    replace: '    y: lerp(from.y, to.y, t),',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E6',
+    name: 'the travel curve goes linear, so nothing eases and nothing settles',
+    file: 'src/render/animate.ts',
+    find: '  return ease(EASE.out, progress);',
+    replace: '  return progress;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E6',
+    name: 'the balance snaps to its new value instead of counting',
+    file: 'src/render/animate.ts',
+    find: '  return Math.round(toward(from, to, progress));',
+    replace: '  return to;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E6',
+    name: 'the win pulse beats four times faster and breaches the flash ceiling',
+    file: 'src/render/animate.ts',
+    find: '  return (fade * (DONE - Math.cos(2 * Math.PI * WIN_PULSE_CYCLES * progress))) / 2;',
+    replace:
+      '  return (fade * (DONE - Math.cos(2 * Math.PI * 4 * WIN_PULSE_CYCLES * progress))) / 2;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E6',
+    name: 'the win pulse keeps pulsing under reduced motion',
+    file: 'src/render/animate.ts',
+    find: "  const progress = motion.progress('winPulse', age);",
+    replace: "  const progress = Math.min(DONE, age / motion.seconds('winPulse'));",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E6',
+    name: 'the saturated-red measurement reads the wrong channel',
+    file: 'src/render/animate.ts',
+    find: '  return total === 0 ? 0 : red / total;',
+    replace: '  return total === 0 ? 0 : green / total;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E7',
+    name: 'a second reduced-motion branch appears outside the one switch',
+    file: 'src/render/scene.ts',
+    find: '      let moving = 0;',
+    replace:
+      '      let moving = 0;\n' +
+      '      if (motion.reducedMotion) {\n' +
+      '        moving = 0;\n' +
+      '      }',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E7',
+    name: 'the simulation starts naming the reduced-motion flag',
+    file: 'src/core/table.ts',
+    find: "export const DEFAULT_SPEED: Speed = 'normal';",
+    replace: "export const DEFAULT_SPEED: Speed = 'normal';\nexport const reducedMotion = false;",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E7',
+    name: 'reduced motion collapses the pacing instead of removing the animation',
+    file: 'src/render/animate.ts',
+    find: '    return PACING[name] * scale;',
+    replace: '    return reducedMotion ? 0 : PACING[name] * scale;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E9',
+    name: 'the pacing sweep stops listing every constant',
+    file: 'src/render/animate.ts',
+    find: '  Object.keys(PACING) as PacingName[],',
+    replace: '  (Object.keys(PACING) as PacingName[]).slice(0, 3),',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E7',
+    name: 'SPEC 14 system arm starts overriding a platform preference',
+    file: 'src/ui/motion.ts',
+    find: '  return alwaysReduce || systemPrefers;',
+    replace: '  return alwaysReduce && systemPrefers;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E7',
+    name: 'the platform preference is read once and never followed again',
+    file: 'src/ui/motion.ts',
+    find: "  query?.addEventListener('change', onChange);",
+    replace: '  void onChange;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E7',
+    name: 'the composition root stops asking the platform for the flag',
+    file: 'src/main.ts',
+    find:
+      '    const motion = resolveMotion({ reducedMotion: preference.reduced(), ' +
+      'speed: table.speed() });',
+    replace: '    const motion = resolveMotion({ reducedMotion: false, speed: table.speed() });',
+    detectedBy: REDUCED_MOTION,
+  },
+  {
+    item: 'E7',
+    name: 'the media query is never read, so the page answers no-preference',
+    file: 'src/ui/motion.ts',
+    find: '  return matchMedia(REDUCED_MOTION_QUERY);',
+    replace: '  return null;',
+    detectedBy: REDUCED_MOTION,
+  },
+  {
+    item: 'E7',
+    name: 'the overlay declares no transition, so removing it proves nothing',
+    file: 'src/ui/chrome.css',
+    find: '  animation: bj-overlay-in var(--dur-3) var(--ease-out) both;',
+    replace: '  animation: none;',
+    detectedBy: REDUCED_MOTION,
+  },
+  {
+    // The canvas arm of the same clause, and the one the whole design rests on:
+    // every tween is written over `progress`, so this is not one animation
+    // escaping the flag but all of them at once. It is browser-gated because a
+    // tween in flight is a property of a real round on a real loop.
+    item: 'E7',
+    name: 'the one reduced-motion switch is removed and every tween runs anyway',
+    file: 'src/render/animate.ts',
+    find: '      if (reducedMotion) {\n        return DONE;\n      }\n',
+    replace: '',
+    detectedBy: REDUCED_MOTION,
+  },
+  {
+    item: 'E7',
+    name: 'the balance count-up ignores the flag and runs under reduced motion',
+    file: 'src/ui/components/readouts.ts',
+    find: "      state.motion.progress('balanceCountUp', counting.age),",
+    replace: "      Math.min(1, counting.age / state.motion.seconds('balanceCountUp')),",
+    detectedBy: REDUCED_MOTION,
+  },
+  {
+    item: 'E7',
+    name: 'the tween instrument goes blind and reports nothing in flight',
+    file: 'src/render/scene.ts',
+    find: '      inFlight = moving;',
+    replace: '      inFlight = 0;',
+    detectedBy: REDUCED_MOTION,
+  },
+  {
+    item: 'E9',
+    name: 'the machine stops scaling its phase durations by the Speed',
+    file: 'src/core/table.ts',
+    find: '    return { duration: step.duration * speedMultiplier(speed), take: step.take };',
+    replace: '    return { duration: step.duration, take: step.take };',
+    detectedBy: SPEED_SETTING,
+  },
+  {
+    item: 'E9',
+    name: 'the render layer stops scaling its tween durations by the Speed',
+    file: 'src/render/animate.ts',
+    find: '    return PACING[name] * scale;',
+    replace: '    return PACING[name];',
+    detectedBy: SPEED_SETTING,
+  },
+  {
+    item: 'E9',
+    name: 'the Speed control is pressed and the machine never hears about it',
+    file: 'src/main.ts',
+    find: '      table.setSpeed(speed);',
+    replace: '      void speed;',
+    detectedBy: SPEED_SETTING,
+  },
+  {
+    item: 'E6',
+    name: 'the peek runs on a pause of its own instead of the hole card flip',
+    file: 'src/core/table.ts',
+    find: '        return { duration: PEEK_PAUSE, take: applyPeek };',
+    replace: '        return { duration: TIMINGS.settlePause, take: applyPeek };',
+    detectedBy: MOTION_DEMO,
+  },
+  {
+    item: 'E6',
+    name: 'the seed search stops telling the two arms of the peek apart',
+    file: 'tests/browser/support/peek-seeds.ts',
+    find: "    return kind === 'settling' ? 'natural' : 'none';",
+    replace: "    return 'natural';",
+    detectedBy: MOTION_DEMO,
+  },
 ];
 
 /**
@@ -4443,12 +4707,38 @@ const ADDITIONS = [
   },
 ];
 
+/**
+ * The environment every gate below is measured in.
+ *
+ * A copy of this process's, with the preview server's reuse opt-in removed
+ * rather than set to anything: an operator who exports it while iterating on a
+ * spec would otherwise hand this harness a server, and a harness whose answer
+ * depended on the shell it was started from would be reporting on that shell.
+ */
+const CHILD_ENV = { ...process.env };
+delete CHILD_ENV.BJ_REUSE_SERVER;
+
 /** Run a command and report only whether it succeeded. */
 function passes(command) {
   try {
     execFileSync(process.execPath, [command.bin, ...command.argv], {
       cwd: PROJECT_ROOT,
       stdio: 'ignore',
+      // Every browser invocation gets its own preview server, and that is a
+      // correctness rule rather than hygiene. The server serves `dist/`, and
+      // `dist/` is rebuilt by the command that starts it; a run that reused a
+      // server left behind by the previous mutation would grade the previous
+      // mutation's build and report this one UNDETECTED. `BJ-14` measured
+      // exactly that, four times in one run, on a `vite preview` process that
+      // outlived the run that spawned it.
+      //
+      // `playwright.config.ts` now refuses reuse unless it is asked for, so this
+      // is belt and braces rather than the mechanism: what it adds is that an
+      // operator who has the opt-in exported in their shell still gets a fresh
+      // server for every entry in the ledger. A harness whose answer depended on
+      // the environment it was started from would be reporting on that
+      // environment rather than on the gates.
+      env: CHILD_ENV,
     });
     return true;
   } catch (error) {

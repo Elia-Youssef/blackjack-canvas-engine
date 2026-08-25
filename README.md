@@ -3,7 +3,9 @@
 The buildable project. Requirements live one directory up in [SPEC.md](../SPEC.md); this file is only how to
 build, run and verify what is here.
 
-**State: parts `BJ-0` through `BJ-15`.** The toolchain, the CI gates, the design tokens, and the whole
+**State: parts `BJ-0` through `BJ-15`, with `BJ-14` built last.** The build order puts the DOM shell
+before the motion that plays inside it, because the composed page is what motion is graded on.
+The toolchain, the CI gates, the design tokens, and the whole
 headless game: cards, hand evaluation, the seeded stream, the shoe, the dealer, settlement, the wallet
 with the three tables and the betting arithmetic, the phase machine and its type unions, the round itself
 with every player action and both side offers behind an availability gate, the house-rule record, the
@@ -35,8 +37,18 @@ wager past that ceiling is rejected with the reason on screen and changes nothin
 table minimum is blocked rather than raised to it. SPEC 11's fourteen readouts sit in a row of their
 own that no overlay can reach, SPEC 10's three overlays open over the play surface without pausing the
 game, and SPEC 12's round result prints each hand's outcome, the rung that decided it, both hand
-values, the chip delta, the insurance result and the coach's verdict. Persistence is still not wired:
-nothing imports `src/storage/`, because items `I4` and `I5` grade the reload flows at `BJ-20`. See
+values, the chip delta, the insurance result and the coach's verdict. `BJ-14` gave that page its
+motion. `src/render/animate.ts` holds every pacing constant in one block, consumed from the machine's
+own record rather than restated, and one reduced-motion switch that every tween is written over: cards
+travel from the shoe on an eased arc, the hole card flips through zero width, chips slide to the wager
+spot and stack, the balance counts rather than snapping, and a winning hand pulses at a rate derived
+from the accessibility flash ceiling itself. Under `prefers-reduced-motion` all of it is removed
+entirely, including the panel and overlay transitions, while the sequence of states and the outcome are
+unchanged; the flag is never seen by anything under `src/core/`. The Speed setting is the first real
+control in Settings: Fast multiplies every pacing constant by 0.6, in both motion modes, mid-round
+included, and changes no card and no outcome. Its persistence is not built here, and neither is the
+reduced-motion setting SPEC 14 lists beside the query: both wait for `BJ-20`. Persistence is still not
+wired: nothing imports `src/storage/`, because items `I4` and `I5` grade the reload flows there. See
 [../../docs/BUILD-PLAN.md](../../docs/BUILD-PLAN.md) for what fills the rest and in what order.
 
 ## Prerequisites
@@ -100,7 +112,7 @@ npx playwright install chromium firefox webkit
 | `npm run typecheck` | `tsc --noEmit`, strict, plus `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` |
 | `npm run lint` | ESLint, including the `core/` boundary and the `Math.random()` ban. Item `M3` |
 | `npm run test` | Vitest. Includes the boundary fixture assertion, the token layer against its two specs, hand evaluation against an independently written evaluator, the shuffle against a measured uniformity band, the dealer's policy against a hit-soft-17 control that must disagree on exactly the soft 17 hands, the peek result against structural leak assertions on both branches, the settlement ladder against three reordered ladders that must disagree on exactly the equal-naturals, both-bust and surrendered-against-a-natural cases and nowhere else, the tables and betting rules against eleven controls: a threshold-blind and an affordability-blind entry predicate, a lowest-first launch fallback, an unlock read off the current balance and one read off the balance plus what is still committed, a clamping chip tap, an unfloored Max and a Max that forgot the balance, both misreadings of Repeat, and a fabricated step list the conservation checker has to flag, and the phase machine over all 187 intent-and-phase cells against three misread legality tables that must disagree on exactly 170, 4 and 40 of them and a branch that peeks before it offers, which must disagree on exactly the Ace, the full round through the machine with split, double, surrender, insurance and even money each driven and each rejected by layer, the coach table against hand-written reference charts over all 8 rule combinations, 3,040 cells compared, the counters, the eleven milestones and the fifty-round history against double-count and naive-reload traps, and the versioned storage document against 73 corrupt fixtures, a real migration walk, a throwing write and a store that refuses to exist, each booting the game anyway, and the three BJ-12 harnesses: a 50,000-round soak auditing the four-term identity between every two observations with the three-term form failing as its negative control and the rebuild forced and proven to return no in-play card, seeded round transcripts reproduced across runs and across both shoe sizes with a sibling consumer proven unable to shift the deal, and the same seeded rounds transcribed at 15, 30, 60, 144, 240 and 1000 fps against a derived wall-clock schedule that must reject a per-frame stepper, with the sequence and outcomes unchanged on an unstable clock with zero and negative deltas, and the BJ-13 render armour against a recording context: the pip layout table held to core's pip values with every layout symmetric under a half turn except the 7, both corner indices with the far one rotated, the face-down card proven to draw nothing it knows, the wager decomposition checked against an independent minimiser, the stack offset and per-denomination fills, the felt's four printed lines per table with the bake deterministic to the instruction and the per-frame path a single blit, the DPR backing store with fractional ratios, the two-pass frame order with explicit state at each pass top, and a directory scan keeping DPR arithmetic, clocks and randomness out of every render module but the surface wrapper |
-| `npm run test:browser` | Playwright on Chromium, Firefox and WebKit against the built `dist/`. From BJ-13 it also rasterises the play surface for real: the test-time harness bundle draws the three demonstration scenes on a page canvas and the suite reads pixels back, holding the felt, rail and print to their tokens, the card margin to a measured 3:1 against all three felts, every denomination of the 680 wager visible in one stack, the backing store to integer and fractional device pixel ratios, and the felt bake byte-identical across two runs on each engine. From BJ-15 it also drives the shipped chrome: the Bronze betting screen through its own controls with nothing injected, and, through a test-time harness that never ships, a table SPEC 6 has not unlocked and a known deal, so the ceiling, the disabled chip, the floored Max, the blocked Deal and the four-term identity are all measured, every one of SPEC 11's fourteen readouts is required to have a rendered box that no open overlay intersects, and SPEC 12's round result is checked field by field against the round that actually happened |
+| `npm run test:browser` | Playwright on Chromium, Firefox and WebKit against the built `dist/`. From BJ-13 it also rasterises the play surface for real: the test-time harness bundle draws the three demonstration scenes on a page canvas and the suite reads pixels back, holding the felt, rail and print to their tokens, the card margin to a measured 3:1 against all three felts, every denomination of the 680 wager visible in one stack, the backing store to integer and fractional device pixel ratios, and the felt bake byte-identical across two runs on each engine. From BJ-15 it also drives the shipped chrome: the Bronze betting screen through its own controls with nothing injected, and, through a test-time harness that never ships, a table SPEC 6 has not unlocked and a known deal, so the ceiling, the disabled chip, the floored Max, the blocked Deal and the four-term identity are all measured, every one of SPEC 11's fourteen readouts is required to have a rendered box that no open overlay intersects, and SPEC 12's round result is checked field by field against the round that actually happened . From BJ-14 it also grades the motion: one seeded round is driven under prefers-reduced-motion and again without it, every frame of both sampled, with no tween in flight and no lagging balance under the flag and both present without it, the overlay, panel and button durations read from the shipped stylesheet in each mode, and the screen sequence and round result required identical; the Speed setting is pressed through the Settings panel and the whole pacing table required to be its Normal table times 0.6 in both motion modes, with a real phase timed on the wall clock in the shipped page and a mid-round switch measured inside one round; and both arms of the peek are dealt through the demonstration hook and timed to the same constant |
 | `npm run verify:build` | Two builds, hashed and compared. Item `A6`. Writes `artifacts/reports/build.md` |
 | `npm run verify:mutations` | Not a gate. Breaks every gate above, one mutation per property it protects, and requires each break to be caught |
 
@@ -179,11 +191,12 @@ BlackJack/BlackJack/
       history.ts             the fifty-round hand history, read from the round journal. Item J5
     render/                  canvas play surface. BJ-13 onward
       tokens.ts              the renderer token record. Item E1
+      animate.ts             the tween set, the pacing block, one reduced-motion switch. E6, E7, E9
       surface.ts             context, the one DPR backing store, the two ordered passes
       felt.ts                table ground, rail, grain, insurance divider, printed rules. Item E5
       card.ts                face, back, corner indices, centre pip layouts. Item E3
       chips.ts               denominations, wager decomposition, stacks. Item E4
-      scene.ts               the arrangement: felt, dealer, hands and stacks in one frame
+      scene.ts               the arrangement, and the frame-to-frame state the tweens need
     ui/                      DOM chrome. BJ-15 onward
       tokens.css             the design tokens. Item E1
       chrome.css             the shell, the controls and the overlays, all through tokens
@@ -193,6 +206,7 @@ BlackJack/BlackJack/
       state.ts               what the sync step is given, and what a control may ask for
       layout.ts              the three-row shell. The overlay row is what keeps C5 true
       loop.ts                the frame loop: timestamps in, one delta per frame out
+      motion.ts              the one place the platform is asked for prefers-reduced-motion. Item E7
       chrome.ts              the DOM sync step of DESIGN 3, and where components are mounted
       components/            readouts, betting, actions, screens, round result, overlays
     storage/                 the saved document and its store. Items I1, I2, I3. Wired at BJ-20
@@ -209,6 +223,7 @@ BlackJack/BlackJack/
       render-chips.test.ts   E4 armour: decomposition, offset, fills, the value glyph
       render-felt.test.ts    E5 armour: the printed lines, rail, grain, the one-blit frame
       render-surface.test.ts the DPR store, the pass order, the render directory scans
+      motion.test.ts         the tween shapes, the Speed multiplier on the machine, the flash ceiling
       reference/             second implementations, written from the spec, never importing src/
       support/               stacked shoes, storage fixtures, and the recording canvas context
     browser/                 Playwright
@@ -216,7 +231,11 @@ BlackJack/BlackJack/
       betting.spec.ts        B15: the ceiling, the disabled chip, Max, Repeat, Deal, the identity
       overlays.spec.ts       C5: overlays measured clear of every readout, and state unchanged
       round-result.spec.ts   C8: outcome, reason, both values, delta, insurance, coach, balance
+      reduced-motion.spec.ts E7: every animation removed, sequence and outcome identical
+      speed-setting.spec.ts  E9: every pacing constant times 0.6, in both motion modes
+      motion-demo.spec.ts    E6 armour: both arms of the peek, timed and compared
       support/render-demo.ts the demonstration scenes, bundled at test time, never shipped
+      support/motion-demo.ts the E6 capture hook: the real game at a chosen seed, never shipped
     lint/fixtures/           the deliberately violating fixture, and its controls
   tools/
     eslint-plugin-core-boundary/

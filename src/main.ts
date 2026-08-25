@@ -74,14 +74,23 @@ import {
   type CoachMode,
   type CoachRecord,
 } from './core/strategy';
-import { createTable, type Table, type TableOptions, type TableReadout } from './core/table';
-import type { Intent } from './core/types';
+import {
+  DEFAULT_SPEED,
+  createTable,
+  type Speed,
+  type Table,
+  type TableOptions,
+  type TableReadout,
+} from './core/table';
+import type { Intent, SettledHand } from './core/types';
 import { LOWEST_TABLE, createWallet, tableLimits, type TableId } from './core/wallet';
+import { PACING_NAMES, resolveMotion, type Motion } from './render/animate';
 import { createPlaySurface, type PlaySurface, type SceneState } from './render/scene';
 import type { SurfaceSizing } from './render/surface';
 import { createChrome } from './ui/chrome';
 import { resolvedLocale } from './ui/format';
 import { createFrameLoop, type FrameLoop } from './ui/loop';
+import { createMotionPreference, type MotionPreference } from './ui/motion';
 import type { ChromeActions, ChromeState, HandVerdict, Notice, OverlayId } from './ui/state';
 
 import './ui/tokens.css';
@@ -108,6 +117,40 @@ export interface SessionState {
   readonly history: History;
   readonly coach: CoachRecord;
   readonly coachMode: CoachMode;
+  /**
+   * SPEC 5's Speed. `BJ-14`, item `E9`.
+   *
+   * In the session value rather than only inside the machine, because SPEC 13
+   * persists the settings and this is the shape `BJ-20` writes. `E9`'s
+   * "persists" clause is ruled to close there, at that part's reload specs; what
+   * `BJ-14` owes it is a value in a serialisable shape, which this is, and a
+   * setting whose only home is the machine so a restore has one place to put it.
+   */
+  readonly speed: Speed;
+}
+
+/**
+ * What the presentation layer resolved for the last frame it drew. `BJ-14`.
+ *
+ * Read only, and nothing in the game reads it. It exists because item `E7`'s
+ * claim is an **absence**, "removes every animation entirely", and an absence
+ * cannot be observed without an instrument: a spec that watched the canvas would
+ * be comparing screenshots of a felt whose grain is baked from a hash. So the
+ * surface counts what is mid-tween and this reports the count, and the same
+ * number is what makes the control honest, since it has to be positive under
+ * no-preference or the assertion under the flag asserts nothing.
+ *
+ * `pacing` is the whole of item `E9`'s "every pacing constant", resolved at this
+ * frame's Speed, so a spec can require the Fast table to be the Normal table
+ * times 0.6 across every entry rather than across the ones it remembered.
+ */
+export interface MotionProbe {
+  readonly reducedMotion: boolean;
+  readonly speed: Speed;
+  /** How many tweens the play surface had in flight on the last frame. */
+  readonly tweensInFlight: number;
+  /** Every pacing constant by name, in seconds, at this frame's Speed. */
+  readonly pacing: Readonly<Record<string, number>>;
 }
 
 /** A running game. Returned by `boot`, and the handle `BJ-20` will persist. */
@@ -116,6 +159,8 @@ export interface Game {
   readout(): TableReadout;
   /** What SPEC 13 persists, as one value. Nothing writes it yet. */
   session(): SessionState;
+  /** What the last frame resolved for motion. Items `E7` and `E9`. */
+  motion(): MotionProbe;
   /** Stop the loop and take the chrome off the page. */
   dispose(): void;
 }
@@ -134,6 +179,18 @@ export interface BootOptions {
   readonly rules?: Partial<HouseRules>;
   /** SPEC 7's coach mode. Off by default, which SPEC 7 states. */
   readonly coachMode?: CoachMode;
+  /** SPEC 5's Speed. Normal by default; SPEC 13 persists it from `BJ-20`. */
+  readonly speed?: Speed;
+  /**
+   * Force reduced motion on, whatever the platform says. Item `E7`.
+   *
+   * SPEC 14's reduced-motion setting is "system / always" and item `I5` at
+   * `BJ-20` builds its control; this is the "always" arm arriving early, as an
+   * option rather than as a control, so the resolution rule is composed and
+   * exercised from the day the flag exists. Left alone, the platform's
+   * `prefers-reduced-motion` decides, which is what `E7` is graded on.
+   */
+  readonly alwaysReduceMotion?: boolean;
 }
 
 /** The game this module last built, so a second boot can dispose the first. */
@@ -184,15 +241,44 @@ function sameSizing(a: SurfaceSizing, b: SurfaceSizing): boolean {
   return a.width === b.width && a.height === b.height && a.dpr === b.dpr;
 }
 
-/** What the play surface draws, read off the machine's snapshot. SPEC 4.3. */
-function sceneState(readout: TableReadout): SceneState {
+/**
+ * Which of SPEC 4.10's five outcomes a winning hand has. SPEC 5's win pulse.
+ *
+ * A natural and an ordinary win are wins; a push, a surrender and a dealer win
+ * are not. A push is deliberately not a win: SPEC 11 counts pushes in a column
+ * of their own and SPEC 4.10 returns the wager rather than paying it, so
+ * pulsing one would be the felt telling a player something the round result
+ * contradicts.
+ */
+function isWin(outcome: SettledHand['outcome']): boolean {
+  return outcome === 'PLAYER_WIN' || outcome === 'BLACKJACK';
+}
+
+/**
+ * What the play surface draws, read off the machine's snapshot. SPEC 4.3.
+ *
+ * `won` is `null` at every phase but SPEC 10's round result, where the settled
+ * hands are in the readout's hand order (`table.ts` settles them in that order
+ * and `BJ-15` relies on the same alignment for SPEC 12's per-hand result). Null
+ * rather than false, because a hand mid-round has not lost either.
+ */
+function sceneState(readout: TableReadout, motion: Motion): SceneState {
+  const settled = readout.phase.kind === 'roundResult' ? readout.phase.result.hands : null;
   return {
     felt: readout.table,
     limits: tableLimits(readout.table),
     dealer: readout.dealerVisible,
     dealerConcealed: readout.dealerConcealed,
-    hands: readout.hands.map((hand) => ({ cards: hand.cards, wager: hand.wager })),
+    hands: readout.hands.map((hand, index) => {
+      const outcome = settled?.[index];
+      return {
+        cards: hand.cards,
+        wager: hand.wager,
+        won: outcome === undefined ? null : isWin(outcome.outcome),
+      };
+    }),
     pendingWager: readout.wallet.wager,
+    motion,
   };
 }
 
@@ -220,9 +306,16 @@ export function boot(options: BootOptions = {}): Game {
     table: options.table ?? LOWEST_TABLE.id,
     rules: options.rules ?? {},
     seed: options.seed ?? Date.now(),
+    speed: options.speed ?? DEFAULT_SPEED,
   };
   const table: Table = createTable(tableOptions);
   const chart = strategyTable(table.readout().rules);
+
+  // The only place in the project that asks the platform for the flag. SPEC 14's
+  // reduced-motion setting joins it at `BJ-20`; the option is its "always" arm.
+  const preference: MotionPreference = createMotionPreference(
+    options.alwaysReduceMotion === undefined ? {} : { alwaysReduce: options.alwaysReduceMotion },
+  );
 
   let statistics: Statistics = openStatisticsSession(NO_STATISTICS);
   let history: History = NO_HISTORY;
@@ -248,6 +341,13 @@ export function boot(options: BootOptions = {}): Game {
         verdicts = [];
       }
     },
+    setSpeed(speed: Speed): void {
+      // SPEC 14: immediately, mid-round included. There is nothing to defer to a
+      // round boundary, because Speed decides no transition; `table.setSpeed`
+      // leaves the accumulator alone, so a phase already half spent stays half
+      // spent and the change is a shorter remainder rather than a restart.
+      table.setSpeed(speed);
+    },
   };
 
   const chrome = createChrome(actions);
@@ -261,7 +361,7 @@ export function boot(options: BootOptions = {}): Game {
     sizing,
   });
 
-  function chromeState(readout: TableReadout): ChromeState {
+  function chromeState(readout: TableReadout, motion: Motion): ChromeState {
     return {
       readout,
       statistics: statisticsReadout(statistics, readout.wallet, coach),
@@ -271,6 +371,7 @@ export function boot(options: BootOptions = {}): Game {
       verdicts,
       notice,
       overlay,
+      motion,
     };
   }
 
@@ -377,9 +478,15 @@ export function boot(options: BootOptions = {}): Game {
       sizing = wanted;
       surface.resize(wanted);
     }
-    surface.render(sceneState(readout));
 
-    chrome.sync(chromeState(readout));
+    // One policy per frame, handed to both halves of the presentation. The
+    // canvas and the chrome are then incapable of disagreeing about which
+    // motion mode or which Speed the frame is in, which is what item `E7`'s
+    // "every animation" and item `E9`'s "both motion modes" each rest on.
+    const motion = resolveMotion({ reducedMotion: preference.reduced(), speed: table.speed() });
+
+    surface.render(sceneState(readout, motion), dt);
+    chrome.sync(chromeState(readout, motion), dt);
   }
 
   const loop: FrameLoop = createFrameLoop({ onFrame: frame });
@@ -392,9 +499,26 @@ export function boot(options: BootOptions = {}): Game {
 
   const game: Game = {
     readout: () => table.readout(),
-    session: () => ({ statistics, history, coach, coachMode }),
+    session: () => ({ statistics, history, coach, coachMode, speed: table.speed() }),
+    motion(): MotionProbe {
+      const resolved = resolveMotion({
+        reducedMotion: preference.reduced(),
+        speed: table.speed(),
+      });
+      const pacing: Record<string, number> = {};
+      for (const name of PACING_NAMES) {
+        pacing[name] = resolved.seconds(name);
+      }
+      return {
+        reducedMotion: resolved.reducedMotion,
+        speed: resolved.speed,
+        tweensInFlight: surface.tweensInFlight(),
+        pacing,
+      };
+    },
     dispose(): void {
       loop.stop();
+      preference.dispose();
       chrome.shell.root.remove();
       if (current === game) {
         current = null;
