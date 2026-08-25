@@ -492,8 +492,9 @@ export function boot(options: BootOptions = {}): Game {
   );
   const surface: PlaySurface = createPlaySurface({
     canvas: chrome.shell.canvas,
-    offscreen: () => document.createElement('canvas'),
+    offscreen: () => chrome.shell.feltCanvas,
     sizing: plan.sizing,
+    separateFelt: true,
   });
 
   function chromeState(readout: TableReadout, motion: Motion): ChromeState {

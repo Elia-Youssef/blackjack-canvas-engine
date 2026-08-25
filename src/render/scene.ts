@@ -670,11 +670,18 @@ export interface PlaySurfaceOptions {
    */
   readonly offscreen: () => SurfaceCanvas;
   readonly sizing: SurfaceSizing;
+  /**
+   * Keep the baked felt on the supplied offscreen canvas instead of blitting
+   * it into the animated surface. The browser shell stacks that static canvas
+   * behind the transparent scene so motion never recopies a full-size table.
+   */
+  readonly separateFelt?: boolean;
 }
 
 /** Build the play surface. The felt bakes on the first frame, not here. */
 export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
   const surface = createSurface(options.canvas, options.sizing);
+  const separateFelt = options.separateFelt ?? false;
   let felt: FeltLayer | null = null;
   const memory: SceneMemory = newMemory();
   let inFlight = 0;
@@ -873,7 +880,8 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
         }
       }
 
-      const layers: ScenePasses[] = [feltFor(state)];
+      const bakedFelt = feltFor(state);
+      const layers: ScenePasses[] = separateFelt ? [] : [bakedFelt];
       const flipAt = trackFlip(state, dt);
       const pulse = trackPulse(state, dt);
       if (pulse > 0) {

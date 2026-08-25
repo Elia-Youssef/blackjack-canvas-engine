@@ -169,11 +169,26 @@ body {
  * form that survives overflow: auto margins take positive free space only, so a
  * surface larger than the stage is laid from the start edge and every part of it
  * can be scrolled to. Centring a flex item with `justify-content` puts the
- * overflow on both edges and makes the near one unreachable. */
-.bj-surface {
-  display: block;
+ * overflow on both edges and makes the near one unreachable. The felt is its
+ * own static canvas under the transparent animated scene: resizing rebakes it,
+ * while a moving card never recopies a million unchanged background pixels. */
+.bj-surface-stack {
+  position: relative;
+  flex: none;
   margin: auto;
   border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+
+.bj-surface,
+.bj-surface-felt {
+  display: block;
+}
+
+.bj-surface-felt {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
 }
 
 /* **No inner scroller here.** An earlier form of this part let the row scroll

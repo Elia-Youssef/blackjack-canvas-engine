@@ -811,6 +811,24 @@ function scene(overrides: Partial<SceneState>): SceneState {
 const FLIGHT_WAGER = 300;
 
 describe('settled play-surface rendering', () => {
+  it('keeps a separated baked felt off the animated canvas', () => {
+    const foreground = createStyleFreeCanvas();
+    const background = createStyleFreeCanvas();
+    const surface = createPlaySurface({
+      canvas: foreground.canvas,
+      offscreen: () => background.canvas,
+      sizing: { width: 800, height: 450, dpr: 1 },
+      separateFelt: true,
+    });
+
+    surface.render(scene({ pendingWager: FLIGHT_WAGER }), 0);
+
+    expect(background.recording.calls('fill').length, 'the felt was not baked').toBeGreaterThan(0);
+    expect(foreground.recording.calls('drawImage')).toHaveLength(0);
+    expect(foreground.recording.calls('clearRect')).toHaveLength(1);
+    expect(foreground.recording.calls('fill').length, 'the moving scene did not draw').toBeGreaterThan(0);
+  });
+
   it('reuses identical settled pixels instead of repainting every frame', () => {
     const { surface, recording } = recordingSurface();
     const state = scene({});
