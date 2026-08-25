@@ -648,6 +648,20 @@ body {
   gap: var(--space-3);
 }
 
+/* At 200 percent text the platform font can make the two header labels wider
+ * than the portrait panel. Let the title column wrap, but never let flex-shrink
+ * squeeze Close down to the touch-target floor: overflow-wrap would then
+ * stack the word and turn one control into a column tall enough to cross the
+ * betting bar. */
+.bj-overlay__header > :first-child {
+  min-width: 0;
+}
+
+.bj-overlay__header > .bj-button {
+  flex: none;
+  white-space: nowrap;
+}
+
 .bj-overlay__title {
   margin: 0;
   font-size: var(--type-xl);
