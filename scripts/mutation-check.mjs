@@ -5,7 +5,8 @@
  * `E1` at BJ-1, `B1` at BJ-2, `B2` and `B3` at BJ-3, `B7` and `B8` at BJ-4,
  * `B13` and `B14` at BJ-5, `J1` and `J2` at BJ-6, `C2` at BJ-7, `B6`, `B9`,
  * `B10`, `B11` and `B12` at BJ-8, `J3` at BJ-9, `J5` and `J6` at BJ-10,
- * `I1`, `I2` and `I3` at BJ-11, and `H6`, `M5`, `B5` and `B16` at BJ-12.
+ * `I1`, `I2` and `I3` at BJ-11, `H6`, `M5`, `B5` and `B16` at BJ-12, and
+ * `E3`, `E4` and `E5` at BJ-13.
  *
  * The `BJ-11` block breaks the storage seam, the versioned envelope and the
  * field-by-field salvage. Two of its entries are additions rather than edits,
@@ -24,6 +25,21 @@
  * the shoe's split stream. Several are also caught by older suites, which is
  * layering rather than redundancy; each one is required red by `npm run test`
  * with the three BJ-12 files in it.
+ *
+ * The `BJ-13` block breaks the play-surface armour. E3, E4 and E5 are all
+ * method D and close at the demonstration session, so these entries prove the
+ * automated armour under them can fail, not the items themselves: the pip
+ * layout table, both corner indices and the far corner's rotation, the suit
+ * ink mapping, the face-down card's concealment, the wager decomposition, the
+ * stack offset, the per-denomination fill and the value glyph, the four
+ * printed lines and their ink, the rail's floor, the one-blit frame path, the
+ * grain's determinism, the DPR backing store with its single scale call, the
+ * pass order, the text pass's explicit state, the directory scan that keeps
+ * DPR arithmetic out of everything but the surface wrapper, the vignette's
+ * presence in the bake, and the corner index printing the dealt rank. One
+ * entry breaks the recording context itself, on the hand-evaluator precedent
+ * that a second implementation is armour only while it can fail: a recorder
+ * gone blind to an operation must turn a test red, not quietly pass it.
  *
  * The `BJ-10` block's `J5` entries also break the per-round action journal that
  * part added to `table.ts`. No acceptance item is claimed for the journal; it
@@ -3859,6 +3875,221 @@ const EDITS = [
     replace: '  const stream = source;',
     detectedBy: UNIT,
   },
+
+  // ------------------------------------------------------------------
+  // BJ-13: the play surface. Armour for the D items E3, E4 and E5.
+  // ------------------------------------------------------------------
+  {
+    item: 'E3',
+    name: "the 7 loses its odd pip and becomes symmetric",
+    file: 'src/render/card.ts',
+    find: "  '7': Object.freeze([at(L, T), at(R, T), at(C, UM), at(L, M), at(R, M), at(L, B), at(R, B)]),",
+    replace: "  '7': Object.freeze([at(L, T), at(R, T), at(L, M), at(R, M), at(L, B), at(R, B)]),",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E3',
+    name: 'the far corner index is no longer printed',
+    file: 'src/render/card.ts',
+    find:
+      '  drawCornerRank(ctx, spec);\n' +
+      '  rotatedAboutCentre(ctx, spec, () => {\n' +
+      '    drawCornerRank(ctx, spec);\n' +
+      '  });',
+    replace: '  drawCornerRank(ctx, spec);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E3',
+    name: 'the far corner stops rotating and prints upright',
+    file: 'src/render/card.ts',
+    find:
+      '  ctx.translate(spec.x + spec.width / 2, spec.y + height / 2);\n' +
+      '  ctx.rotate(Math.PI);',
+    replace: '  ctx.translate(spec.x + spec.width / 2, spec.y + height / 2);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E3',
+    name: 'hearts and diamonds lose the red ink',
+    file: 'src/render/card.ts',
+    find: "  return suit === 'hearts' || suit === 'diamonds' ? SURFACE.rankRed : SURFACE.rankBlack;",
+    replace: '  return SURFACE.rankBlack;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E3',
+    name: 'a face-down card prints its rank anyway',
+    file: 'src/render/card.ts',
+    find:
+      '  if (!spec.faceUp) {\n' +
+      '    return;\n' +
+      '  }\n' +
+      '\n' +
+      '  drawCornerRank(ctx, spec);',
+    replace: '  drawCornerRank(ctx, spec);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E4',
+    name: 'the greedy walk skips every other denomination',
+    file: 'src/render/chips.ts',
+    find: '  for (let index = CHIP_DENOMINATIONS.length - 1; index >= 0; index -= 1) {',
+    replace: '  for (let index = CHIP_DENOMINATIONS.length - 1; index >= 0; index -= 2) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E4',
+    name: 'the stack collapses onto one circle with no offset',
+    file: 'src/render/chips.ts',
+    find: '    y: spec.y - index * CHIP_GEOMETRY.stackOffset * spec.radius,',
+    replace: '    y: spec.y,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E4',
+    name: 'every chip fills in the 10 colour regardless of denomination',
+    file: 'src/render/chips.ts',
+    find: '  ctx.fillStyle = CHIP_FILL[placement.denomination];',
+    replace: '  ctx.fillStyle = CHIP_FILL[10];',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E4',
+    name: 'the top chip prints an empty value glyph',
+    file: 'src/render/chips.ts',
+    find: '  ctx.fillText(String(top.denomination), top.x, top.y);',
+    replace: "  ctx.fillText('', top.x, top.y);",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E5',
+    name: 'the insurance line drops off the felt print',
+    file: 'src/render/felt.ts',
+    find: "    'INSURANCE PAYS 2 TO 1',\n    'BLACKJACK PAYS 3 TO 2',",
+    replace: "    'BLACKJACK PAYS 3 TO 2',",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E5',
+    name: 'the limits line prints the minimum twice',
+    file: 'src/render/felt.ts',
+    find: '    `MINIMUM ${String(limits.minimum)} - MAXIMUM ${String(limits.maximum)}`,',
+    replace: '    `MINIMUM ${String(limits.minimum)} - MAXIMUM ${String(limits.minimum)}`,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E5',
+    name: 'the print ink swaps to the rail token',
+    file: 'src/render/felt.ts',
+    find: '  ctx.fillStyle = SURFACE.print;',
+    replace: '  ctx.fillStyle = SURFACE.rail;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E5',
+    name: 'procedural drawing leaks back into the per-frame path',
+    file: 'src/render/felt.ts',
+    find: '      target.drawImage(canvas as unknown as CanvasImageSource, 0, 0, spec.width, spec.height);',
+    replace:
+      '      drawGround(target, frameOf(spec), FELT[spec.felt]);\n' +
+      '      target.drawImage(canvas as unknown as CanvasImageSource, 0, 0, spec.width, spec.height);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E5',
+    name: 'the felt grain goes nondeterministic',
+    file: 'src/render/felt.ts',
+    find: '      const value = grain(column, row);',
+    replace: '      const value = Math.random();',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E5',
+    name: 'the rail thins below the border floor at small sizes',
+    file: 'src/render/felt.ts',
+    find: '  const railWidth = Math.max(g.railMinimum, g.rail * scale);',
+    replace: '  const railWidth = g.rail * scale;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E3',
+    name: 'the backing store ignores the device pixel ratio',
+    file: 'src/render/surface.ts',
+    find: '  canvas.width = Math.round(width * dpr);',
+    replace: '  canvas.width = Math.round(width);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E3',
+    name: 'the context is never scaled to logical units',
+    file: 'src/render/surface.ts',
+    find: '  ctx.scale(dpr, dpr);',
+    replace: '  void dpr;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E5',
+    name: 'the text pass runs before the shape pass',
+    file: 'src/render/surface.ts',
+    find:
+      '  beginShapePass(ctx);\n' +
+      '  for (const layer of layers) {\n' +
+      '    layer.drawShapes(ctx);\n' +
+      '  }\n' +
+      '  endPass(ctx);\n' +
+      '\n' +
+      '  beginTextPass(ctx);\n' +
+      '  for (const layer of layers) {\n' +
+      '    layer.drawText(ctx);\n' +
+      '  }\n' +
+      '  endPass(ctx);',
+    replace:
+      '  beginTextPass(ctx);\n' +
+      '  for (const layer of layers) {\n' +
+      '    layer.drawText(ctx);\n' +
+      '  }\n' +
+      '  endPass(ctx);\n' +
+      '\n' +
+      '  beginShapePass(ctx);\n' +
+      '  for (const layer of layers) {\n' +
+      '    layer.drawShapes(ctx);\n' +
+      '  }\n' +
+      '  endPass(ctx);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E5',
+    name: 'the text pass stops setting its font explicitly',
+    file: 'src/render/surface.ts',
+    find: '  ctx.font = font(SPACE[4], SANS_FAMILY);',
+    replace: '  void SPACE;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E5',
+    name: 'the felt loses its vignette and bakes flat',
+    file: 'src/render/felt.ts',
+    find: '  drawGround(ctx, frame, felt);\n  drawVignette(ctx, spec, frame, felt);',
+    replace: '  drawGround(ctx, frame, felt);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E3',
+    name: 'the corner index prints a fixed rank instead of the dealt one',
+    file: 'src/render/card.ts',
+    find: '  ctx.fillText(spec.rank, spec.x + g.indexX * spec.width, spec.y + g.indexRankDrop * spec.width);',
+    replace: "  ctx.fillText('K', spec.x + g.indexX * spec.width, spec.y + g.indexRankDrop * spec.width);",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E3',
+    name: 'the recorder goes blind to rotation, and the corner armour with it',
+    file: 'tests/unit/support/recording-context.ts',
+    find: "  'rotate',\n  'translate',",
+    replace: "  'translate',",
+    detectedBy: UNIT,
+  },
 ];
 
 /**
@@ -3950,6 +4181,13 @@ const ADDITIONS = [
     name: 'a platform storage global is named outside the one seam',
     file: 'src/storage/__mutation__.ts',
     content: 'export const store = (): unknown => window.localStorage;\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E3',
+    name: 'a second DPR application is added outside the surface wrapper',
+    file: 'src/render/__mutation__.ts',
+    content: 'export function toDevice(width: number, dpr: number): number {\n  return width * dpr;\n}\n',
     detectedBy: UNIT,
   },
 ];
