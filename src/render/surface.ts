@@ -13,7 +13,7 @@
  *    recorded in the project instructions, and `tests/unit/render-surface.test.ts`
  *    scans for a second occurrence. The ratio itself arrives as data; this
  *    module does not read `window.devicePixelRatio`, because the composition
- *    root at BJ-19 owns the platform and everything here must run headless
+ *    root at BJ-15 owns the platform and everything here must run headless
  *    under test.
  *
  * 2. **Two ordered passes per frame, shapes then text.** Each pass begins and
@@ -131,8 +131,8 @@ function applySizing(canvas: SurfaceCanvas, ctx: CanvasRenderingContext2D, sizin
  *
  * Throws when the platform refuses a 2d context rather than limping on: the
  * styled unsupported-browser notice of QUALITY-BAR 2 is the composition root's
- * to show at BJ-19, and it can only show it if the failure surfaces as an
- * error instead of a blank canvas.
+ * to show, and item `A5` at BJ-21 grades it; it can only be shown if the
+ * failure surfaces as an error instead of a blank canvas.
  */
 export function createSurface(canvas: SurfaceCanvas, sizing: SurfaceSizing): Surface {
   const ctx = canvas.getContext('2d');

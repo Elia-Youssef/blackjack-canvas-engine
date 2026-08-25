@@ -62,7 +62,7 @@
  * DESIGN section 3: no `setTimeout` drives game state, no frame counter exists,
  * and queued work drains in a `while` loop against the accumulator so wall
  * clock pacing survives a stutter. `update(dt)` is handed the delta by whoever
- * owns the loop, which is `main.ts` at `BJ-19`, and clamps it per QUALITY-BAR
+ * owns the loop, which is `main.ts` at `BJ-15`, and clamps it per QUALITY-BAR
  * section 7 before it is believed.
  *
  * No DOM, no canvas, no renderer import, no `Math.random()`, no clock.
@@ -283,7 +283,7 @@ const NOT_FOUND = -1;
  *
  * `core/` has no clock and calls no `Math.random()`, so it cannot invent a seed
  * and must not try: item `M3` forbids the one and this module's own header
- * forbids the other. `main.ts` at `BJ-19` owns the composition and is where a
+ * forbids the other. `main.ts` at `BJ-15` owns the composition and is where a
  * real session seed comes from. A constant here means a table built with no
  * options deals a fixed, reproducible round, which is what every test in the
  * suite wants and what `B16` at `BJ-12` grades.
@@ -768,7 +768,7 @@ export interface TableOptions {
    * Injected rather than constructed here because SPEC 13 persists the best
    * chip balance and the unlocks keyed to it, so the wallet outlives any one
    * table and a table that built its own would make a restored session
-   * unreachable. `main.ts` at `BJ-19` owns the composition; `I2` at `BJ-11`
+   * unreachable. `main.ts` at `BJ-15` owns the composition; `I2` at `BJ-11`
    * owns what a corrupt persisted document may do to it.
    */
   readonly wallet?: Wallet;
@@ -800,7 +800,7 @@ export interface TableOptions {
    *
    * One stream is built from it and handed to the shoe, which splits its own
    * child off it, so the deal is stable against a consumer added beside it
-   * later. `main.ts` at `BJ-19` supplies a real one; `DEFAULT_SEED` is what a
+   * later. `main.ts` at `BJ-15` supplies a real one; `DEFAULT_SEED` is what a
    * table with no options gets, because `core/` has no clock to invent one.
    */
   readonly seed?: number;

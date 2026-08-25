@@ -65,7 +65,17 @@ test.describe('BJ-0 scaffold', () => {
     });
 
     await page.goto('/');
-    await page.waitForLoadState('networkidle');
+
+    // Wait on the application rather than on the network. `networkidle` is
+    // Playwright's own discouraged API: it resolves after 500 ms with no
+    // in-flight request, and that quiet window is measured on the page's event
+    // loop. Since BJ-15 the page runs a real-time render loop, so a machine
+    // running the whole three-engine matrix in parallel can defer the window
+    // past the test timeout, which is a gate that fails for a reason unrelated
+    // to what it grades. The chrome being on the page is the stronger wait
+    // anyway: the composition root has run to completion, so every request the
+    // game makes at startup has already been issued.
+    await expect(page.locator('.bj-shell')).toBeVisible();
 
     expect(foreign).toEqual([]);
   });

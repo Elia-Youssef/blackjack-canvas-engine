@@ -28,6 +28,13 @@ export default defineConfig({
   use: {
     baseURL: BASE_URL,
     trace: 'on-first-retry',
+    // QUALITY-BAR section 11: "Acceptance tests pin the locale." Number
+    // grouping differs between locales, several of them with U+202F rather than
+    // a plain space, so a suite that left the locale to the machine would be
+    // asserting the runner's host settings. The specs still read numbers back as
+    // numbers rather than comparing formatted strings; items `L1` to `L5` at
+    // `BJ-21` are where the other locales are swept deliberately.
+    locale: 'en-US',
   },
 
   projects: [

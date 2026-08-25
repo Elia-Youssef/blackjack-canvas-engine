@@ -158,7 +158,7 @@ export const NO_HISTORY: History = Object.freeze([]);
  * `table.ts`'s counter starts again from zero, so a counter stored here would
  * have to be cleared on load and would then be guarding nothing. The discipline
  * is the caller's, the way SPEC 4.1's reshuffle is: `shoe.ts` cannot see a
- * round ending either, so the round module tells it. `BJ-11` and `BJ-19` record
+ * round ending either, so the round module tells it. `BJ-11` and `BJ-15` record
  * once per boundary, at the same place they call `observeRound`, which does
  * carry the guard and would throw on a second call for the same round.
  */
