@@ -202,7 +202,30 @@ export function createFocusPolicy(options: FocusOptions): FocusPolicy {
   function custody(): void {
     const active = activeInShell();
     if (active !== null) {
-      held = active;
+      if (active !== held) {
+        held = active;
+        // **WCAG 2.2 SC 2.4.11 Focus Not Obscured.** `BJ-18`, item `G10`.
+        //
+        // An engine scrolls a newly focused element into view as part of
+        // sequential navigation, and mostly that is enough. It is not enough for
+        // a control inside a scroller that scrolls in the other direction:
+        // `BJ-18` measured the chip tray at 320 CSS pixels with the text at 200
+        // percent, where the tray scrolls horizontally, and Chromium moved focus
+        // from one chip to the next without scrolling the tray at all, leaving
+        // the focused chip half outside its own scrollport in both directions.
+        // Half visible satisfies the criterion's Minimum form and is still a
+        // control a keyboard user cannot see what they are about to press.
+        //
+        // `nearest` on both axes is what makes this safe to run on every focus
+        // change rather than only on the ones a keyboard caused: it does nothing
+        // at all when the element is already fully visible, which is every
+        // ordinary case, so this is not the page taking scroll away from a
+        // player who was reading something else. It runs from the sync step, on
+        // a change of the element that holds focus, so it adds no listener:
+        // `tests/unit/input-surface.test.ts` pins the whole product at three,
+        // one per input path, and a fourth would have to be argued for.
+        active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      }
       return;
     }
     if (held === null) {

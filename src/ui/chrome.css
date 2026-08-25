@@ -49,6 +49,41 @@ body {
   height: 100%;
 }
 
+/* ---------------------------------------------------------------------------
+ * Visually hidden, and in the accessibility tree. `BJ-18`, items `G4` and `G6`.
+ *
+ * Three elements wear this: the mirror of the play state, the container holding
+ * the two live regions, and the page heading. All three have to be read and
+ * none of them may be seen, which rules out both of the usual ways of hiding
+ * something. `display: none` removes a subtree from the accessibility tree
+ * altogether, so a mirror hidden that way is a mirror of nothing;
+ * `visibility: hidden` does the same and additionally takes focusability with
+ * it, which `src/ui/input.ts` records as the case its `focusable` check does not
+ * cover. A clipped box is in the tree, is in the layout, and is one pixel.
+ *
+ * `clip-path: inset(50%)` rather than the legacy `clip: rect(0 0 0 0)`: the
+ * property is supported on all three engines the browser gate runs, and it also
+ * removes the box from hit testing, so nothing here can be what a click at the
+ * top-left corner of a region lands on.
+ *
+ * `position: absolute` is what keeps all three out of every measured box. The
+ * shell is a three-row grid and the play-surface row is a flex container; an
+ * absolutely positioned child of either creates no track, no flex item and no
+ * scrollable overflow, which is why `BJ-16`'s sticky arithmetic and `F6`'s
+ * surface plan are untouched by this part.
+ * ------------------------------------------------------------------------- */
+
+.bj-visually-hidden {
+  position: absolute;
+  width: var(--hidden-size);
+  height: var(--hidden-size);
+  padding: 0;
+  border: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 body {
   margin: 0;
   background: var(--bj-ground);
@@ -114,12 +149,26 @@ body {
   min-height: 100dvh;
 }
 
+/* `min-width: 0` on both bars, and it is load bearing rather than defensive.
+ *
+ * The shell is a grid with one implicit column, and a grid item's automatic
+ * minimum size is its min-content width, so a row whose narrowest child cannot
+ * get any narrower makes the whole column that wide and the shell overflows the
+ * viewport. The narrowest child is the chip tray: DESIGN section 4 gives it
+ * `flex-wrap: nowrap` and chips that refuse to shrink below the touch target,
+ * so its min-content is the whole row of them. `BJ-18` measured it at 320 CSS
+ * pixels with the text at 200 percent, where the tray wants 333 px inside a
+ * 296 px shell: the column grew to 333 and the document scrolled sideways
+ * instead of the tray scrolling inside itself, which is item `F2`'s defect
+ * arriving through item `G5`'s door. With this, the bars take the track they are
+ * given and the designated scroller scrolls, which is what it is for. */
 .bj-top {
   display: flex;
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
   gap: var(--space-3);
+  min-width: 0;
 }
 
 .bj-body {
@@ -174,6 +223,15 @@ body {
   overscroll-behavior: contain;
 }
 
+/* The stage takes the project's ring like every other focusable element.
+ * QUALITY-BAR section 3: the indicator is never removed and never left to the
+ * platform's default. It is in the tab order because it is a scroll container,
+ * which `src/ui/layout.ts` explains. */
+.bj-stage:focus-visible {
+  outline: var(--focus-ring-width) var(--focus-ring-style) var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
 /* Centred by auto margins rather than by `justify-content`, which is the one
  * form that survives overflow: auto margins take positive free space only, so a
  * surface larger than the stage is laid from the start edge and every part of it
@@ -211,6 +269,9 @@ body {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
+  /* See `.bj-top` above: the grid column is sized from this row's min-content,
+   * and the chip tray's is a row of chips that will not shrink. */
+  min-width: 0;
 }
 
 /* The play surface takes a height of its own rather than a share, once the shell
@@ -321,9 +382,17 @@ body {
   outline-offset: var(--focus-ring-offset);
 }
 
+/* The pressed state carries a shape as well as a colour, which is item `G3`'s
+ * rule and item `G9`'s consequence. `BJ-18` found this state conveyed by the
+ * accent colour alone: correct for a screen reader, which reads `aria-pressed`,
+ * and invisible under `forced-colors: active`, where every chrome colour
+ * collapses to the same two system values. The underline survives that
+ * collapse, and survives a colour-vision deficiency, which is what
+ * QUALITY-BAR section 4's "never colour alone" is about. */
 .bj-button[aria-pressed='true'] {
   border-color: var(--bj-accent);
   color: var(--bj-accent);
+  text-decoration: underline;
 }
 
 .bj-button--primary {

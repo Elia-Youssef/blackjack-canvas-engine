@@ -389,6 +389,31 @@ export async function layoutProbe(page: Page): Promise<ReturnType<GameHarness['l
   });
 }
 
+// ---------------------------------------------------------------------------
+// BJ-18: the accessibility probe
+// ---------------------------------------------------------------------------
+
+/**
+ * What the last frame resolved for accessibility. Only on a harness page.
+ *
+ * The probe is the second witness in every spec that reads it, never the only
+ * one: the mirror, the two regions, the shell's `data-forced-colors` and the
+ * computed colours are all readable from the page itself, and the specs read
+ * those first. What the probe adds is the palette selection, which is a decision
+ * the renderer makes and the page has no other way to publish.
+ */
+export async function accessibilityProbe(
+  page: Page,
+): Promise<ReturnType<GameHarness['accessibility']>> {
+  return page.evaluate(() => {
+    const api = window.__bjGame;
+    if (api === undefined) {
+      throw new Error('no harness on this page');
+    }
+    return api.accessibility();
+  });
+}
+
 /** A rendered box, in CSS pixels, as `boundingBox` reports one. */
 export interface Box {
   x: number;

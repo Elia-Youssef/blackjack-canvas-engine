@@ -54,6 +54,89 @@ export const SURFACE = {
   rankRed: '#b3121b',
 } as const satisfies Record<string, Hex>;
 
+/**
+ * The shape of a play-surface palette: `SURFACE`'s keys, each holding a colour.
+ *
+ * Mapped rather than `typeof SURFACE`, and the difference is load bearing.
+ * `SURFACE` is `as const`, so its type carries the eleven hexes themselves, and
+ * a second set of the same shape with different colours in it would not be
+ * assignable to it: the type would say a high-contrast palette must be the
+ * palette it is replacing. Widening each value to `Hex` keeps the keys, which is
+ * the part a renderer depends on, and lets a real alternative exist.
+ */
+export type SurfaceTokens = { readonly [K in keyof typeof SURFACE]: Hex };
+
+/**
+ * The high-contrast play-surface set, or `null` while none is specified.
+ *
+ * **It is `null`, and that is a finding rather than a placeholder.**
+ * QUALITY-BAR section 5 says "Canvas pixels are unaffected by forced colors, so
+ * a high-contrast play-surface palette is selected via the media query and
+ * applied to the renderer's tokens", and item `G9` grades that sentence. But
+ * **SPEC 16 defines no such palette**: it carries one play-surface table, of
+ * eleven tokens, each with a measured ratio, and section 16 is the source of
+ * truth for every colour in this game. `tests/unit/tokens.test.ts` enforces
+ * that: it reads the contract, this file and the stylesheet and fails if any
+ * two disagree, which is what stops a colour from being invented, adjusted or
+ * improved here.
+ *
+ * So the selection is built and the values are parked. `surfacePalette` below
+ * selects on the flag, reports which set it selected and why, and falls back to
+ * the specified set when the high-contrast one does not exist. The composition
+ * root resolves the media query once per frame, calls this, and publishes the
+ * answer on its accessibility probe.
+ *
+ * **What is deliberately not built, so the park's owner sees the whole cost.**
+ * The selected record reaches the probe and stops there: nothing draws from it.
+ * Every module under `render/` still imports `SURFACE` directly, so closing this
+ * park is two pieces of work rather than one line. First, SPEC 16 gains a
+ * forced-colors play-surface table, eleven tokens with measured ratios, which is
+ * the sheet's to write and not this file's to invent. Second, the selected
+ * record has to be threaded into the four modules that spend those colours:
+ * `card.ts`, `chips.ts`, `felt.ts` and `surface.ts`, each of which takes the
+ * palette from the import today. `BJ-18`'s report carries the park with a
+ * sketched resolution and this list.
+ */
+export const HIGH_CONTRAST_SURFACE: SurfaceTokens | null = null;
+
+/** Which set was selected, and why. */
+export type PaletteName = 'standard' | 'high-contrast' | 'standard-fallback';
+
+/** The answer `surfacePalette` gives, for the frame that asked. */
+export interface SelectedPalette {
+  readonly name: PaletteName;
+  /**
+   * Why that set. `preference` is the flag being honoured either way;
+   * `unspecified-high-contrast-set` is the park above, reported rather than
+   * hidden, so a probe reading this can tell a working fallback from a
+   * forced-colors flag that never arrived.
+   */
+  readonly reason: 'preference' | 'unspecified-high-contrast-set';
+  readonly surface: SurfaceTokens;
+}
+
+/**
+ * Which play-surface set a frame should draw from, given the platform's flag.
+ *
+ * The high-contrast set is a parameter with a default rather than a closed-over
+ * constant, so that the selection can be exercised in both directions by a unit
+ * test that supplies a stand-in set: the logic that will run the day SPEC 16
+ * defines the palette is the logic under test today, rather than a branch
+ * nothing has ever taken.
+ */
+export function surfacePalette(
+  forcedColors: boolean,
+  highContrast: SurfaceTokens | null = HIGH_CONTRAST_SURFACE,
+): SelectedPalette {
+  if (!forcedColors) {
+    return { name: 'standard', reason: 'preference', surface: SURFACE };
+  }
+  if (highContrast === null) {
+    return { name: 'standard-fallback', reason: 'unspecified-high-contrast-set', surface: SURFACE };
+  }
+  return { name: 'high-contrast', reason: 'preference', surface: highContrast };
+}
+
 /** The felt colour of each table. SPEC 16: each table has its own. */
 export const FELT = {
   bronze: SURFACE.feltBronze,

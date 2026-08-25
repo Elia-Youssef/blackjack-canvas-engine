@@ -130,6 +130,17 @@ export interface ChromeState {
    * play surface were given rather than off a third copy kept in the chrome.
    */
   readonly motion: Motion;
+  /**
+   * Whether the platform is in forced colors this frame. `BJ-18`, item `G9`.
+   *
+   * On the state for the reason the motion policy is: the composition root asks
+   * the platform once per frame and hands the same answer to both halves of the
+   * presentation, so the stylesheet's own reading of the media query and the
+   * renderer's palette selection cannot disagree about which mode the frame is
+   * in. The chrome writes it onto the shell as an attribute, which is what lets
+   * a browser spec see what the page resolved rather than what it emulated.
+   */
+  readonly forcedColors: boolean;
 }
 
 /**

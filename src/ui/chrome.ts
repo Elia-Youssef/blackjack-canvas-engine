@@ -10,10 +10,11 @@
  *
  * **Every component is assembled here and nowhere else.** The composition root
  * builds the game, this builds the chrome, and the two meet at one call. That is
- * what keeps `main.ts` readable at the size the shell has now reached, and what
- * `BJ-18` and `BJ-20` will each add one component to. `BJ-16` added no
- * component: the responsive work is three attributes written below, a stylesheet
- * that selects on them, and a disclosure inside the readouts.
+ * what keeps `main.ts` readable at the size the shell has now reached. `BJ-16`
+ * added no component: the responsive work is three attributes written below, a
+ * stylesheet that selects on them, and a disclosure inside the readouts.
+ * `BJ-18` added two, the mirror and the announcer, which QUALITY-BAR section 4
+ * requires to be two rather than one.
  *
  * **The sync is per frame and is deliberately cheap.** Text is written only when
  * it changed, and the two lists that cost anything to build, the round result
@@ -24,7 +25,9 @@
  */
 
 import { createActions } from './components/actions';
+import { createAnnouncer, type Announcer } from './components/announcer';
 import { createBetting } from './components/betting';
+import { createMirror } from './components/mirror';
 import { createNotice } from './components/notice';
 import { createOverlays } from './components/overlays';
 import { createReadouts } from './components/readouts';
@@ -34,14 +37,23 @@ import {
   createInsuranceScreen,
   createStartScreen,
 } from './components/screens';
-import { setAttribute } from './dom';
+import { setAttribute, setDocumentTitle } from './dom';
 import { createFocusPolicy } from './input';
 import { createShell, type Shell } from './layout';
 import { OVERLAY_IDS, type ChromeActions, type ChromeState, type Component } from './state';
+import { documentTitle } from './text';
 
 /** The assembled chrome: its shell, and the one sync step. */
 export interface Chrome {
   readonly shell: Shell;
+  /**
+   * The two live regions, so a spec can read what was last announced.
+   *
+   * Published rather than queried for, on `Overlays.opener`'s precedent: the
+   * announcer holds its own queue state and a selector string in a test would be
+   * a second name for elements this file already has.
+   */
+  readonly announcer: Announcer;
   /**
    * DESIGN section 3 step 5. Called once per frame, after the render.
    *
@@ -76,9 +88,18 @@ export function createChrome(actions: ChromeActions): Chrome {
   const insurance = createInsuranceScreen(actions);
   const result = createRoundResult(actions);
   const bustOutScreen = createBustOutScreen(actions);
+  // `BJ-18`'s two, and they are two on purpose. QUALITY-BAR section 4 requires a
+  // navigable representation and an event channel and says in as many words that
+  // one cannot serve as the other; each file's header carries which of 1.1.1,
+  // 1.3.1 and 4.1.3 it answers for.
+  const mirror = createMirror();
+  const announcer = createAnnouncer();
 
   shell.top.append(readouts.root, overlays.controls);
-  shell.body.append(overlays.host);
+  // The mirror goes in the `main` landmark beside the canvas it mirrors, and
+  // before the overlay host, so a screen reader user reaching `main` meets the
+  // play state before anything layered over it.
+  shell.body.append(mirror.root, overlays.host);
   shell.controls.append(
     notice.root,
     start.root,
@@ -88,6 +109,9 @@ export function createChrome(actions: ChromeActions): Chrome {
     result.root,
     bustOutScreen.root,
   );
+  // Last in the shell, and out of flow, so the regions belong to the page rather
+  // than to a screen that a phase change can take away underneath them.
+  shell.root.append(announcer.root);
 
   const components: readonly Component[] = Object.freeze([
     readouts,
@@ -98,6 +122,11 @@ export function createChrome(actions: ChromeActions): Chrome {
     insurance,
     result,
     bustOutScreen,
+    mirror,
+    // The announcer is last in this list as well as last in the shell: it reads
+    // the frame's state and nothing else reads it, so running it after every
+    // writer keeps "what was announced" and "what is on screen" one frame.
+    announcer,
   ]);
 
   // `BJ-17`, item `D4`. Built here rather than in the composition root because
@@ -123,6 +152,7 @@ export function createChrome(actions: ChromeActions): Chrome {
 
   return {
     shell,
+    announcer,
     dispose(): void {
       focus.dispose();
     },
@@ -131,6 +161,16 @@ export function createChrome(actions: ChromeActions): Chrome {
       // without a component telling it to, and so a test can wait for one.
       setAttribute(shell.root, 'data-phase', state.readout.phase.kind);
       setAttribute(shell.root, 'data-overlay', state.overlay);
+      // Item `G6`'s last clause: "the page title reflects the current state".
+      // Written here rather than by the composition root for the reason every
+      // other document-level write is written here, and because a second writer
+      // of one string is how two of them start disagreeing about a frame.
+      setDocumentTitle(documentTitle(state.readout.phase));
+      // Item `G9`. What the frame resolved for forced colors, published so a
+      // browser spec can read the page's own answer rather than the emulation it
+      // asked for, and so the renderer's palette selection and the stylesheet's
+      // media query are visibly one decision.
+      setAttribute(shell.root, 'data-forced-colors', state.forcedColors ? 'active' : 'none');
       // The motion mode on the shell as well, so the browser gate can read what
       // the page resolved rather than what it emulated, and so a later part has
       // a hook for the reduced-motion setting SPEC 14 lists. It is written from

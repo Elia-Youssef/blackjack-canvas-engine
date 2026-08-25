@@ -7,8 +7,36 @@
  * `B10`, `B11` and `B12` at BJ-8, `J3` at BJ-9, `J5` and `J6` at BJ-10,
  * `I1`, `I2` and `I3` at BJ-11, `H6`, `M5`, `B5` and `B16` at BJ-12,
  * `E3`, `E4` and `E5` at BJ-13, `M1`, `C5`, `C8` and `B15` at BJ-15, `E6`,
- * `E7` and `E9` at BJ-14, `F1` to `F7` at BJ-16, and `D1`, `D2`, `D4`, `D5`
- * and `D6` at BJ-17.
+ * `E7` and `E9` at BJ-14, `F1` to `F7` at BJ-16, `D1`, `D2`, `D4`, `D5`
+ * and `D6` at BJ-17, and `G1`, `G3`, `G4`, `G5`, `G6`, `G8`, `G9` and `G10`
+ * at BJ-18.
+ *
+ * The `BJ-18` block breaks the accessibility layer. Its edits take an
+ * accessible name off a control and put an unparseable ARIA state on another,
+ * misspell a role in the mirror, and widen the scan's own exclusion list past
+ * the four families the criterion names; they break each of the announcement
+ * queue's four rules in turn, the interval, the coalescing, the outcomes that
+ * are never dropped and the empty region a session opens with; they make the
+ * mirror announce, make it rebuild itself every frame, take the state field out
+ * of its naming template and put a rank glyph back into a card; they send a
+ * refusal reason back to `title` alone and stop the mirror listing greyed
+ * controls at all; they turn the page heading into a paragraph, the play
+ * surface row out of its landmark and the document title into a constant; they
+ * pin a control's height and take the type scale off `rem`; they let the theme
+ * outrank the forced-colors block, leave one chrome token pointing at the
+ * palette, capture the forced-colors flag once instead of per frame and stop
+ * the renderer's palette selection reading it; they take the underline off the
+ * pressed state and the words off a milestone row, which are the two states
+ * `BJ-18` found carried by colour alone; they stop the focus policy scrolling a
+ * focused control into view, let a bar leave the flow, and give the controls
+ * row its min-content width back so the shell overflows the viewport again; and
+ * they take the win pulse's period off the flash ceiling it is derived from.
+ * `G4` is a Demonstration item and closes at the screen reader session, so its
+ * entries prove the armour under it can fail rather than the item itself, which
+ * is the treatment `E3`, `E4`, `E5`, `E6`, `F4` and `D6` already have. `G3`,
+ * `G6` and `G8` are Inspection items graded by the checklists under
+ * `docs/review-checklists/`, and their entries break the automated half those
+ * checklists cite.
  *
  * The `BJ-17` block breaks the input surface. Its edits split the one activation
  * binding into a pointer-only and a keyboard-only path, put the native
@@ -156,12 +184,37 @@ const LINT = {
  * Chromium alone. The merge gate runs all three engines; what these entries have
  * to show is that the assertion can fail, and a second and third engine would
  * triple the wall clock to show it twice more.
+ *
+ * **`--no-deps`, and the project name is now a parameter. `BJ-18`.** That part
+ * reshaped `playwright.config.ts`: the three main projects ignore
+ * `motion-demo.spec.ts` and depend on a chain of three single-worker timing
+ * projects that run it in isolation, because its assertion is about a real
+ * frame interval and cannot share a machine. Two consequences land here, and
+ * both are correctness rather than tuning.
+ *
+ * The first is that a gate naming `--project=chromium` for that spec would
+ * select **no tests at all**, and a command that runs nothing exits zero, so
+ * every mutation measured against it would be reported detected while nothing
+ * had been measured. `MOTION_DEMO` therefore names a timing project.
+ *
+ * The second is that a project with dependencies drags its whole chain in. Left
+ * alone, each single-spec invocation here would run the three timing projects
+ * first: measured at 47.8 s per gate against 4.6 s with `--no-deps`, on more
+ * than a hundred browser entries. `--no-deps` is right as well as fast, because
+ * what a ledger entry has to show is that one named spec goes red, and the
+ * timing chain is not that spec.
  */
-function browserGate(spec) {
+function browserGate(spec, project = 'chromium') {
   return {
-    label: `npm run test:browser -- ${spec} (chromium)`,
+    label: `npm run test:browser -- ${spec} (${project})`,
     bin: join(PROJECT_ROOT, 'node_modules', '@playwright', 'test', 'cli.js'),
-    argv: ['test', '--project=chromium', '--reporter=line', `tests/browser/${spec}`],
+    argv: [
+      'test',
+      `--project=${project}`,
+      '--no-deps',
+      '--reporter=line',
+      `tests/browser/${spec}`,
+    ],
   };
 }
 
@@ -175,7 +228,11 @@ const ROUND_RESULT = browserGate('round-result.spec.ts');
 // root is required red by the gate that watches the page.
 const REDUCED_MOTION = browserGate('reduced-motion.spec.ts');
 const SPEED_SETTING = browserGate('speed-setting.spec.ts');
-const MOTION_DEMO = browserGate('motion-demo.spec.ts');
+// The one gate that names a timing project rather than a main one, because
+// `BJ-18` moved this spec out of the mains entirely. `timing-chromium` is the
+// first link of the chain and is the same engine every other entry here uses;
+// `--no-deps` keeps it from pulling the other two links in behind it.
+const MOTION_DEMO = browserGate('motion-demo.spec.ts', 'timing-chromium');
 
 // BJ-16's seven, one per item plus the armour under the Demonstration one. Six
 // of the seven are graded in the browser for the same reason the chrome items
@@ -200,6 +257,18 @@ const INPUT_PARITY = browserGate('input-parity.spec.ts');
 const KEYBOARD = browserGate('keyboard.spec.ts');
 const SECONDARY_POINTER = browserGate('secondary-pointer.spec.ts');
 const GESTURES = browserGate('gestures.spec.ts');
+
+// BJ-18's five. Four of the part's eight items are graded in the browser, and
+// the fifth spec is the armour under the Demonstration item, on the `F4`, `E6`
+// and `D6` precedent: `G4` closes at a screen reader session and its entries
+// prove the mechanism under it can fail. The two Inspection items with no
+// browser spec of their own, `G3` and `G8`, take their entries to `UNIT`,
+// because what they rest on is the token layer and the flash arithmetic.
+const AXE = browserGate('axe.spec.ts');
+const SCREEN_READER = browserGate('screen-reader.spec.ts');
+const TEXT_SCALE = browserGate('text-scale.spec.ts');
+const FORCED_COLORS = browserGate('forced-colors.spec.ts');
+const FOCUS_OBSCURED = browserGate('focus-obscured.spec.ts');
 
 /**
  * Mutations that edit an existing file.
@@ -4288,8 +4357,11 @@ const EDITS = [
     item: 'C5',
     name: 'the overlay host is mounted on the shell instead of inside the body row',
     file: 'src/ui/chrome.ts',
-    find: '  shell.body.append(overlays.host);',
-    replace: '  shell.root.append(overlays.host);',
+    // `BJ-18` mounted the play-state mirror in the same row, so the anchor
+    // carries both children now. It still names the one thing it breaks: the
+    // host leaving row 2 is what would let an overlay reach a readout.
+    find: '  shell.body.append(mirror.root, overlays.host);',
+    replace: '  shell.body.append(mirror.root);\n  shell.root.append(overlays.host);',
     detectedBy: OVERLAYS,
   },
   {
@@ -4760,8 +4832,11 @@ const EDITS = [
     item: 'F1',
     name: 'two of SPEC 4.5s five actions stop being rendered',
     file: 'src/ui/components/actions.ts',
-    find: '  for (const row of ROWS) {\n    const control = button(',
-    replace: '  for (const row of ROWS.slice(0, 3)) {\n    const control = button(',
+    // `BJ-18` moved the list this loop reads to `src/ui/availability.ts`, so
+    // that item `G4`'s mirror could state the same refusals in words. The
+    // mutation is the same one: two of the five stop being rendered.
+    find: '  for (const action of HAND_ACTIONS) {\n    const control = button(',
+    replace: '  for (const action of HAND_ACTIONS.slice(0, 3)) {\n    const control = button(',
     detectedBy: BREAKPOINTS,
   },
   {
@@ -4776,9 +4851,14 @@ const EDITS = [
     item: 'F1',
     name: 'the controls row hides its overflow in a scroller with no affordance',
     file: 'src/ui/chrome.css',
-    find: '.bj-controls {\n  display: flex;\n  flex-direction: column;\n  gap: var(--space-2);\n}',
+    // `BJ-18` added `min-width: 0` to the same rule, with its own entry below,
+    // so the anchor stops at the property this one is about rather than at the
+    // closing brace. That is the treatment the `F6` stage entry already carries
+    // and for the same reason: an anchor that runs to a brace stops matching the
+    // day anything else is added to the rule.
+    find: '.bj-controls {\n  display: flex;\n  flex-direction: column;\n  gap: var(--space-2);',
     replace:
-      '.bj-controls {\n  display: flex;\n  flex-direction: column;\n  gap: var(--space-2);\n  overflow-y: auto;\n  max-height: var(--surface-min-height);\n}',
+      '.bj-controls {\n  display: flex;\n  flex-direction: column;\n  gap: var(--space-2);\n  overflow-y: auto;\n  max-height: var(--surface-min-height);',
     detectedBy: BREAKPOINTS,
   },
 
@@ -5043,14 +5123,16 @@ const EDITS = [
     item: 'D2',
     name: 'one action control is taken out of the tab order',
     file: 'src/ui/components/actions.ts',
-    find: "      { className: 'bj-button', attributes: { 'data-action': row.action } },",
+    // `BJ-18` renamed the loop variable when the action list moved to
+    // `src/ui/availability.ts`. Same control, same removal from the tab order.
+    find: "      { className: 'bj-button', attributes: { 'data-action': action } },",
     replace:
       '      {\n' +
       "        className: 'bj-button',\n" +
       '        attributes:\n' +
-      "          row.action === 'double'\n" +
-      "            ? { 'data-action': row.action, tabindex: '-1' }\n" +
-      "            : { 'data-action': row.action },\n" +
+      "          action === 'double'\n" +
+      "            ? { 'data-action': action, tabindex: '-1' }\n" +
+      "            : { 'data-action': action },\n" +
       '      },',
     detectedBy: INPUT_PARITY,
   },
@@ -5236,6 +5318,285 @@ const EDITS = [
       '    { passive: false },\n' +
       '  );',
     detectedBy: GESTURES,
+  },
+
+  // ------------------------------------------------------------------
+  // BJ-18. The accessibility layer.
+  //
+  // The entries break the automated scan's configuration and the page it
+  // scans, the announcement queue's four timing rules one at a time, the
+  // mirror's naming template and its write-only-when-changed rule, the three
+  // places a refusal reason is now reachable from, the document's own
+  // semantics, the forced-colors token block and the palette selection behind
+  // it, and both halves of the focus-not-obscured mechanism.
+  //
+  // `G4` is a Demonstration item and closes at the screen reader session, so
+  // its entries prove the armour under it can fail rather than the item
+  // itself, which is the treatment `E3`, `E4`, `E5`, `E6`, `F4` and `D6`
+  // already have. `G3`, `G6` and `G8` are Inspection items graded by the
+  // checklists under `docs/review-checklists/`; the entries labelled with
+  // them break the automated half those checklists cite, which is the token
+  // layer, the document's own semantics and the flash arithmetic.
+  // ------------------------------------------------------------------
+  {
+    item: 'G1',
+    name: 'a control loses its accessible name, which the scan must report',
+    file: 'src/ui/dom.ts',
+    find: '  node.textContent = label;',
+    replace: "  node.textContent = '';",
+    detectedBy: AXE,
+  },
+  {
+    item: 'G1',
+    name: 'a greyed control carries an ARIA state no engine can parse',
+    file: 'src/ui/dom.ts',
+    find: "  setAttribute(node, 'aria-disabled', disabled ? 'true' : null);",
+    replace: "  setAttribute(node, 'aria-disabled', disabled ? 'yes' : null);",
+    detectedBy: AXE,
+  },
+  {
+    item: 'G1',
+    name: 'the mirror hand group takes a role that does not exist',
+    file: 'src/ui/components/mirror.ts',
+    find: "        attributes: { role: 'group', 'data-mirror-hand': String(rows.length) },",
+    replace: "        attributes: { role: 'grup', 'data-mirror-hand': String(rows.length) },",
+    detectedBy: AXE,
+  },
+  {
+    item: 'G1',
+    name: 'the one region of the page that scrolls leaves the tab order',
+    file: 'src/ui/layout.ts',
+    find: "      'data-control': 'play-surface',\n      tabindex: '0',",
+    replace: "      'data-control': 'play-surface',",
+    detectedBy: AXE,
+  },
+  {
+    item: 'G1',
+    name: 'the scan exclusion list is widened past the four the criterion names',
+    file: 'tests/browser/axe.spec.ts',
+    find: "  heading: ['heading-order', 'empty-heading', 'page-has-heading-one', 'p-as-heading'],",
+    replace:
+      "  heading: ['heading-order', 'empty-heading', 'page-has-heading-one', 'p-as-heading'],\n" +
+      "  name: ['button-name', 'link-name'],",
+    detectedBy: AXE,
+  },
+  {
+    item: 'G4',
+    name: 'the announcement queue stops holding QUALITY-BAR 500 ms floor',
+    file: 'src/ui/announce.ts',
+    find: '      if (since < interval) {',
+    replace: '      if (since < 0) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'G4',
+    name: 'the queue coalesces outcomes, which are never to be dropped',
+    file: 'src/ui/announce.ts',
+    find: '        outcomes.push(announcement);',
+    replace: '        outcomes.splice(0, outcomes.length, announcement);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'G4',
+    name: 'a polite change queues behind the pending one instead of replacing it',
+    file: 'src/ui/announce.ts',
+    find: '      pendingPolite = announcement;',
+    replace: '      pendingPolite = pendingPolite ?? announcement;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'G4',
+    name: 'the first frame writes a region that has never been empty',
+    file: 'src/ui/announce.ts',
+    find: '  if (prior === null) {\n    return said;\n  }',
+    replace:
+      '  if (prior === null) {\n' +
+      "    said.push({ priority: 'polite', text: phaseText(readout.phase, readout.hands.length) });\n" +
+      '    return said;\n' +
+      '  }',
+    detectedBy: SCREEN_READER,
+  },
+  {
+    item: 'G4',
+    name: 'the mirror becomes a live region, collapsing the two mechanisms into one',
+    file: 'src/ui/components/mirror.ts',
+    find: "    attributes: { 'aria-label': 'Play state', 'data-mirror': 'root' },",
+    replace:
+      "    attributes: { 'aria-label': 'Play state', 'data-mirror': 'root', 'aria-live': 'polite' },",
+    detectedBy: SCREEN_READER,
+  },
+  {
+    item: 'G4',
+    name: 'the mirror rebuilds its card lists on every frame',
+    file: 'src/ui/components/mirror.ts',
+    find: '        if (key !== row.cardKey) {',
+    replace: '        if (key !== row.cardKey || true) {',
+    detectedBy: SCREEN_READER,
+  },
+  {
+    item: 'G4',
+    name: 'the naming template stops saying which hand the machine is asking about',
+    file: 'src/ui/text.ts',
+    find: "  const state = place.active ? 'active' : handStateText(hand.state);",
+    replace: '  const state = handStateText(hand.state);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'G4',
+    name: 'a card delta is keyed on the list position rather than the wallet index',
+    file: 'src/ui/announce.ts',
+    find:
+      '      before.hands.find((earlier) => earlier.walletHand === hand.walletHand)?.cards.length ?? 0;',
+    replace: '      before.hands[index]?.cards.length ?? 0;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'G4',
+    name: 'a card reaches the mirror as its glyph rather than as a word',
+    file: 'src/ui/text.ts',
+    find: '  return `${rankText(card.rank)} of ${suitText(card.suit)}`;',
+    replace: '  return `${card.rank} of ${suitText(card.suit)}`;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'G4',
+    name: 'a refusal reason goes back to living on title alone',
+    file: 'src/ui/dom.ts',
+    find: "  setAttribute(node, 'aria-label', wanted === null ? null : `${label}. ${wanted}`);",
+    replace: "  setAttribute(node, 'aria-label', null);",
+    detectedBy: SCREEN_READER,
+  },
+  {
+    item: 'G4',
+    name: 'the mirror stops listing the controls the current screen has greyed',
+    file: 'src/ui/availability.ts',
+    find: '    if (control.refusal !== null) {',
+    replace: '    if (control.refusal === null) {',
+    detectedBy: SCREEN_READER,
+  },
+  {
+    item: 'G6',
+    name: 'the page heading stops being a heading',
+    file: 'src/ui/layout.ts',
+    find: "  const heading = el('h1', { className: 'bj-visually-hidden', text: 'Blackjack' });",
+    replace: "  const heading = el('p', { className: 'bj-visually-hidden', text: 'Blackjack' });",
+    detectedBy: SCREEN_READER,
+  },
+  {
+    item: 'G6',
+    name: 'the play surface row stops being the main landmark',
+    file: 'src/ui/layout.ts',
+    find: "  const body = el('main', { className: 'bj-body', children: [stage] });",
+    replace: "  const body = el('div', { className: 'bj-body', children: [stage] });",
+    detectedBy: SCREEN_READER,
+  },
+  {
+    item: 'G6',
+    name: 'the document title stops reflecting the current state',
+    file: 'src/ui/chrome.ts',
+    find: '      setDocumentTitle(documentTitle(state.readout.phase));',
+    replace: "      setDocumentTitle('Blackjack');",
+    detectedBy: SCREEN_READER,
+  },
+  {
+    item: 'G5',
+    name: 'a control takes a fixed height, so its label clips at 200 percent text',
+    file: 'src/ui/chrome.css',
+    find: '  min-height: var(--target-min);\n  min-width: var(--target-min);',
+    replace: '  height: var(--target-min);\n  min-width: var(--target-min);',
+    detectedBy: TEXT_SCALE,
+  },
+  {
+    item: 'G5',
+    name: 'the type scale leaves rem, so the browser font setting stops applying',
+    file: 'src/ui/tokens.css',
+    find: '  --type-md: 1.2rem;',
+    replace: '  --type-md: 19px;',
+    detectedBy: TEXT_SCALE,
+  },
+  {
+    item: 'G9',
+    name: 'the forced-colors block loses to the theme it has to outrank',
+    file: 'src/ui/tokens.css',
+    find: '  :root:root {\n    --bj-ground: Canvas;',
+    replace: '  :root {\n    --bj-ground: Canvas;',
+    detectedBy: FORCED_COLORS,
+  },
+  {
+    item: 'G9',
+    name: 'one chrome token is left pointing at the palette instead of the system',
+    file: 'src/ui/tokens.css',
+    find: '    --bj-text-muted: CanvasText;',
+    replace: '    --bj-text-muted: var(--bj-light-text-muted);',
+    detectedBy: FORCED_COLORS,
+  },
+  {
+    item: 'G9',
+    name: 'the composition root captures the flag once instead of per frame',
+    file: 'src/main.ts',
+    find: '    const forced = forcedColors.active();',
+    replace: '    const forced = false;',
+    detectedBy: FORCED_COLORS,
+  },
+  {
+    item: 'G9',
+    name: 'the renderer palette selection stops reading the flag at all',
+    file: 'src/render/tokens.ts',
+    find: '  if (!forcedColors) {',
+    replace: '  if (!forcedColors || true) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'G3',
+    name: 'the pressed state goes back to being carried by colour alone',
+    file: 'src/ui/chrome.css',
+    find: "  color: var(--bj-accent);\n  text-decoration: underline;",
+    replace: '  color: var(--bj-accent);',
+    detectedBy: FORCED_COLORS,
+  },
+  {
+    item: 'G3',
+    name: 'the milestone row goes back to being carried by colour alone',
+    file: 'src/ui/text.ts',
+    find: "  return `${milestoneText(milestone)}: ${awarded ? 'awarded' : 'not yet'}`;",
+    replace: '  return milestoneText(milestone);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'G10',
+    name: 'the focus policy stops scrolling a focused control into view',
+    file: 'src/ui/input.ts',
+    find: "        active.scrollIntoView({ block: 'nearest', inline: 'nearest' });",
+    replace: '        void active;',
+    detectedBy: FOCUS_OBSCURED,
+  },
+  {
+    item: 'G10',
+    name: 'a bar leaves the flow, so it can travel over a control',
+    file: 'src/ui/chrome.css',
+    find: ".bj-shell[data-sticky-bars='on'] .bj-controls {\n  position: sticky;",
+    replace: ".bj-shell[data-sticky-bars='on'] .bj-controls {\n  position: fixed;",
+    detectedBy: FOCUS_OBSCURED,
+  },
+  {
+    item: 'G10',
+    name: 'the controls row sizes the shell to its widest child again',
+    file: 'src/ui/chrome.css',
+    find:
+      "   * and the chip tray's is a row of chips that will not shrink. */\n" +
+      '  min-width: 0;',
+    replace:
+      "   * and the chip tray's is a row of chips that will not shrink. */\n" +
+      '  min-width: auto;',
+    detectedBy: FOCUS_OBSCURED,
+  },
+  {
+    item: 'G8',
+    name: 'the win pulse period stops being derived from the flash ceiling',
+    file: 'src/render/animate.ts',
+    find: 'export const WIN_PULSE_PERIOD = WIN_PULSE_HEADROOM / (FLASH_LIMIT_HZ * FAST_SPEED_MULTIPLIER);',
+    replace: 'export const WIN_PULSE_PERIOD = WIN_PULSE_HEADROOM / (FLASH_LIMIT_HZ * 4);',
+    detectedBy: UNIT,
   },
 ];
 

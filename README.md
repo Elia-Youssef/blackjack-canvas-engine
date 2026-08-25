@@ -3,7 +3,7 @@
 The buildable project. Requirements live one directory up in [SPEC.md](../SPEC.md); this file is only how to
 build, run and verify what is here.
 
-**State: parts `BJ-0` through `BJ-17`, with `BJ-17` built last.** The build order puts the DOM shell
+**State: parts `BJ-0` through `BJ-18`, with `BJ-18` built last.** The build order puts the DOM shell
 before the motion that plays inside it, because the composed page is what motion is graded on.
 The toolchain, the CI gates, the design tokens, and the whole
 headless game: cards, hand evaluation, the seeded stream, the shoe, the dealer, settlement, the wallet
@@ -77,8 +77,26 @@ is refused in one place rather than in each component. `src/ui/input.ts` is the 
 listener: `Escape` closes an open overlay, `Tab` is contained inside one while it is open and focus
 returns to the control that opened it, and where a screen is replaced under the caret focus lands on the
 controls row rather than on the body. The focus indicator is measured in rendered screenshot pixels rather
-than read off the stylesheet, on every control on the screen and on all three engines. Persistence is
-still not wired: nothing imports `src/storage/`, because `I4` and `I5` grade it there. See
+than read off the stylesheet, on every control on the screen and on all three engines.
+`BJ-18` made the page usable without seeing it. Two mechanisms, and QUALITY-BAR section 4 requires them
+to be two: a persistent visually hidden **mirror** of the play state, in the `main` landmark beside the
+canvas it mirrors, holding an ordered list of hands, each named "Hand 2 of 3, active, soft 16, wager 100"
+and containing a nested list of its cards as words; and **two live regions**, polite for incremental
+change and assertive for round and match outcomes, written by one announcement queue that holds a 500 ms
+floor between polite writes, replaces a pending announcement rather than queueing behind it, and never
+drops an outcome. Without that queue the four-card deal at 0.22 s clobbers itself before anything is
+spoken. The mirror is a representation and never announces; the regions are an event channel and hold no
+state; the refusal reason behind a greyed control, which reached only a hovering pointer before this part,
+is now on the control's own accessible name, in the mirror's list and in the polite region. The document
+sets `lang`, exposes one `h1`, uses `header`, `main`, `footer` and `nav` rather than `role` attributes,
+and the title reflects the current screen. Under `forced-colors: active` every chrome colour resolves to
+a system one, the chip controls stop spending the colours the canvas supplies, and the play surface
+selects its token set from the same media query the stylesheet reads; the high-contrast set itself is
+**parked**, because SPEC 16 defines none and no colour may be invented here. Chrome text resizes to 200
+percent at every breakpoint with nothing clipped, nothing overlapping and every control still reachable,
+and no focused control is obscured at any breakpoint, including inside the one scroller that holds
+controls. Persistence is still not wired: nothing imports `src/storage/`, because `I4` and `I5` grade it
+there. See
 [../../docs/BUILD-PLAN.md](../../docs/BUILD-PLAN.md) for what fills the rest and in what order.
 
 ## Prerequisites
@@ -145,6 +163,30 @@ npx playwright install chromium firefox webkit
 | `npm run test:browser` | Playwright on Chromium, Firefox and WebKit against the built `dist/`. From BJ-13 it also rasterises the play surface for real: the test-time harness bundle draws the three demonstration scenes on a page canvas and the suite reads pixels back, holding the felt, rail and print to their tokens, the card margin to a measured 3:1 against all three felts, every denomination of the 680 wager visible in one stack, the backing store to integer and fractional device pixel ratios, and the felt bake byte-identical across two runs on each engine. From BJ-15 it also drives the shipped chrome: the Bronze betting screen through its own controls with nothing injected, and, through a test-time harness that never ships, a table SPEC 6 has not unlocked and a known deal, so the ceiling, the disabled chip, the floored Max, the blocked Deal and the four-term identity are all measured, every one of SPEC 11's fourteen readouts is required to have a rendered box that no open overlay intersects, and SPEC 12's round result is checked field by field against the round that actually happened . From BJ-14 it also grades the motion: one seeded round is driven under prefers-reduced-motion and again without it, every frame of both sampled, with no tween in flight and no lagging balance under the flag and both present without it, the overlay, panel and button durations read from the shipped stylesheet in each mode, and the screen sequence and round result required identical; the Speed setting is pressed through the Settings panel and the whole pacing table required to be its Normal table times 0.6 in both motion modes, with a real phase timed on the wall clock in the shipped page and a mid-round switch measured inside one round; and both arms of the peek are dealt through the demonstration hook and timed to the same constant. From BJ-16 it also grades the layout: all four breakpoints are measured at the betting screen and at the player's turn with no region clipped, no pair of controls overlapping and every control clickable at its own centre, the page is swept for horizontal scroll at twenty-five widths from 320 px upward at two heights and on three screens, portrait is compared against wide for the same type size and a regrouped bar, a device is turned mid-round with the machine's whole readout and a page sentinel required to survive it, the play-surface size setting is pressed through Settings and the canvas box required to be exactly its factor larger at every breakpoint with browser zoom required to magnify nothing, and a whole round is played at 320 by 256 with both bars unstuck. From BJ-17 it also grades the input: every one of the game's twenty-three actions is driven three times, once by a real mouse press, once by a real touch tap and once by a real key, with the machine as the witness for each, and every control on all six of SPEC 10's screens is required to take focus, to answer a press at its own centre and to be big enough for a finger; the tab order is compared against the DOM order and the DOM order against reading order at two breakpoints, Enter and Space are pressed on every kind of control, Escape is required to close an overlay and to change nothing when none is open, Tab is required to stay inside an open panel and focus to return to the control that opened it, and the focus indicator is measured in screenshot pixels against the background it is drawn over on every control on the screen. A real right press and a real middle press on four kinds of target are required to change nothing and to leave the context menu to the browser, and the gesture policy is read off the rendered page: no computed touch-action that removes a gesture, no cap on pinch zoom in the viewport meta, the two designated scrollers containing their own overscroll, and no touch or wheel suppressed |
 | `npm run verify:build` | Two builds, hashed and compared. Item `A6`. Writes `artifacts/reports/build.md` |
 | `npm run verify:mutations` | Not a gate. Breaks every gate above, one mutation per property it protects, and requires each break to be caught |
+
+### If the browser gate will not start: port 4173
+
+Both `npm run test:browser` and `npm run verify:mutations` start their own preview server on port 4173,
+because `playwright.config.ts` refuses to reuse one unless `BJ_REUSE_SERVER` is set. That refusal is a
+correctness rule, and it has a pleasant consequence: **an orphan cannot corrupt a run**, because a run that
+found one would be reading a `dist/` it did not build, which is exactly what the refusal prevents. What an
+orphan can do is stop a run from starting, which is a run that never began rather than one that lied.
+
+A crashed or force-killed run can leave a `vite preview` behind, most easily on Windows, where the process
+tree is not always torn down with its parent. Find it and end it:
+
+```
+# Windows, PowerShell
+Get-NetTCPConnection -LocalPort 4173 -State Listen | Select-Object OwningProcess
+Stop-Process -Id <the id> -Force
+
+# macOS and Linux
+lsof -ti:4173 | xargs kill
+```
+
+Then run the gate again. There is nothing else to clean up: the harness restores every file it mutates in a
+`finally`, and if it did not, the next run's baseline check reports the unmutated tree as red and refuses to
+report anything until that is fixed.
 
 ## The core/ boundary
 
@@ -232,15 +274,19 @@ BlackJack/BlackJack/
       chrome.css             the shell, the controls and the overlays, all through tokens
       dom.ts                 the element factory every component builds from. Item M1
       format.ts              Intl with an explicit locale list, per QUALITY-BAR 11
-      text.ts                every sentence the chrome shows, including the refusal reasons
+      text.ts                every sentence the chrome shows, the refusal reasons and the mirror's
       state.ts               what the sync step is given, and what a control may ask for
-      layout.ts              the three-row shell. The overlay row is what keeps C5 true
+      layout.ts              the three-row shell, the landmarks and the page heading. C5, G6
       breakpoints.ts         the four breakpoints, the sticky threshold, the surface plan. F1, F6
       loop.ts                the frame loop: timestamps in, one delta per frame out
       motion.ts              the one place the platform is asked for prefers-reduced-motion. Item E7
-      input.ts               the one document listener: Escape, the focus trap, focus custody. D4
+      forced-colors.ts       the one place the platform is asked for forced colors. Item G9
+      availability.ts        one reading of why each control is greyed, for the control and the mirror
+      announce.ts            the announcement queue and the frame deltas, both pure. Item G4
+      input.ts               the one document listener: Escape, the focus trap, focus custody. D4, G10
       chrome.ts              the DOM sync step of DESIGN 3, and where components are mounted
-      components/            readouts, betting, actions, screens, round result, overlays
+      components/            readouts, betting, actions, screens, round result, overlays, mirror,
+                             announcer
     storage/                 the saved document and its store. Items I1, I2, I3. Wired at BJ-20
       document.ts            the one namespaced versioned document, exactly SPEC 13's set
       migrations.ts          the version walk: lossless where possible, clean discard where not
@@ -257,6 +303,9 @@ BlackJack/BlackJack/
       render-surface.test.ts the DPR store, the pass order, the render directory scans
       motion.test.ts         the tween shapes, the Speed multiplier on the machine, the flash ceiling
       input-surface.test.ts  D1's scans: one handler path, no capture, no gesture taken
+      announce.test.ts       G4 armour: the queue's four rules, against a queue-free control
+      mirror-text.test.ts    G4 and G6 armour: the naming template, the card words, the titles
+      forced-colors.test.ts  G9: the forced-colors token block, and the palette selection
       reference/             second implementations, written from the spec, never importing src/
       support/               stacked shoes, storage fixtures, and the recording canvas context
     browser/                 Playwright
@@ -271,6 +320,11 @@ BlackJack/BlackJack/
       keyboard.spec.ts       D4: tab order, Enter and Space, Escape, the trap, the ring in pixels
       secondary-pointer.spec.ts  D5: the right and middle buttons are bound to nothing
       gestures.spec.ts       D6 armour: touch-action, overscroll, the viewport meta, no suppression
+      axe.spec.ts            G1: WCAG 2.2 A and AA on every screen and overlay, four families excluded
+      screen-reader.spec.ts  G4 armour: the mirror, the two regions, a full session with a split
+      text-scale.spec.ts     G5: 200 percent text at four breakpoints, clipping, overlap, function
+      forced-colors.spec.ts  G9: the chrome adopts the system palette, the surface selects its set
+      focus-obscured.spec.ts G10: SC 2.4.11, measured by sampling a focused control's own box
       support/render-demo.ts the demonstration scenes, bundled at test time, never shipped
       support/motion-demo.ts the E6 capture hook: the real game at a chosen seed, never shipped
       support/controls.ts    the control census, the three presses, and the focus walk
@@ -288,9 +342,12 @@ BlackJack/BlackJack/
     engine/                  extracted from this game at ENG-1. Deliberately empty
 ```
 
-Five evidence artifacts are written outside this directory, to the repository root, because
+Eight evidence artifacts are written outside this directory, to the repository root, because
 [../ACCEPTANCE.md](../ACCEPTANCE.md) section 5 is where the evidence index lives and it puts them there:
 `artifacts/reports/build.md`, `docs/review-checklists/build.md`, `docs/review-checklists/tokens.md`,
-`docs/review-checklists/architecture.md` (item `M1`, written at `BJ-15`) and
-`docs/review-checklists/input.md` (item `D1`, written at `BJ-17`). The count was stale by one before this
-part: `architecture.md` has existed since `BJ-15` and this sentence still said three.
+`docs/review-checklists/architecture.md` (item `M1`, written at `BJ-15`),
+`docs/review-checklists/input.md` (item `D1`, written at `BJ-17`), and the three `BJ-18` added:
+`docs/review-checklists/colour-independence.md` (item `G3`),
+`docs/review-checklists/semantics.md` (item `G6`) and `docs/review-checklists/flash.md` (item `G8`).
+The count was stale by one before `BJ-17`: `architecture.md` had existed since `BJ-15` and the sentence
+still said three.

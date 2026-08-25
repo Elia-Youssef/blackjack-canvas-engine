@@ -112,10 +112,34 @@ export function empty(node: Element): void {
  *
  * The two move together on purpose. SPEC 4.11 asks for a reason on every
  * refusal, and a control that is greyed with no explanation is the half of that
- * sentence a player cannot act on. The reason rides on `title` and
- * `aria-describedby` is deliberately not used here: the accessible description
- * is `BJ-18`'s to design, and a half-built one now would be harder to correct
- * than an absent one.
+ * sentence a player cannot act on.
+ *
+ * **The reason is on the accessible name as well as on `title`, and `BJ-18`
+ * added the first of those because the second is not reachable.** The `BJ-15`
+ * review recorded it as finding `MIN-4`: "a disabled action control's refusal
+ * reason lives on `title` only, which keyboard and touch users cannot reach",
+ * and adjudicated the fix into this part. A `title` is a hover tooltip; a
+ * keyboard user never produces the hover and a touch user has no pointer to
+ * produce it with. So a greyed control's name becomes "Double. Only on a hand
+ * of exactly two cards.", which every input method reaches by arriving at the
+ * control, and the plain label comes back the moment it is available again.
+ *
+ * The label is passed in rather than read off the node. Reading it back would
+ * make this function's answer depend on a `textContent` some other writer set,
+ * and every caller already holds the string it built the control with. It goes
+ * **first** in the name, which is what keeps SC 2.5.3 Label in Name satisfied:
+ * the visible label is a prefix of the accessible name rather than a fragment
+ * buried in it.
+ *
+ * `aria-describedby` is still not used, and now for a settled reason rather
+ * than a deferred one: a description needs an element with an id per control,
+ * and ids that a per-frame sync generates are how a page grows a duplicate one.
+ *
+ * The reason a player reads after **pressing** a control that was refused is
+ * the notice line's, and `BJ-18` gives that one a voice through the polite live
+ * region. The mirror lists every greyed control on the current screen with its
+ * reason, which is the navigable third place. Three surfaces, one sentence,
+ * `src/ui/text.ts`'s.
  *
  * **`aria-disabled`, and never the native `disabled` property.** `BJ-17`, and
  * QUALITY-BAR section 3 states the rule and the defect behind it in as many
@@ -135,7 +159,12 @@ export function empty(node: Element): void {
  * `button` above refuses it instead, in one place, so the two halves cannot come
  * apart.
  */
-export function setDisabled(node: HTMLButtonElement, disabled: boolean, reason: string | null): void {
+export function setDisabled(
+  node: HTMLButtonElement,
+  disabled: boolean,
+  reason: string | null,
+  label: string,
+): void {
   // Written only when it moved, like every other writer in this file. The sync
   // step runs on every frame, and an attribute set to the value it already has
   // still invalidates the style of an element a selector matches on.
@@ -147,6 +176,25 @@ export function setDisabled(node: HTMLButtonElement, disabled: boolean, reason: 
     }
   } else if (node.title !== wanted) {
     node.title = wanted;
+  }
+  setAttribute(node, 'aria-label', wanted === null ? null : `${label}. ${wanted}`);
+}
+
+/**
+ * The document title, written only when it moved. `BJ-18`, item `G6`.
+ *
+ *   "The document sets lang, exposes a single h1, uses meaningful landmarks,
+ *    and the page title reflects the current state."
+ *
+ * The last clause is the one that needs a writer, because the title is the only
+ * piece of chrome that is not inside the shell. It is written from the sync step
+ * like everything else, and guarded like everything else: assigning
+ * `document.title` fires a `titleUpdated` notification on some platforms, so a
+ * per-frame write of the same string would be sixty of them a second.
+ */
+export function setDocumentTitle(title: string): void {
+  if (document.title !== title) {
+    document.title = title;
   }
 }
 

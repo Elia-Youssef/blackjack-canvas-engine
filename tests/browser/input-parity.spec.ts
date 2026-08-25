@@ -756,7 +756,24 @@ test.describe('D2: the action list is the machines, not this files', () => {
         // `tabindex="-1"` on something that is not a control is the focus anchor
         // and the dialog: focusable on purpose, in the tab order of neither, and
         // activated by nothing.
-        if (node.getAttribute('role') === 'button' || node.tabIndex >= 0) {
+        //
+        // **A scroll container is the one thing that may be in the tab order
+        // without being a `<button>`**, and it is there because another
+        // criterion requires it. `BJ-18` added `tabindex="0"` to the play
+        // surface's stage: item `F6` draws a surface larger than its box above
+        // 100 percent and lets that element scroll to it, and WCAG 2.1.1 asks
+        // that a region which scrolls be reachable by keyboard, which item
+        // `G1`'s scan reports as `scrollable-region-focusable`. It is not a
+        // hand-rolled activation and this audit is still the one that would
+        // catch one: nothing is bound to it, `src/ui/dom.ts` is still the only
+        // activation site in the project, and a focusable element that does
+        // **not** scroll is still a stray. The exception is the property, read
+        // off the engine's own computed style rather than off a class name.
+        const style = getComputedStyle(node);
+        const scrolls = [style.overflowX, style.overflowY].some(
+          (value) => value === 'auto' || value === 'scroll',
+        );
+        if (node.getAttribute('role') === 'button' || (node.tabIndex >= 0 && !scrolls)) {
           strays.push(`${tag}(${named}) has a hand-rolled activation`);
         }
       }

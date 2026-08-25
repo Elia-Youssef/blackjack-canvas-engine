@@ -67,6 +67,18 @@
   --target-min: 44px;
   --target-clearance: var(--space-2);
 
+  /* The box a visually hidden element occupies. `BJ-18`, items `G4` and `G6`.
+   *
+   * QUALITY-BAR section 4's mirror, its two live regions and item `G6`'s page
+   * heading are all in the accessibility tree and out of the picture, which
+   * needs a real clipped box rather than `display: none`: a display-none subtree
+   * is not in the accessibility tree at all, and `visibility: hidden` takes
+   * focusability with it. One CSS pixel, declared here so that
+   * `src/ui/chrome.css` writes `var(--hidden-size)` and never a literal. It is
+   * not on any QUALITY-BAR scale because it is not a design size: it is the
+   * smallest box that is still a box. */
+  --hidden-size: 1px;
+
   /* Focus ring: 2px solid, 2px offset, in --bj-accent. That is 9.65:1 dark and
    * 6.17:1 light against the ground, well past the 3:1 the criterion asks. */
   --focus-ring-width: var(--border-thin);
@@ -231,5 +243,66 @@
     --dur-2: var(--dur-0);
     --dur-3: var(--dur-0);
     --dur-4: var(--dur-0);
+  }
+}
+
+/*
+ * Forced colors. QUALITY-BAR section 5, item `G9`, and `BJ-18`.
+ *
+ *   "Under `forced-colors: active` the chrome adopts the system palette and no
+ *    chrome element relies on a colour the canvas supplies."
+ *
+ * **The token layer is where the chrome adopts the palette, not the component
+ * stylesheet.** Every rule in `chrome.css` already spends `var(--bj-*)`, so
+ * re-pointing the tokens at system colours here switches the whole chrome at
+ * once and leaves no rule that could be missed. It is the same mechanism the
+ * theme uses one block up, applied to a third palette that is the platform's
+ * rather than ours.
+ *
+ * **The `--chip-*` and `--felt-*` tokens are the second clause of that sentence
+ * and are re-pointed too.** They are the play surface's colours, and the chip
+ * controls in the betting bar are the one place a chrome element spends one:
+ * SPEC 16 gives the chips their denominational colours and the chrome repeats
+ * them so a tapped chip looks like the chip that lands on the felt. Under forced
+ * colors that dependency has to end, and it ends here. **Nothing on the canvas
+ * is affected by this block**: the play surface reads `src/render/tokens.ts`,
+ * never `var()`, which is the whole reason that file exists and is why
+ * QUALITY-BAR section 5 asks for a separate high-contrast set for it.
+ *
+ * The browser also forces most of these properties on its own. Declaring
+ * them anyway is what makes the intent explicit and testable, and what covers
+ * the places a forced-colors browser leaves to the author.
+ */
+@media (forced-colors: active) {
+  /*
+   * `:root:root` rather than `:root`, and it is not a flourish. Both theme
+   * blocks above qualify the root with a theme attribute, one of them negated,
+   * and each therefore outranks a bare `:root` whatever the source order: a
+   * plain `:root` here would be overruled by whichever theme the platform or the
+   * settings had chosen, and the chrome would render its own palette under a
+   * high-contrast theme. Doubling the pseudo-class matches their specificity,
+   * and this block is last, so it wins over the system preference and over an
+   * explicit theme choice alike. It has to beat both: a reader who has asked
+   * their operating system for high contrast has not stopped asking because this
+   * game has a dark mode.
+   */
+  :root:root {
+    --bj-ground: Canvas;
+    --bj-elevated: Canvas;
+    --bj-text: CanvasText;
+    --bj-text-muted: CanvasText;
+    /* Highlight, so the focus ring and the pressed state are the colour the
+     * platform already uses for selection. `--focus-ring-color` is an alias of
+     * this token and follows it without a second declaration. */
+    --bj-accent: Highlight;
+    --bj-positive: CanvasText;
+    --bj-negative: CanvasText;
+
+    --chip-ring: ButtonText;
+    --chip-glyph: ButtonText;
+    --chip-10-fill: ButtonFace;
+    --chip-50-fill: ButtonFace;
+    --chip-100-fill: ButtonFace;
+    --chip-500-fill: ButtonFace;
   }
 }

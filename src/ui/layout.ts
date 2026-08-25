@@ -22,11 +22,29 @@
  * owes that one is a shell whose regions are already separate elements, so the
  * responsive work is a stylesheet and a resize path rather than a rebuild.
  *
- * **The canvas is `aria-hidden`.** QUALITY-BAR section 1: the play surface is a
- * rendered scene and the state mirror that makes it navigable is item `G1` at
- * `BJ-18`. Hiding it from assistive technology now, with nothing to replace it
- * yet, is the honest state: what is on the canvas is also in the chrome as real
- * text, which is why SPEC 11's readouts exist.
+ * **The canvas is `aria-hidden`, and now it has a replacement.** QUALITY-BAR
+ * section 1: the play surface is a rendered scene, and item `G4` at `BJ-18`
+ * builds the visually hidden mirror that makes its state navigable. The canvas
+ * stays hidden from assistive technology because a `<canvas>` exposes its
+ * bitmap and nothing else; the mirror sits in the same landmark, carrying the
+ * cards as words and every hand's value, and `chrome.ts` mounts it there.
+ *
+ * **Landmarks and the page heading. `BJ-18`, item `G6`.** The three rows are a
+ * `<header>`, a `<main>` and a `<footer>`, so the page has banner, main and
+ * contentinfo without a single `role` attribute: native elements first, per the
+ * item's "meaningful landmarks". The play surface and its mirror are in `main`
+ * because they are the game; the overlay controls are a `<nav>` built by
+ * `overlays.ts`; the controls row keeps its own accessible name so a landmark
+ * list reads "Game controls" rather than "content information".
+ *
+ * The `<h1>` is visually hidden, and that is a layout decision with a measured
+ * reason rather than a shortcut. The chrome has no visible title bar: DESIGN
+ * section 4's top row is SPEC 11's readouts and the three panel controls, and at
+ * `compact` and `portrait` that row is already at the height `barsStick`
+ * measures against a 400 px viewport. A visible heading added to it would change
+ * the sticky decision at exactly the viewports `BJ-16` tuned it for. The
+ * heading is out of flow, so it adds nothing to any box, and the same words are
+ * in the document title, which item `G6` also grades.
  */
 
 import { el } from './dom';
@@ -35,9 +53,11 @@ import { el } from './dom';
 export interface Shell {
   /** The whole shell. Mounted into the page by the composition root. */
   readonly root: HTMLElement;
+  /** The page heading. Item `G6`'s single `h1`, visually hidden and out of flow. */
+  readonly heading: HTMLElement;
   /** Row 1. SPEC 11's readouts and the overlay controls. */
   readonly top: HTMLElement;
-  /** Row 2. The play surface and the overlay host, in that order. */
+  /** Row 2, the `main` landmark. The play surface, the mirror and the overlay host. */
   readonly body: HTMLElement;
   /** The element the play surface is sized against. */
   readonly stage: HTMLElement;
@@ -63,9 +83,37 @@ export function createShell(): Shell {
     className: 'bj-surface-stack',
     children: [feltCanvas, canvas],
   });
-  const stage = el('div', { className: 'bj-stage', children: [surface] });
+  // **The stage is a scroll container, so it is in the tab order.** `BJ-18`,
+  // item `G1`. Item `F6` draws a surface larger than its box above 100 percent
+  // and lets this element scroll to it, and a region that scrolls and cannot be
+  // reached by keyboard is a WCAG 2.1.1 failure: the scan reports it as
+  // `scrollable-region-focusable`, which is how this was found. A player using
+  // arrow keys needs somewhere to put focus before the arrows mean anything, and
+  // this is that place.
+  //
+  // **Unconditional, rather than added when the surface is magnified.** The
+  // first form of this fix wrote the attribute from the size setting, so the
+  // default page carried no stop; it was withdrawn because the stage also
+  // scrolls for a single frame at 100 percent, whenever a phase change moves the
+  // controls row's height and the canvas is resized on the frame after. One
+  // frame is enough for the scan to catch it, which it did on one run in five,
+  // and a Critical gate that fails one run in five is worse than a tab stop. It
+  // is one stop, it is named, and it sits where the game is.
+  const stage = el('div', {
+    className: 'bj-stage',
+    attributes: {
+      role: 'group',
+      'aria-label': 'Play surface',
+      'data-control': 'play-surface',
+      tabindex: '0',
+    },
+    children: [surface],
+  });
   const top = el('header', { className: 'bj-top' });
-  const body = el('div', { className: 'bj-body', children: [stage] });
+  // `<main>` rather than a div. Item `G6`: the play surface, its mirror and the
+  // overlay host are the game, and this is the landmark a screen reader user
+  // jumps to. Nothing else in the page claims it.
+  const body = el('main', { className: 'bj-body', children: [stage] });
   // Row 3 doubles as the focus anchor. `BJ-17`, item `D4`: SPEC 10 replaces the
   // whole of this row at every phase, so a control really is taken out from
   // under the caret, and QUALITY-BAR section 3 asks for a stable named place for
@@ -81,10 +129,13 @@ export function createShell(): Shell {
       'data-focus-anchor': 'controls',
     },
   });
+  // Item `G6`'s single `h1`. Out of flow, so it creates no grid track and
+  // changes no measured height; see this file's header for why it is hidden.
+  const heading = el('h1', { className: 'bj-visually-hidden', text: 'Blackjack' });
   const root = el('div', {
     className: 'bj-shell',
-    children: [top, body, controls],
+    children: [heading, top, body, controls],
   });
 
-  return { root, top, body, stage, feltCanvas, canvas, controls };
+  return { root, heading, top, body, stage, feltCanvas, canvas, controls };
 }

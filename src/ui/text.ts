@@ -19,10 +19,13 @@
  * has already produced.
  */
 
+import type { Card, Rank, Suit } from '../core/cards';
+import type { HandValue } from '../core/hand';
+import type { HouseRules } from '../core/rules';
 import type { Rung, Outcome } from '../core/settlement';
 import type { CellAddress, CoachAction, PreferenceList } from '../core/strategy';
 import type { RejectionReason } from '../core/table';
-import type { PlayerAction } from '../core/types';
+import type { HandInPlay, HandState, InsuranceOffer, Phase, PlayerAction } from '../core/types';
 import type { MilestoneId } from '../core/statistics';
 import {
   ACCURACY_DECISIONS,
@@ -240,4 +243,291 @@ export function milestoneText(milestone: MilestoneId): string {
     case 'survivedAndRecovered':
       return `Survived below ${chips(LOW_WATER_PERCENT)} percent and recovered`;
   }
+}
+
+// ---------------------------------------------------------------------------
+// `BJ-18`: the sentences the mirror and the announcements are built from
+// ---------------------------------------------------------------------------
+
+/**
+ * A card as a word. QUALITY-BAR section 4's one concession to the canvas.
+ *
+ * That section allows "a card's rank and suit" to live solely on canvas, and
+ * requires in the same sentence that those glyphs "appear in the mirror as
+ * words". This is that sentence: `A` of `spades` is "Ace of spades", never
+ * "A spades", because a screen reader reading the letter A beside a suit is
+ * reading the glyph rather than the card.
+ */
+export function cardText(card: Card): string {
+  return `${rankText(card.rank)} of ${suitText(card.suit)}`;
+}
+
+/** The thirteen ranks as words. `10` is "Ten" and never "one zero". */
+export function rankText(rank: Rank): string {
+  switch (rank) {
+    case 'A':
+      return 'Ace';
+    case '2':
+      return 'Two';
+    case '3':
+      return 'Three';
+    case '4':
+      return 'Four';
+    case '5':
+      return 'Five';
+    case '6':
+      return 'Six';
+    case '7':
+      return 'Seven';
+    case '8':
+      return 'Eight';
+    case '9':
+      return 'Nine';
+    case '10':
+      return 'Ten';
+    case 'J':
+      return 'Jack';
+    case 'Q':
+      return 'Queen';
+    case 'K':
+      return 'King';
+  }
+}
+
+/** The four suits as words. Lower case, because they are read inside a phrase. */
+export function suitText(suit: Suit): string {
+  switch (suit) {
+    case 'clubs':
+      return 'clubs';
+    case 'diamonds':
+      return 'diamonds';
+    case 'hearts':
+      return 'hearts';
+    case 'spades':
+      return 'spades';
+  }
+}
+
+/**
+ * A hand's total, as QUALITY-BAR section 4's naming template spells one.
+ *
+ * The template's own example is "soft 16", so a soft hand is named that way
+ * exactly. A hard hand is named "hard 16" rather than "16": the section gives
+ * only the soft example, and the symmetric form is the one a player can act on,
+ * since "16" alone leaves them to infer that the absence of the word soft means
+ * the opposite. SPEC 4.2's own vocabulary carries both words.
+ */
+export function handValueText(value: HandValue): string {
+  return `${value.soft ? 'soft' : 'hard'} ${chips(value.total)}`;
+}
+
+/**
+ * What one hand is doing right now, as one word.
+ *
+ * `active` is not a `HandState`: SPEC 4.6 plays hands left to right and the
+ * machine names the one it is asking about on the phase, not on the hand, so
+ * "active" is a fact about the round rather than about the hand. It is the word
+ * QUALITY-BAR section 4's template uses, and `handMirrorName` passes it in.
+ */
+export function handStateText(state: HandState): string {
+  switch (state) {
+    case 'live':
+      return 'waiting';
+    case 'stood':
+      return 'standing';
+    case 'bust':
+      return 'bust';
+    case 'doubled':
+      return 'doubled';
+    case 'surrendered':
+      return 'surrendered';
+    case 'blackjack':
+      return 'blackjack';
+  }
+}
+
+/** What `handMirrorName` needs about one hand's place in the round. */
+export interface HandPlace {
+  /** Zero based, the index into `readout.hands`, which is SPEC 4.6's order. */
+  readonly index: number;
+  /** How many hands the round is carrying. */
+  readonly of: number;
+  /** Whether the machine is asking about this hand right now. */
+  readonly active: boolean;
+}
+
+/**
+ * QUALITY-BAR section 4's naming template, and nothing else.
+ *
+ *   "a list of hands, each with an accessible name like 'Hand 2 of 3, active,
+ *    soft 16, wager 100'"
+ *
+ * Four fields in that order, comma separated: the hand's place in the round, its
+ * state, its value and its wager. The section's own example is reproduced
+ * exactly by a soft 16 in the second of three hands with a wager of 100, and
+ * `tests/unit/mirror-text.test.ts` asserts that sentence character for
+ * character rather than asserting the shape it happens to have.
+ *
+ * A hand with no cards has no value to name, so the value field reads "no
+ * cards": the template's shape is kept and the field says what is true, which
+ * is the reading a list of hands mid-deal needs.
+ */
+export function handMirrorName(hand: HandInPlay, place: HandPlace, value: HandValue | null): string {
+  const state = place.active ? 'active' : handStateText(hand.state);
+  const total = value === null ? 'no cards' : handValueText(value);
+  return (
+    `Hand ${chips(place.index + 1)} of ${chips(place.of)}, ${state}, ` +
+    `${total}, wager ${chips(hand.wager)}`
+  );
+}
+
+/**
+ * The dealer's hand as the mirror states it. SPEC 11's own reading.
+ *
+ * "Dealer visible hand value counts face-up cards only" while the hole card is
+ * down, so the concealed card is named as a fact rather than folded into the
+ * total. The machine publishes the count of face-down cards, so this cannot
+ * name a card the player cannot see.
+ */
+export function dealerMirrorText(
+  visible: readonly Card[],
+  concealed: number,
+  value: HandValue | null,
+): string {
+  if (visible.length === 0) {
+    return concealed === 0 ? 'Dealer has no cards.' : 'Dealer holds one card face down.';
+  }
+  const total = value === null ? '' : ` ${handValueText(value)}`;
+  const hidden = concealed === 0 ? '' : `, ${chips(concealed)} face down`;
+  return `Dealer showing${total}${hidden}.`;
+}
+
+/**
+ * What SPEC 10's screen is, and what the player is being asked for.
+ *
+ * One sentence per phase, including the five timed ones, because a mirror that
+ * went quiet for the whole of a deal would be a mirror of some of the state. The
+ * five carry no instruction, because none of them accepts an intent.
+ */
+export function phaseText(phase: Phase, hands: number): string {
+  switch (phase.kind) {
+    case 'start':
+      return 'Start screen. Choose a table, then Start.';
+    case 'betting':
+      return 'Betting. Build a wager from the chips, then Deal.';
+    case 'dealing':
+      return 'Dealing.';
+    case 'peek':
+      return 'The dealer is checking for a natural.';
+    case 'insurance':
+      return phase.offer.evenMoney
+        ? 'Even money offered on your natural. Take it or decline it.'
+        : 'Insurance offered against a dealer natural. Take it or decline it.';
+    case 'playerTurn':
+      return hands <= 1
+        ? 'Your turn.'
+        : `Your turn on hand ${chips(phase.activeHand + 1)} of ${chips(hands)}.`;
+    case 'reveal':
+      return 'The dealer reveals the hole card.';
+    case 'dealerTurn':
+      return 'The dealer plays.';
+    case 'settling':
+      return 'Settling the round.';
+    case 'roundResult':
+      return 'Round result. Read the hands, then Next Hand.';
+    case 'bustOut':
+      return 'Out at this table. Drop to a lower table, or take the free reset.';
+  }
+}
+
+/**
+ * The document title, which item `G6` requires to reflect the current state.
+ *
+ * The state first and the game second, which is the order a tab strip truncates
+ * from: a row of tabs all reading "Blackjack" tells a player nothing, and the
+ * screen is the part that moves. `document.title` is written from the sync step
+ * like every other piece of chrome, and only when it changed.
+ */
+export function documentTitle(phase: Phase): string {
+  return `${screenTitle(phase)} - Blackjack`;
+}
+
+/** The short name of one screen, as the title bar carries it. */
+export function screenTitle(phase: Phase): string {
+  switch (phase.kind) {
+    case 'start':
+      return 'Choose a table';
+    case 'betting':
+      return 'Place your wager';
+    case 'dealing':
+      return 'Dealing';
+    case 'peek':
+      return 'Dealer peek';
+    case 'insurance':
+      return phase.offer.evenMoney ? 'Even money' : 'Insurance';
+    case 'playerTurn':
+      return 'Your turn';
+    case 'reveal':
+      return 'Dealer reveals';
+    case 'dealerTurn':
+      return 'Dealer plays';
+    case 'settling':
+      return 'Settling';
+    case 'roundResult':
+      return 'Round result';
+    case 'bustOut':
+      return 'Out at this table';
+  }
+}
+
+/** SPEC 4.7's offer, as the mirror states the decision being asked for. */
+export function offerText(offer: InsuranceOffer): string {
+  return offer.evenMoney
+    ? `Even money on your natural, for a stake of ${chips(offer.stake)}.`
+    : `Insurance against a dealer natural, for a stake of ${chips(offer.stake)}. It pays 2 to 1.`;
+}
+
+/**
+ * The house rules in force, as real DOM text. QUALITY-BAR section 4.
+ *
+ * "Anything needed to make a decision, house rules, table limits, hand values,
+ * is real DOM text; the canvas may repeat it decoratively." SPEC 16 has the felt
+ * print exactly these lines, and this is the reachable copy of them.
+ */
+export function houseRulesText(rules: HouseRules): string {
+  return (
+    `${chips(rules.decks)} decks. Dealer stands on all 17s. Blackjack pays 3 to 2. ` +
+    `Insurance pays 2 to 1. Double after split ${rules.doubleAfterSplit ? 'on' : 'off'}. ` +
+    `Surrender ${rules.surrender ? 'on' : 'off'}. Even money ${rules.evenMoney ? 'on' : 'off'}.`
+  );
+}
+
+/**
+ * One unavailable control, as the mirror lists it. The `BJ-15` review's `MIN-4`.
+ *
+ *   "a disabled action control's refusal reason lives on `title` only, which
+ *    keyboard and touch users cannot reach"
+ *
+ * The reason is put in three reachable places by this part and this is the
+ * navigable one: a list a screen reader user can walk at any time, rather than
+ * an event they had to be listening for. The other two are the control's own
+ * accessible name, written by `setDisabled`, and the announcement the polite
+ * region makes when a press is actually refused.
+ */
+export function unavailableText(label: string, reason: RejectionReason): string {
+  return `${label}: ${reasonText(reason)}`;
+}
+
+/**
+ * One milestone row, with whether it has been awarded stated in words.
+ *
+ * Item `G3`: "no state is conveyed by colour alone". `BJ-18` found this row
+ * distinguishing an awarded milestone from an unawarded one by `--bj-positive`
+ * against `--bj-text-muted` and by nothing else, which is invisible to a player
+ * with a colour-vision deficiency and to every player under forced colors,
+ * where both tokens collapse to `CanvasText`. The colour stays, because it is a
+ * good glance-level cue; the words are what carry the state.
+ */
+export function milestoneRowText(milestone: MilestoneId, awarded: boolean): string {
+  return `${milestoneText(milestone)}: ${awarded ? 'awarded' : 'not yet'}`;
 }
