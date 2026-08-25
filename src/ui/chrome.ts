@@ -11,7 +11,9 @@
  * **Every component is assembled here and nowhere else.** The composition root
  * builds the game, this builds the chrome, and the two meet at one call. That is
  * what keeps `main.ts` readable at the size the shell has now reached, and what
- * `BJ-16`, `BJ-18` and `BJ-20` will each add one component to.
+ * `BJ-18` and `BJ-20` will each add one component to. `BJ-16` added no
+ * component: the responsive work is three attributes written below, a stylesheet
+ * that selects on them, and a disclosure inside the readouts.
  *
  * **The sync is per frame and is deliberately cheap.** Text is written only when
  * it changed, and the two lists that cost anything to build, the round result
@@ -103,6 +105,21 @@ export function createChrome(actions: ChromeActions): Chrome {
       // for one cannot resolve to the other: the shell says what the frame
       // resolved and the button says what it would choose.
       setAttribute(shell.root, 'data-motion-speed', state.motion.speed);
+      // `BJ-16`'s three. The stylesheet has no media query and selects on these
+      // instead, for the reason `src/ui/breakpoints.ts` gives at length: a
+      // breakpoint in a media query is a dimension literal in a component
+      // stylesheet, which the token scan fails, and the width-first rule with
+      // orientation below one threshold has no clean media-query form. They are
+      // written here rather than by the composition root because every other
+      // attribute on the shell is written here, and because a second DOM writer
+      // is how two writers start disagreeing about a frame.
+      setAttribute(shell.root, 'data-breakpoint', state.layout.breakpoint);
+      setAttribute(shell.root, 'data-sticky-bars', state.layout.stickyBars ? 'on' : 'off');
+      // Named apart from the size control's own `data-surface-size`, for the
+      // reason `data-motion-speed` is named apart from `data-speed`: the shell
+      // says what the frame resolved and the button says what it would choose,
+      // and one selector must not resolve to both.
+      setAttribute(shell.root, 'data-layout-size', String(state.layout.surfaceSize));
       for (const component of components) {
         component.update(state, dt);
       }

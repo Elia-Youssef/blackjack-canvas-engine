@@ -26,11 +26,20 @@
  * be a fifth thing an overlay does to the game, and SPEC 10 gives it none.
  *
  * The Settings panel here is deliberately partial: it carries SPEC 7's coach
- * control, because `C8` needs the coach to be switchable, and SPEC 5's Speed
- * control, which item `E9` at `BJ-14` grades, and it states the house rules in
- * force. SPEC 14's editable house-rule toggles, the play-surface size, sound,
- * theme, the reduced-motion setting and Reset all data are item `I5` at
- * `BJ-20`, and a control that did nothing would be worse than an absent one.
+ * control, because `C8` needs the coach to be switchable, SPEC 5's Speed
+ * control, which item `E9` at `BJ-14` grades, QUALITY-BAR section 4's
+ * play-surface size, which item `F6` at `BJ-16` grades, and it states the house
+ * rules in force. SPEC 14's editable house-rule toggles, sound, theme, the
+ * reduced-motion setting and Reset all data are item `I5` at `BJ-20`, and a
+ * control that did nothing would be worse than an absent one.
+ *
+ * **The two settings SPEC 14 calls immediate are the two that are built.** That
+ * section groups Speed and play-surface size as presentation settings that
+ * "take effect immediately, mid-round included, because neither can change an
+ * outcome", and every other setting in it either changes the house rules at a
+ * round boundary or waits on a subsystem a later part builds. Neither of the two
+ * is persisted here; both persist at `BJ-20`, which is the ruling `E9` already
+ * carries and which `F6` takes on the same terms.
  *
  * **Speed is the first real setting in this panel**, and it is here rather than
  * at `BJ-20` because `E9` grades it: SPEC 14 says Speed "takes effect
@@ -45,6 +54,7 @@ import type { CoachMode } from '../../core/strategy';
 import type { History, HistoryEntry } from '../../core/history';
 import { MILESTONES, type MilestoneId } from '../../core/statistics';
 import { SPEEDS, type Speed } from '../../core/table';
+import { SURFACE_SIZES, type SurfaceSize } from '../../render/surface';
 import { button, el, empty, setAttribute, setHidden, setText } from '../dom';
 import { NOTHING_YET, chips as formatChips, delta as formatDelta, percentOfHundred } from '../format';
 import {
@@ -155,6 +165,25 @@ function settingsPanel(actions: ChromeActions): Component {
     speeds.append(control);
   }
 
+  // QUALITY-BAR section 4's play-surface size. Item `F6` at `BJ-16`, and the
+  // second of SPEC 14's two immediate presentation settings.
+  const sizeButtons = new Map<SurfaceSize, HTMLButtonElement>();
+  const sizes = el('div', {
+    className: 'bj-modes',
+    attributes: { role: 'group', 'aria-label': 'Play surface size' },
+  });
+  for (const size of SURFACE_SIZES) {
+    const control = button(
+      percentOfHundred(size),
+      () => {
+        actions.setSurfaceSize(size);
+      },
+      { className: 'bj-button', attributes: { 'data-surface-size': String(size) } },
+    );
+    sizeButtons.set(size, control);
+    sizes.append(control);
+  }
+
   const rules = el('p', { className: 'bj-rules', attributes: { 'data-field': 'house-rules' } });
 
   const root = el('div', {
@@ -175,6 +204,16 @@ function settingsPanel(actions: ChromeActions): Component {
         text: 'Fast shortens every pause and deal. It changes no card and no outcome.',
       }),
       speeds,
+      el('h3', { className: 'bj-panel__heading', text: 'Play surface size' }),
+      el('p', {
+        className: 'bj-panel__note',
+        // SPEC 14's own sentence, shortened: browser zoom shrinks the canvas box
+        // with the viewport and magnifies nothing, so this is the only path to a
+        // larger card. Written out because a player choosing between the two
+        // needs to know the browser's own control will not do it.
+        text: 'Browser zoom does not enlarge the cards. This does, and it applies at once.',
+      }),
+      sizes,
       el('h3', { className: 'bj-panel__heading', text: 'House rules' }),
       rules,
     ],
@@ -188,6 +227,12 @@ function settingsPanel(actions: ChromeActions): Component {
       }
       for (const [speed, control] of speedButtons) {
         setAttribute(control, 'aria-pressed', String(speed === state.motion.speed));
+      }
+      for (const [size, control] of sizeButtons) {
+        // Read off the frame's own layout state, which is the value the surface
+        // plan was built from, so the pressed control and the drawn canvas
+        // cannot disagree about which size the frame is at.
+        setAttribute(control, 'aria-pressed', String(size === state.layout.surfaceSize));
       }
       const house = state.readout.rules;
       setText(

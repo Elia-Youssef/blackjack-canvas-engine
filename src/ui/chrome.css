@@ -1,15 +1,26 @@
 /*
- * The chrome stylesheet. Items `M1` and `C5`.
+ * The chrome stylesheet. Items `M1` and `C5`, and `BJ-16`'s `F1`, `F3`, `F4`,
+ * `F6` and `F7`.
  *
  * **No literal value appears here.** Every colour, size, radius, type step and
  * duration resolves through a custom property declared in `tokens.css`, which is
  * item `E1`'s rule and is scanned by `tests/unit/tokens.test.ts`: a hex or a
  * `12px` in this file fails the unit suite rather than merely looking wrong.
  *
- * The three exceptions are not values on any scale and could not be tokens.
- * `100%` and `100vh` are the viewport, which QUALITY-BAR section 15 has no token
- * for and item `F1` at `BJ-16` owns; `1fr` and `minmax(0, 1fr)` are grid
- * fractions rather than lengths; and `0` carries no unit and needs no token.
+ * The exceptions are not values on any scale and could not be tokens. `100%`,
+ * `100vh` and `100dvh` are the viewport, which QUALITY-BAR section 15 has no
+ * token for; `1fr` and `minmax(0, 1fr)` are grid fractions rather than lengths;
+ * and `0` carries no unit and needs no token.
+ *
+ * **There are no media queries here, and the four breakpoints are why.** A media
+ * query cannot take a `var()`, so `@media (min-width: 1024px)` would be a
+ * dimension literal in a component stylesheet: the scan above fails it, and it
+ * would put a number QUALITY-BAR section 5 owns in a second home. The breakpoint
+ * is resolved once in `src/ui/breakpoints.ts`, from that section's table, and
+ * published on the shell as `data-breakpoint`, with `data-sticky-bars` beside it
+ * for the height threshold; every rule below selects on those. That module's
+ * header carries the rest of the reasoning, including why the width-first rule
+ * has no clean media-query form at all.
  *
  * **The layout rule `C5` depends on is the grid below.** `.bj-shell` is three
  * rows, `.bj-overlay` is absolutely positioned inside the middle one, and that
@@ -22,9 +33,15 @@
  * `[hidden] { display: none }` and leaves a hidden element on screen. Every such
  * rule below is written as `:not([hidden])`.
  *
- * Breakpoints are deliberately absent. Item `F1` at `BJ-16` owns the four of
- * them, resolved by width first, and adding a media query here first would be
- * that part's work done in the wrong place and graded nowhere.
+ * **The shell has a definite height wherever the bars stick**, and that is the
+ * layout half of the defect the `BJ-14` review recorded: with `min-height`, the
+ * middle row's `1fr` resolved against a height the row could itself grow, so a
+ * play surface sized from the row grew the row, grew the document, and pushed
+ * the action buttons below the fold on a 720 px viewport. A definite height
+ * makes `minmax(0, 1fr)` a track that cannot exceed what is left, and the
+ * arithmetic half is in `planSurface`, which never asks for more than its box at
+ * 100 percent. Below the sticky threshold the height goes back to a minimum,
+ * because at that size the document is meant to scroll.
  */
 
 html,
@@ -39,6 +56,11 @@ body {
   font-family: system-ui, sans-serif;
   font-size: var(--type-base);
   line-height: var(--leading-body);
+  /* Item `F2` is a claim about every width from 320 px upward, and the one thing
+   * that can widen a page whose every box is fluid is a word that will not
+   * break. Nothing in the chrome is currently longer than "Blackjacks", and this
+   * is what keeps that from being a thing anybody has to remember. */
+  overflow-wrap: break-word;
 }
 
 /* ---------------------------------------------------------------------------
@@ -47,11 +69,49 @@ body {
 
 .bj-shell {
   box-sizing: border-box;
-  min-height: 100vh;
+  /* The fallback is first and the modern unit second, so an engine without
+   * `dvh` still gets a definite height rather than an `auto` one. */
+  height: 100vh;
+  height: 100dvh;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  /* **The mechanism that keeps the play-surface row alive is `barsStick`, and
+   * this floor is the backstop under it.** The other two tracks are `auto` and
+   * this shell's height is definite, so the three of them can want more than the
+   * viewport; `barsStick` answers `false` unless all three fit, which is what
+   * makes a sticky shell one that never overflows and an overflowing one always
+   * scroll the page. `src/ui/breakpoints.ts` carries that rule and the reasoning,
+   * and the review that produced it measured what its absence costs: a top bar
+   * wrapped to four lines squeezed this track to zero, `planSurface` was handed a
+   * box it could not fit, and the canvas was clipped away entirely.
+   *
+   * The floor is stated anyway, as a length rather than as content so nothing the
+   * canvas does can move it. It is deliberately **not** independently provable:
+   * with the rule above in place no viewport reaches it, and a mutation that
+   * removes it is not detected. It is here so that a wrong measurement fails
+   * small instead of failing invisibly. */
+  grid-template-rows: auto minmax(var(--surface-min-height), 1fr) auto;
   gap: var(--space-3);
-  padding: var(--space-3);
+  /* Item `F4`: the safe-area insets, added to the padding on all four sides so
+   * that no control can sit under a notch or a home indicator. The tokens carry
+   * `env()` and resolve to zero on a display that has no inset, which is why
+   * they can be added unconditionally. `viewport-fit=cover` in `index.html` is
+   * what makes them non-zero at all. */
+  padding: calc(var(--space-3) + var(--bj-safe-top)) calc(var(--space-3) + var(--bj-safe-right))
+    calc(var(--space-3) + var(--bj-safe-bottom)) calc(var(--space-3) + var(--bj-safe-left));
+}
+
+/* Where the bars do not stick the document is meant to scroll: the shell takes
+ * its content's height and the play surface takes its minimum rather than a
+ * share. Two cases reach it, and they are the same case. QUALITY-BAR section 5
+ * forbids two-dimensional scrolling at 320 x 256, and two sticky bars plus a
+ * play surface cannot fit 256 px of height; and at any viewport where the two
+ * bars plus that minimum want more than the height available, sticking them
+ * would put a control below a fold the page could not scroll past. Items `F7`
+ * and `F1`. */
+.bj-shell[data-sticky-bars='off'] {
+  height: auto;
+  min-height: 100vh;
+  min-height: 100dvh;
 }
 
 .bj-top {
@@ -67,37 +127,131 @@ body {
   display: flex;
   align-items: center;
   justify-content: center;
+  min-width: 0;
   min-height: 0;
+  /* Nothing may leak out of the middle row. The stage inside it scrolls to a
+   * surface larger than its box, so this clips nothing that is not reachable
+   * there, and it is what keeps a magnified surface from becoming page scroll. */
+  overflow: hidden;
 }
 
+/* The two bars stick to the viewport, not to the shell's padding box: a sticky
+ * offset is measured against the scrollport, so `0` would put the bottom bar
+ * under the home indicator on the one device where the inset is not zero. Item
+ * `F4` again, and DESIGN section 4's "sticky top bar" and "thumb-reachable". */
+.bj-shell[data-sticky-bars='on'] .bj-top {
+  position: sticky;
+  top: var(--bj-safe-top);
+  background: var(--bj-ground);
+}
+
+.bj-shell[data-sticky-bars='on'] .bj-controls {
+  position: sticky;
+  bottom: var(--bj-safe-bottom);
+  background: var(--bj-ground);
+}
+
+/* The stage scrolls, and only ever above 100 percent. `planSurface` floors both
+ * dimensions, so at the default setting the surface fits its box exactly and no
+ * scrollbar exists; above it the surface is deliberately larger, and item `F6`'s
+ * "clips nothing" is this container reaching all of it rather than a clamp that
+ * would silently refuse the magnification a low-vision player asked for. */
 .bj-stage {
   display: flex;
-  align-items: center;
-  justify-content: center;
   width: 100%;
   height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
 }
 
+/* Centred by auto margins rather than by `justify-content`, which is the one
+ * form that survives overflow: auto margins take positive free space only, so a
+ * surface larger than the stage is laid from the start edge and every part of it
+ * can be scrolled to. Centring a flex item with `justify-content` puts the
+ * overflow on both edges and makes the near one unreachable. */
 .bj-surface {
   display: block;
+  margin: auto;
   border-radius: var(--radius-lg);
 }
 
+/* **No inner scroller here.** An earlier form of this part let the row scroll
+ * inside itself when its track was squeezed, and the review measured what that
+ * costs: Deal and Change Table rendered below the fold of a page that could not
+ * scroll, reachable only by scrolling a box with no scrollbar and no affordance,
+ * which is item `F1`'s "unreachable control" wearing a different hat. The row
+ * takes its content's height, and when the three rows want more than the
+ * viewport the **page** scrolls, which every player already knows how to do. */
 .bj-controls {
   display: flex;
   flex-direction: column;
   gap: var(--space-2);
 }
 
+/* The play surface takes a height of its own rather than a share, once the shell
+ * stops having one to divide. DESIGN section 4's "minimum height rather than a
+ * share", and item `F7`.
+ *
+ * A definite height rather than a minimum, and that is the difference between a
+ * stable layout and a fixed point: the surface is planned from this row's client
+ * box, so a row that sized itself to its content would be sizing itself to the
+ * canvas it had last frame, and any frame that measured it at zero would leave
+ * it there. With the shell's own height gone at this size, this is the one place
+ * left to say how tall the row is. */
+.bj-shell[data-sticky-bars='off'] .bj-body {
+  height: var(--surface-min-height);
+}
+
 /* ---------------------------------------------------------------------------
- * SPEC 11's continuous readouts.
+ * SPEC 11's continuous readouts, and `BJ-16`'s disclosure.
  * ------------------------------------------------------------------------- */
+
+.bj-readouts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: var(--space-2) var(--space-5);
+  min-width: 0;
+}
 
 .bj-readouts__list {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2) var(--space-5);
   margin: 0;
+  min-width: 0;
+}
+
+/* At `wide` and `medium` the disclosure is open and its summary is not shown:
+ * all fourteen readouts are on one bar, which is what item `C5` measures. The
+ * chrome sets `open` from the breakpoint, so nothing here has to force a closed
+ * element to render its contents. */
+.bj-readouts__summary {
+  display: none;
+}
+
+.bj-shell[data-breakpoint='compact'] .bj-readouts__more,
+.bj-shell[data-breakpoint='portrait'] .bj-readouts__more {
+  flex-basis: 100%;
+}
+
+.bj-shell[data-breakpoint='compact'] .bj-readouts__summary,
+.bj-shell[data-breakpoint='portrait'] .bj-readouts__summary {
+  display: block;
+  box-sizing: border-box;
+  /* A summary is a control, so it carries section 3's target like every other
+   * one. The line height is the type scale's, not a height of its own. */
+  min-height: var(--target-min);
+  padding: var(--space-2) 0;
+  color: var(--bj-text-muted);
+  font-size: var(--type-sm);
+  cursor: pointer;
+}
+
+.bj-readouts__summary:focus-visible {
+  outline: var(--focus-ring-width) var(--focus-ring-style) var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
 }
 
 .bj-readout {
@@ -239,6 +393,24 @@ body {
   display: flex;
   flex-wrap: wrap;
   gap: var(--space-2);
+  min-width: 0;
+}
+
+/* DESIGN section 4's narrow bottom bar: "chip tray (h-scroll)". The tray scrolls
+ * inside itself so that four chips at their full touch target never widen the
+ * page, which is the distinction item `F2` rests on: no horizontal **page**
+ * scroll, and a designated container that scrolls is not one. */
+.bj-shell[data-breakpoint='compact'] .bj-chips,
+.bj-shell[data-breakpoint='portrait'] .bj-chips {
+  flex-wrap: nowrap;
+  overflow-x: auto;
+}
+
+.bj-shell[data-breakpoint='compact'] .bj-chip,
+.bj-shell[data-breakpoint='portrait'] .bj-chip {
+  /* No shrinking below the target: a chip squeezed to fit is item `F1`'s
+   * unreachable control with extra steps. */
+  flex: none;
 }
 
 /* ---------------------------------------------------------------------------

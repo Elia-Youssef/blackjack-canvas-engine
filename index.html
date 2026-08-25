@@ -2,7 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!--
+      QUALITY-BAR section 5, item `F4`: without viewport-fit=cover every
+      env(safe-area-inset-*) is 0px and the rule that keeps controls out from
+      under a notch is inert. There is no user-scalable=no and no maximum-scale
+      here, and there must never be: pinch zoom is an accessibility mechanism
+      and the section forbids disabling it or capping it below 5.
+    -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Blackjack</title>
   </head>
   <body>

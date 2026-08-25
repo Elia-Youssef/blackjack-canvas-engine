@@ -23,6 +23,8 @@ import type { CoachMode, CoachVerdict } from '../core/strategy';
 import type { RejectionLayer, RejectionReason, Speed, TableReadout } from '../core/table';
 import type { Intent, IntentKind } from '../core/types';
 import type { Motion } from '../render/animate';
+import type { SurfaceSize } from '../render/surface';
+import type { BreakpointName } from './breakpoints';
 
 /** SPEC 10's three overlays, and there is no fourth. */
 export type OverlayId = 'settings' | 'howToPlay' | 'statistics';
@@ -77,8 +79,29 @@ export interface HandVerdict {
   readonly verdict: CoachVerdict;
 }
 
+/**
+ * What the frame resolved about the shape of the page. `BJ-16`.
+ *
+ * The chrome writes all three onto the shell as attributes and the stylesheet
+ * selects on them, which is why they travel on the state rather than being read
+ * off the platform by a component: `src/ui/breakpoints.ts` explains why the
+ * breakpoint cannot be a media query, and a component that measured the viewport
+ * for itself would be a second answer to a question the frame has already
+ * answered once, exactly as a second reduced-motion read would be.
+ */
+export interface LayoutState {
+  /** QUALITY-BAR section 5's four, resolved by width first. Item `F1`. */
+  readonly breakpoint: BreakpointName;
+  /** Whether both bars stick at this viewport height. Item `F7`. */
+  readonly stickyBars: boolean;
+  /** SPEC 14's play-surface size, in percent. Item `F6`. */
+  readonly surfaceSize: SurfaceSize;
+}
+
 /** Everything the chrome renders from, as one frozen snapshot per frame. */
 export interface ChromeState {
+  /** The shape of the page this frame. `BJ-16`, items `F1`, `F3`, `F6`, `F7`. */
+  readonly layout: LayoutState;
   /** The machine's own snapshot. The only authority on the game. */
   readonly readout: TableReadout;
   /** SPEC 11's session and lifetime counters, assembled by `statistics.ts`. */
@@ -136,6 +159,17 @@ export interface ChromeActions {
    * `table.setSpeed`, which is the only thing about a built table that moves.
    */
   setSpeed(speed: Speed): void;
+  /**
+   * SPEC 14's play-surface size. `BJ-16`, item `F6`.
+   *
+   * The second presentation setting, and it takes the first one's route for the
+   * same reason: SPEC 14 groups Speed and play-surface size as the two settings
+   * that "take effect immediately, mid-round included, because neither can
+   * change an outcome", so neither is an intent and neither waits for a round
+   * boundary. The composition root applies it to the next frame's surface plan,
+   * which is the only thing it touches.
+   */
+  setSurfaceSize(size: SurfaceSize): void;
 }
 
 /** One assembled piece of chrome: its root element, and how it is synced. */

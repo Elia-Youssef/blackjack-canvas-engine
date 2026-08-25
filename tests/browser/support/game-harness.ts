@@ -34,7 +34,13 @@
  * be reached without options, and says which tests those are.
  */
 
-import { boot, type BootOptions, type Game, type MotionProbe } from '../../../src/main';
+import {
+  boot,
+  type BootOptions,
+  type Game,
+  type LayoutProbe,
+  type MotionProbe,
+} from '../../../src/main';
 
 /**
  * The options a spec may pass across the Playwright boundary.
@@ -104,6 +110,8 @@ export interface GameHarness {
   session(): ReturnType<Game['session']>;
   /** What the last frame resolved for motion. Items `E7` and `E9`. */
   motion(): MotionProbe;
+  /** What the last frame resolved for the layout. `BJ-16`, item `F6`. */
+  layout(): LayoutProbe;
   /** Begin sampling the wallet every frame, until SPEC 10's round result. */
   watch(): void;
   /** Everything `watch` has sampled, oldest first. */
@@ -142,6 +150,7 @@ const harness: GameHarness = {
   readout: () => running().readout(),
   session: () => running().session(),
   motion: () => running().motion(),
+  layout: () => running().layout(),
 
   trace(): void {
     traced.length = 0;
