@@ -59,6 +59,10 @@
 import { expect, test, type Page } from '@playwright/test';
 
 import { MIN_SURFACE_HEIGHT, resolveBreakpoint } from '../../src/ui/breakpoints';
+// The control census moved to `support/controls.ts` at `BJ-17`, unchanged: item
+// `D2` grades the same list against a different question, and two copies of it
+// is how one of them quietly stops being complete.
+import { SCREEN_CONTROLS, selectorFor } from './support/controls';
 import {
   atBetting,
   atShippedBetting,
@@ -106,70 +110,6 @@ const VIEWPORTS = [
 /** The containers that scroll on purpose. Everything else must not. */
 const DESIGNED_SCROLLERS = new Set(['.bj-chips', '.bj-stage']);
 
-/**
- * Every control SPEC 10 puts on each screen this file grades.
- *
- * **Presence is asserted, not visibility.** `actions.ts` renders all five of
- * SPEC 4.5's actions on every hand and disables the ones the rules refuse, so a
- * missing Double is a defect and a disabled Double is the design; the two are
- * different assertions and only the first belongs here. The review proved the
- * gap by hiding `double` at portrait, which every test in this file passed.
- *
- * `bust-out` is the one screen not graded here, deliberately: SPEC 4.12 reaches
- * it only from a balance below the table minimum, which is a played-down
- * bankroll rather than a boot option, and the two controls on it (`reset-bankroll`
- * and the lower-table buttons) are laid out by the same rules as the screens
- * that are graded. `tests/browser/betting.spec.ts` drives it for item `B15`.
- */
-const SCREEN_CONTROLS: Readonly<Record<string, readonly string[]>> = Object.freeze({
-  start: [
-    'data-table=bronze',
-    'data-table=silver',
-    'data-table=gold',
-    'data-control=start',
-    'data-open-overlay=settings',
-    'data-open-overlay=howToPlay',
-    'data-open-overlay=statistics',
-  ],
-  betting: [
-    'data-chip=10',
-    'data-chip=50',
-    'data-chip=100',
-    'data-chip=500',
-    'data-control=clear',
-    'data-control=repeat',
-    'data-control=max',
-    'data-control=deal',
-    'data-control=change-table',
-    'data-open-overlay=settings',
-    'data-open-overlay=howToPlay',
-    'data-open-overlay=statistics',
-  ],
-  playerTurn: [
-    'data-action=hit',
-    'data-action=stand',
-    'data-action=double',
-    'data-action=split',
-    'data-action=surrender',
-    'data-open-overlay=settings',
-    'data-open-overlay=howToPlay',
-    'data-open-overlay=statistics',
-  ],
-  insurance: [
-    'data-control=take-insurance',
-    'data-control=decline-insurance',
-    'data-open-overlay=settings',
-    'data-open-overlay=howToPlay',
-    'data-open-overlay=statistics',
-  ],
-  roundResult: [
-    'data-control=next-hand',
-    'data-open-overlay=settings',
-    'data-open-overlay=howToPlay',
-    'data-open-overlay=statistics',
-  ],
-});
-
 /** WCAG 2.2 section 3's minimum target, which `--target-min` carries. */
 const TARGET_MIN = 44;
 
@@ -179,12 +119,6 @@ function bottom(box: Box): number {
 
 function right(box: Box): number {
   return box.x + box.width;
-}
-
-/** `data-control=deal` as `[data-control="deal"]`. */
-function selectorFor(key: string): string {
-  const [attribute, value] = key.split('=');
-  return `[${String(attribute)}="${String(value)}"]`;
 }
 
 /**

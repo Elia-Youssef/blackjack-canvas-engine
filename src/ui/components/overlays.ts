@@ -385,6 +385,17 @@ export interface Overlays {
   readonly controls: HTMLElement;
   /** The panel itself. Placed inside the play-surface row. */
   readonly host: HTMLElement;
+  /**
+   * The control that opens one overlay. `BJ-17`, item `D4`.
+   *
+   * Published rather than queried for, because the focus policy has to restore
+   * focus to the control that opened a panel and a selector string in
+   * `src/ui/input.ts` would be a second name for a button this file already
+   * holds. It is also the answer on the engines where a press does not focus
+   * what it pressed, which is WebKit, and where reading `document.activeElement`
+   * on open therefore finds `<body>`.
+   */
+  opener(id: OverlayId): HTMLElement | null;
   /** One frame's sync. `dt` is passed to the open panel and used by none yet. */
   update(state: ChromeState, dt: number): void;
 }
@@ -396,10 +407,12 @@ export function createOverlays(actions: ChromeActions): Overlays {
     statistics: statisticsPanel(),
   };
 
-  const controls = el('nav', {
-    className: 'bj-overlay-controls',
-    attributes: { 'aria-label': 'Panels' },
-    children: OVERLAY_IDS.map((id) =>
+  // Held by id as well as appended, because item `D4` restores focus to the
+  // control that opened a panel and the map is how that control is found again.
+  // A `Map` keeps its insertion order, so the row below is still SPEC 10's.
+  const openers: ReadonlyMap<OverlayId, HTMLButtonElement> = new Map(
+    OVERLAY_IDS.map((id) => [
+      id,
       button(
         OVERLAY_TITLES[id],
         () => {
@@ -407,7 +420,13 @@ export function createOverlays(actions: ChromeActions): Overlays {
         },
         { className: 'bj-button bj-button--quiet', attributes: { 'data-open-overlay': id } },
       ),
-    ),
+    ]),
+  );
+
+  const controls = el('nav', {
+    className: 'bj-overlay-controls',
+    attributes: { 'aria-label': 'Panels' },
+    children: [...openers.values()],
   });
 
   const title = el('h2', { className: 'bj-overlay__title' });
@@ -424,7 +443,15 @@ export function createOverlays(actions: ChromeActions): Overlays {
 
   const host = el('div', {
     className: 'bj-overlay',
-    attributes: { role: 'dialog', 'data-overlay-host': 'true' },
+    // `tabindex="-1"` so the dialog itself can take focus when it opens, which
+    // is item `D4`'s "modals trap focus and restore it on close" and
+    // QUALITY-BAR section 3's "overlays take focus on open". Focus goes to the
+    // panel rather than to its Close button so that what is read on arrival is
+    // the panel's own name. It is not in the tab order: `src/ui/input.ts` is the
+    // only thing that focuses it, and `Tab` from it lands on the first control
+    // inside. `aria-modal` is deliberately absent, for the reason that module's
+    // header gives at length.
+    attributes: { role: 'dialog', 'data-overlay-host': 'true', tabindex: '-1' },
     children: [
       el('div', {
         className: 'bj-overlay__header',
@@ -438,6 +465,7 @@ export function createOverlays(actions: ChromeActions): Overlays {
   return {
     controls,
     host,
+    opener: (id: OverlayId): HTMLElement | null => openers.get(id) ?? null,
     update(state: ChromeState, dt: number): void {
       const open = state.overlay;
       setHidden(host, open === null);

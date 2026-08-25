@@ -7,7 +7,23 @@
  * `B10`, `B11` and `B12` at BJ-8, `J3` at BJ-9, `J5` and `J6` at BJ-10,
  * `I1`, `I2` and `I3` at BJ-11, `H6`, `M5`, `B5` and `B16` at BJ-12,
  * `E3`, `E4` and `E5` at BJ-13, `M1`, `C5`, `C8` and `B15` at BJ-15, `E6`,
- * `E7` and `E9` at BJ-14, and `F1` to `F7` at BJ-16.
+ * `E7` and `E9` at BJ-14, `F1` to `F7` at BJ-16, and `D1`, `D2`, `D4`, `D5`
+ * and `D6` at BJ-17.
+ *
+ * The `BJ-17` block breaks the input surface. Its edits split the one activation
+ * binding into a pointer-only and a keyboard-only path, put the native
+ * `disabled` property back on a greyed control and take away the refusal that
+ * replaced it, break each of the focus policy's four jobs in turn, remove the
+ * focus indicator and then spend it in a colour that cannot clear 3:1, lay the
+ * top bar out where the tab order does not go, plant a context-menu suppression
+ * and a secondary-button binding, and take three browser gestures away, by
+ * declaration, by scroll chaining and by suppression. Its additions are the
+ * six absences item `D1`'s checklist rests on, dropped into the real `src/ui/`
+ * on the `I3` precedent: a mouse-only path, a touch-only path, a forbidden
+ * coordinate, a pointer capture, a secondary binding and a removed indicator.
+ * `D6` is a Demonstration item and closes at the session, so its entries prove
+ * the armour under it can fail rather than the item itself, which is the
+ * treatment `E3`, `E4`, `E5`, `E6` and `F4` already have.
  *
  * The `BJ-16` block breaks the responsive layout: the two width floors and the
  * height threshold against the contract fixture, the width-first rule that the
@@ -173,6 +189,17 @@ const ORIENTATION = browserGate('orientation.spec.ts');
 const SURFACE_SCALE = browserGate('surface-scale.spec.ts');
 const SMALL_VIEWPORT = browserGate('small-viewport.spec.ts');
 const SAFE_AREA = browserGate('safe-area.spec.ts');
+
+// BJ-17's four. Three of the part's five items are graded in the browser, for
+// the reason the chrome and layout items are: an input method, a tab order and a
+// rendered focus ring cannot be seen from a unit test. The fourth spec is the
+// armour under the Demonstration item, on the `F4` and `E6` precedent. The
+// source scans behind item `D1` are unit tested instead, and their entries name
+// `UNIT`.
+const INPUT_PARITY = browserGate('input-parity.spec.ts');
+const KEYBOARD = browserGate('keyboard.spec.ts');
+const SECONDARY_POINTER = browserGate('secondary-pointer.spec.ts');
+const GESTURES = browserGate('gestures.spec.ts');
 
 /**
  * Mutations that edit an existing file.
@@ -4854,11 +4881,15 @@ const EDITS = [
     detectedBy: SURFACE_SCALE,
   },
   {
+    // The anchor is the two lines above the declaration rather than the whole
+    // rule down to its brace. `BJ-17` added `overscroll-behavior` to the same
+    // rule for item `D6` and the old anchor, which ran to the closing brace,
+    // stopped matching; this one names what it breaks and nothing else.
     item: 'F6',
     name: 'the stage stops scrolling, so a magnified surface is clipped',
     file: 'src/ui/chrome.css',
-    find: '  min-width: 0;\n  min-height: 0;\n  overflow: auto;\n}',
-    replace: '  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n}',
+    find: '  min-width: 0;\n  min-height: 0;\n  overflow: auto;',
+    replace: '  min-width: 0;\n  min-height: 0;\n  overflow: hidden;',
     detectedBy: SURFACE_SCALE,
   },
   {
@@ -4959,6 +4990,253 @@ const EDITS = [
     replace: '  top: 0;',
     detectedBy: SAFE_AREA,
   },
+
+  // ------------------------------------------------------------------
+  // BJ-17: input parity, the keyboard, and the two absences.
+  //
+  // D2 and D4 are Critical and are graded in the browser. D1 is Inspection
+  // and its checklist is `docs/review-checklists/input.md`; the scans in it
+  // also run in `tests/unit/input-surface.test.ts`, so the entries that break
+  // them name the unit gate. D5's whole content is an absence, and D6 is a
+  // Demonstration whose mechanism is armoured here on the `F4` precedent.
+  // ------------------------------------------------------------------
+  {
+    // The criterion's second sentence, one half at a time. `pointerdown` is a
+    // real pointer event and a real handler; what it is not is reachable by a
+    // keyboard, and nothing but a keyboard route can tell.
+    item: 'D2',
+    name: 'the activation binds pointerdown, so no keyboard can reach a control',
+    file: 'src/ui/dom.ts',
+    find: "  node.addEventListener('click', () => {",
+    replace: "  node.addEventListener('pointerdown', () => {",
+    detectedBy: INPUT_PARITY,
+  },
+  {
+    item: 'D2',
+    name: 'the activation binds keydown, so no touch can reach a control',
+    file: 'src/ui/dom.ts',
+    find: "  node.addEventListener('click', () => {",
+    replace: "  node.addEventListener('keydown', () => {",
+    detectedBy: INPUT_PARITY,
+  },
+  {
+    // QUALITY-BAR section 3's "kept focusable", and the defect it names by
+    // name. A natively disabled button leaves the tab order, so the census
+    // finds Silver and Gold unreachable by keyboard on the start screen.
+    item: 'D2',
+    name: 'a greyed control goes back to the native disabled property',
+    file: 'src/ui/dom.ts',
+    find: "  setAttribute(node, 'aria-disabled', disabled ? 'true' : null);",
+    replace: '  node.disabled = disabled;',
+    detectedBy: INPUT_PARITY,
+  },
+  {
+    // The other way a control leaves the tab order, and the one the `BJ-17`
+    // review constructed by hand: the control is rendered, is the right size, is
+    // pressable at its own centre and takes focus from a script, and no keyboard
+    // can reach it. It is here because the census that missed it read keyboard
+    // reachability as `focus()` plus an `activeElement` comparison, which
+    // `tabindex="-1"` satisfies. The reading is now tab-order membership plus a
+    // real `Tab` from the control beside it, and the stray audit no longer
+    // short-circuits on the tag before it reads `tabIndex`, so this is required
+    // red by two independent assertions in the same file.
+    item: 'D2',
+    name: 'one action control is taken out of the tab order',
+    file: 'src/ui/components/actions.ts',
+    find: "      { className: 'bj-button', attributes: { 'data-action': row.action } },",
+    replace:
+      '      {\n' +
+      "        className: 'bj-button',\n" +
+      '        attributes:\n' +
+      "          row.action === 'double'\n" +
+      "            ? { 'data-action': row.action, tabindex: '-1' }\n" +
+      "            : { 'data-action': row.action },\n" +
+      '      },',
+    detectedBy: INPUT_PARITY,
+  },
+  {
+    // The other half of the same change. `aria-disabled` does not stop the
+    // platform delivering the press, so the refusal moved into the factory;
+    // without it a greyed control fires an intent the chrome already knows the
+    // machine will refuse, and the refusal reaches the player as a notice.
+    item: 'D4',
+    name: 'a greyed control stops refusing the press it is given',
+    file: 'src/ui/dom.ts',
+    find: '    if (unavailable(node)) {\n      return;\n    }',
+    replace: '    void unavailable;',
+    detectedBy: KEYBOARD,
+  },
+  {
+    item: 'D4',
+    name: 'Tab stops being contained inside an open overlay',
+    file: 'src/ui/input.ts',
+    find: "    if (event.key === 'Tab') {\n      contain(event);\n    }",
+    replace: '    void contain;',
+    detectedBy: KEYBOARD,
+  },
+  {
+    item: 'D4',
+    name: 'Escape stops closing the overlay it is pressed in',
+    file: 'src/ui/input.ts',
+    find: '      options.close();\n      return;',
+    replace: '      return;',
+    detectedBy: KEYBOARD,
+  },
+  {
+    // "Restore it on close", broken the way it would break in practice: focus
+    // goes somewhere reasonable rather than nowhere, which is why the spec
+    // names the control it has to land on rather than merely requiring focus.
+    item: 'D4',
+    name: 'closing an overlay drops focus on the anchor instead of the control that opened it',
+    file: 'src/ui/input.ts',
+    find: '        const back = restoreTo !== null && focusable(restoreTo) ? restoreTo : anchor;',
+    replace: '        const back = anchor;',
+    detectedBy: KEYBOARD,
+  },
+  {
+    item: 'D4',
+    name: 'focus falls to the body when the screen a control was on is replaced',
+    file: 'src/ui/input.ts',
+    find: '    held = null;\n    anchor.focus();',
+    replace: '    held = null;',
+    detectedBy: KEYBOARD,
+  },
+  {
+    // The same custodian, reading the authored attribute instead of the rendered
+    // box. It answers correctly for all five of SPEC 10's screens, which are
+    // toggled with `hidden`, and wrongly for the one control `BJ-16` hides with
+    // a stylesheet: the readout disclosure, which a rotation takes away.
+    item: 'D4',
+    name: 'the focus custodian asks for the hidden attribute rather than a rendered box',
+    file: 'src/ui/input.ts',
+    find: '  return node.getClientRects().length > 0;',
+    replace: "  return node.closest('[hidden]') === null;",
+    detectedBy: KEYBOARD,
+  },
+  {
+    item: 'D4',
+    name: 'the focus indicator is removed from every button and chip',
+    file: 'src/ui/chrome.css',
+    find:
+      '.bj-button:focus-visible,\n' +
+      '.bj-chip:focus-visible {\n' +
+      '  outline: var(--focus-ring-width) var(--focus-ring-style) var(--focus-ring-color);',
+    replace: '.bj-button:focus-visible,\n.bj-chip:focus-visible {\n  outline: none;',
+    detectedBy: KEYBOARD,
+  },
+  {
+    // The contrast half rather than the presence half. The ring is still drawn
+    // and still 2 px wide; it is drawn in the elevated surface colour, which is
+    // 1.1:1 against the ground on the light theme. Only a measurement of the
+    // rendered pixels can tell the difference.
+    item: 'D4',
+    name: 'the focus ring is spent in a colour that cannot clear 3:1',
+    file: 'src/ui/tokens.css',
+    find: '  --focus-ring-color: var(--bj-accent);',
+    replace: '  --focus-ring-color: var(--bj-elevated);',
+    detectedBy: KEYBOARD,
+  },
+  {
+    // "Logical" as a property rather than as an opinion: the top bar keeps its
+    // place in the DOM and is laid out last, so the tab order visits it first
+    // and the page draws it below everything it precedes.
+    item: 'D4',
+    name: 'the top bar is laid out after the rows it comes before in the DOM',
+    file: 'src/ui/chrome.css',
+    find: '.bj-top {\n  display: flex;',
+    replace: '.bj-top {\n  order: 2;\n  display: flex;',
+    detectedBy: KEYBOARD,
+  },
+  {
+    // D5's vacuity guard. The criterion's second clause is "suppressed only
+    // where such a binding is present", and there is no binding, so a
+    // suppression planted anywhere has to turn the spec red or the clause is
+    // satisfied by a test that cannot see.
+    item: 'D5',
+    name: 'the context menu is suppressed on the whole document',
+    file: 'src/ui/input.ts',
+    find: "  document.addEventListener('keydown', onKeyDown);",
+    replace:
+      "  document.addEventListener('keydown', onKeyDown);\n" +
+      "  document.addEventListener('contextmenu', (event) => {\n" +
+      '    event.preventDefault();\n' +
+      '  });',
+    detectedBy: SECONDARY_POINTER,
+  },
+  {
+    // The other half: a secondary binding that really does something. Every
+    // control gains a right-press that performs its action, which is the exact
+    // shape the criterion's first clause is about.
+    item: 'D5',
+    name: 'every control gains a secondary-button binding',
+    file: 'src/ui/dom.ts',
+    find: "  node.addEventListener('click', () => {",
+    replace:
+      "  node.addEventListener('contextmenu', () => {\n" +
+      '    onPress();\n' +
+      '  });\n' +
+      "  node.addEventListener('click', () => {",
+    detectedBy: SECONDARY_POINTER,
+  },
+  {
+    item: 'D6',
+    name: 'the play surface takes every gesture away with touch-action none',
+    file: 'src/ui/chrome.css',
+    find: '.bj-surface {\n  display: block;',
+    replace: '.bj-surface {\n  touch-action: none;\n  display: block;',
+    detectedBy: GESTURES,
+  },
+  {
+    item: 'D6',
+    name: 'the play-surface stage chains its overscroll into the document again',
+    file: 'src/ui/chrome.css',
+    find: '  overscroll-behavior: contain;',
+    replace: '  overscroll-behavior: auto;',
+    detectedBy: GESTURES,
+  },
+  {
+    item: 'D6',
+    name: 'the chip tray chains its overscroll into the back-navigation swipe',
+    file: 'src/ui/chrome.css',
+    find: '  overscroll-behavior-x: contain;',
+    replace: '  overscroll-behavior-x: auto;',
+    detectedBy: GESTURES,
+  },
+  {
+    item: 'D6',
+    name: 'the viewport meta caps pinch zoom and disables user scaling',
+    file: 'index.html',
+    find: '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />',
+    replace:
+      '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, ' +
+      'maximum-scale=1, user-scalable=no" />',
+    detectedBy: GESTURES,
+  },
+  {
+    // The suppression form rather than the declaration form: `touch-action`
+    // stays `auto` and the event is swallowed instead, which no computed style
+    // can see.
+    //
+    // `{ passive: false }` is load bearing, and finding out why was worth the
+    // entry on its own: a document-level `touchstart` listener is passive by
+    // default on all three engines, so the first version of this mutation
+    // called `preventDefault` and the browsers ignored it. The only way to
+    // swallow a touch is to ask for the right to, which is what this plants.
+    item: 'D6',
+    name: 'a touch on the page is swallowed before the browser can act on it',
+    file: 'src/ui/input.ts',
+    find: "  document.addEventListener('keydown', onKeyDown);",
+    replace:
+      "  document.addEventListener('keydown', onKeyDown);\n" +
+      "  document.addEventListener(\n" +
+      "    'touchstart',\n" +
+      '    (event) => {\n' +
+      '      event.preventDefault();\n' +
+      '    },\n' +
+      '    { passive: false },\n' +
+      '  );',
+    detectedBy: GESTURES,
+  },
 ];
 
 /**
@@ -5057,6 +5335,80 @@ const ADDITIONS = [
     name: 'a second DPR application is added outside the surface wrapper',
     file: 'src/render/__mutation__.ts',
     content: 'export function toDevice(width: number, dpr: number): number {\n  return width * dpr;\n}\n',
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // BJ-17: the source scans behind item `D1`'s checklist.
+  //
+  // Every one of these is an addition rather than an edit, because every claim
+  // they break is about an **absence**: that no file under `src/` binds a
+  // mouse-only or touch-only event, reads a pointer coordinate, captures a
+  // pointer, binds a secondary button, takes a gesture away or removes a focus
+  // indicator. A scanner that finds nothing is indistinguishable from a scanner
+  // that cannot see, so a file carrying each is dropped into the real `src/ui/`
+  // and the suite has to go red. It is the treatment `I3`'s two entries already
+  // have, applied to six more absences.
+  // ------------------------------------------------------------------
+  {
+    item: 'D1',
+    name: 'a mouse-only handler path is added to the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content:
+      'export function bind(node: HTMLElement, press: () => void): void {\n' +
+      "  node.addEventListener('mousedown', press);\n" +
+      '}\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'D1',
+    name: 'a touch-only handler path is added to the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content:
+      'export function bind(node: HTMLElement, press: () => void): void {\n' +
+      "  node.addEventListener('touchstart', press);\n" +
+      '}\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'D1',
+    name: 'a forbidden pointer coordinate is read in the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content: 'export const at = (event: MouseEvent): number => event.offsetX;\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'D1',
+    name: 'a pointer capture is added to the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content:
+      'export function grab(node: HTMLElement, pointer: number): void {\n' +
+      '  node.setPointerCapture(pointer);\n' +
+      '}\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'D5',
+    name: 'a secondary-button listener is added to the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content:
+      'export function bind(node: HTMLElement, press: () => void): void {\n' +
+      "  node.addEventListener('contextmenu', press);\n" +
+      '}\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'D6',
+    name: 'a touch-action policy is added to a component stylesheet',
+    file: 'src/ui/__mutation__.css',
+    content: '.panel {\n  touch-action: none;\n}\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'D4',
+    name: 'a focus indicator is removed in a component stylesheet',
+    file: 'src/ui/__mutation__.css',
+    content: '.panel:focus-visible {\n  outline: none;\n}\n',
     detectedBy: UNIT,
   },
 ];

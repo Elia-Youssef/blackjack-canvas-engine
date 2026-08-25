@@ -3,7 +3,7 @@
 The buildable project. Requirements live one directory up in [SPEC.md](../SPEC.md); this file is only how to
 build, run and verify what is here.
 
-**State: parts `BJ-0` through `BJ-16`, with `BJ-16` built last.** The build order puts the DOM shell
+**State: parts `BJ-0` through `BJ-17`, with `BJ-17` built last.** The build order puts the DOM shell
 before the motion that plays inside it, because the composed page is what motion is graded on.
 The toolchain, the CI gates, the design tokens, and the whole
 headless game: cards, hand evaluation, the seeded stream, the shoe, the dealer, settlement, the wallet
@@ -64,7 +64,21 @@ zoom. The play-surface size setting joins Speed in Settings at 100, 125, 150 and
 the logical-to-CSS scale by exactly that factor and taking effect immediately, mid-round included;
 browser zoom shrinks the canvas box with the viewport and magnifies nothing, which is why the setting
 exists. Its persistence is not built here, for the same reason Speed's is not: both wait for `BJ-20`.
-Persistence is still not wired: nothing imports `src/storage/`, because `I4` and `I5` grade it there. See
+`BJ-17` made the page operable by every input method. Every action in the game, all eighteen of SPEC 10's
+intents and the five settings the chrome offers beside them, is reachable by pointer, by touch and by
+keyboard through **one** binding: `click`, attached once in `src/ui/dom.ts`, which is the only event a
+mouse press, a touch tap and `Enter` or `Space` on a focused control all produce. There is no mouse-only
+and no touch-only handler anywhere, no pointer coordinate is read at all, and no gesture is captured, so
+pinch zoom, panning, pull-to-refresh and the back-navigation edge swipe are all still the browser's; the
+two containers that scroll contain their own overscroll so a pan inside the game cannot chain out into one
+of them. A control that becomes unavailable is now greyed **in place** with `aria-disabled` and stays
+focusable, which is what stops a phase change taking the player's caret with it, and the press it is given
+is refused in one place rather than in each component. `src/ui/input.ts` is the one document-level
+listener: `Escape` closes an open overlay, `Tab` is contained inside one while it is open and focus
+returns to the control that opened it, and where a screen is replaced under the caret focus lands on the
+controls row rather than on the body. The focus indicator is measured in rendered screenshot pixels rather
+than read off the stylesheet, on every control on the screen and on all three engines. Persistence is
+still not wired: nothing imports `src/storage/`, because `I4` and `I5` grade it there. See
 [../../docs/BUILD-PLAN.md](../../docs/BUILD-PLAN.md) for what fills the rest and in what order.
 
 ## Prerequisites
@@ -128,7 +142,7 @@ npx playwright install chromium firefox webkit
 | `npm run typecheck` | `tsc --noEmit`, strict, plus `noUncheckedIndexedAccess` and `exactOptionalPropertyTypes` |
 | `npm run lint` | ESLint, including the `core/` boundary and the `Math.random()` ban. Item `M3` |
 | `npm run test` | Vitest. Includes the boundary fixture assertion, the token layer against its two specs, hand evaluation against an independently written evaluator, the shuffle against a measured uniformity band, the dealer's policy against a hit-soft-17 control that must disagree on exactly the soft 17 hands, the peek result against structural leak assertions on both branches, the settlement ladder against three reordered ladders that must disagree on exactly the equal-naturals, both-bust and surrendered-against-a-natural cases and nowhere else, the tables and betting rules against eleven controls: a threshold-blind and an affordability-blind entry predicate, a lowest-first launch fallback, an unlock read off the current balance and one read off the balance plus what is still committed, a clamping chip tap, an unfloored Max and a Max that forgot the balance, both misreadings of Repeat, and a fabricated step list the conservation checker has to flag, and the phase machine over all 187 intent-and-phase cells against three misread legality tables that must disagree on exactly 170, 4 and 40 of them and a branch that peeks before it offers, which must disagree on exactly the Ace, the full round through the machine with split, double, surrender, insurance and even money each driven and each rejected by layer, the coach table against hand-written reference charts over all 8 rule combinations, 3,040 cells compared, the counters, the eleven milestones and the fifty-round history against double-count and naive-reload traps, and the versioned storage document against 73 corrupt fixtures, a real migration walk, a throwing write and a store that refuses to exist, each booting the game anyway, and the three BJ-12 harnesses: a 50,000-round soak auditing the four-term identity between every two observations with the three-term form failing as its negative control and the rebuild forced and proven to return no in-play card, seeded round transcripts reproduced across runs and across both shoe sizes with a sibling consumer proven unable to shift the deal, and the same seeded rounds transcribed at 15, 30, 60, 144, 240 and 1000 fps against a derived wall-clock schedule that must reject a per-frame stepper, with the sequence and outcomes unchanged on an unstable clock with zero and negative deltas, and the BJ-13 render armour against a recording context: the pip layout table held to core's pip values with every layout symmetric under a half turn except the 7, both corner indices with the far one rotated, the face-down card proven to draw nothing it knows, the wager decomposition checked against an independent minimiser, the stack offset and per-denomination fills, the felt's four printed lines per table with the bake deterministic to the instruction and the per-frame path a single blit, the DPR backing store with fractional ratios, the two-pass frame order with explicit state at each pass top, and a directory scan keeping DPR arithmetic, clocks and randomness out of every render module but the surface wrapper |
-| `npm run test:browser` | Playwright on Chromium, Firefox and WebKit against the built `dist/`. From BJ-13 it also rasterises the play surface for real: the test-time harness bundle draws the three demonstration scenes on a page canvas and the suite reads pixels back, holding the felt, rail and print to their tokens, the card margin to a measured 3:1 against all three felts, every denomination of the 680 wager visible in one stack, the backing store to integer and fractional device pixel ratios, and the felt bake byte-identical across two runs on each engine. From BJ-15 it also drives the shipped chrome: the Bronze betting screen through its own controls with nothing injected, and, through a test-time harness that never ships, a table SPEC 6 has not unlocked and a known deal, so the ceiling, the disabled chip, the floored Max, the blocked Deal and the four-term identity are all measured, every one of SPEC 11's fourteen readouts is required to have a rendered box that no open overlay intersects, and SPEC 12's round result is checked field by field against the round that actually happened . From BJ-14 it also grades the motion: one seeded round is driven under prefers-reduced-motion and again without it, every frame of both sampled, with no tween in flight and no lagging balance under the flag and both present without it, the overlay, panel and button durations read from the shipped stylesheet in each mode, and the screen sequence and round result required identical; the Speed setting is pressed through the Settings panel and the whole pacing table required to be its Normal table times 0.6 in both motion modes, with a real phase timed on the wall clock in the shipped page and a mid-round switch measured inside one round; and both arms of the peek are dealt through the demonstration hook and timed to the same constant. From BJ-16 it also grades the layout: all four breakpoints are measured at the betting screen and at the player's turn with no region clipped, no pair of controls overlapping and every control clickable at its own centre, the page is swept for horizontal scroll at twenty-five widths from 320 px upward at two heights and on three screens, portrait is compared against wide for the same type size and a regrouped bar, a device is turned mid-round with the machine's whole readout and a page sentinel required to survive it, the play-surface size setting is pressed through Settings and the canvas box required to be exactly its factor larger at every breakpoint with browser zoom required to magnify nothing, and a whole round is played at 320 by 256 with both bars unstuck |
+| `npm run test:browser` | Playwright on Chromium, Firefox and WebKit against the built `dist/`. From BJ-13 it also rasterises the play surface for real: the test-time harness bundle draws the three demonstration scenes on a page canvas and the suite reads pixels back, holding the felt, rail and print to their tokens, the card margin to a measured 3:1 against all three felts, every denomination of the 680 wager visible in one stack, the backing store to integer and fractional device pixel ratios, and the felt bake byte-identical across two runs on each engine. From BJ-15 it also drives the shipped chrome: the Bronze betting screen through its own controls with nothing injected, and, through a test-time harness that never ships, a table SPEC 6 has not unlocked and a known deal, so the ceiling, the disabled chip, the floored Max, the blocked Deal and the four-term identity are all measured, every one of SPEC 11's fourteen readouts is required to have a rendered box that no open overlay intersects, and SPEC 12's round result is checked field by field against the round that actually happened . From BJ-14 it also grades the motion: one seeded round is driven under prefers-reduced-motion and again without it, every frame of both sampled, with no tween in flight and no lagging balance under the flag and both present without it, the overlay, panel and button durations read from the shipped stylesheet in each mode, and the screen sequence and round result required identical; the Speed setting is pressed through the Settings panel and the whole pacing table required to be its Normal table times 0.6 in both motion modes, with a real phase timed on the wall clock in the shipped page and a mid-round switch measured inside one round; and both arms of the peek are dealt through the demonstration hook and timed to the same constant. From BJ-16 it also grades the layout: all four breakpoints are measured at the betting screen and at the player's turn with no region clipped, no pair of controls overlapping and every control clickable at its own centre, the page is swept for horizontal scroll at twenty-five widths from 320 px upward at two heights and on three screens, portrait is compared against wide for the same type size and a regrouped bar, a device is turned mid-round with the machine's whole readout and a page sentinel required to survive it, the play-surface size setting is pressed through Settings and the canvas box required to be exactly its factor larger at every breakpoint with browser zoom required to magnify nothing, and a whole round is played at 320 by 256 with both bars unstuck. From BJ-17 it also grades the input: every one of the game's twenty-three actions is driven three times, once by a real mouse press, once by a real touch tap and once by a real key, with the machine as the witness for each, and every control on all six of SPEC 10's screens is required to take focus, to answer a press at its own centre and to be big enough for a finger; the tab order is compared against the DOM order and the DOM order against reading order at two breakpoints, Enter and Space are pressed on every kind of control, Escape is required to close an overlay and to change nothing when none is open, Tab is required to stay inside an open panel and focus to return to the control that opened it, and the focus indicator is measured in screenshot pixels against the background it is drawn over on every control on the screen. A real right press and a real middle press on four kinds of target are required to change nothing and to leave the context menu to the browser, and the gesture policy is read off the rendered page: no computed touch-action that removes a gesture, no cap on pinch zoom in the viewport meta, the two designated scrollers containing their own overscroll, and no touch or wheel suppressed |
 | `npm run verify:build` | Two builds, hashed and compared. Item `A6`. Writes `artifacts/reports/build.md` |
 | `npm run verify:mutations` | Not a gate. Breaks every gate above, one mutation per property it protects, and requires each break to be caught |
 
@@ -224,6 +238,7 @@ BlackJack/BlackJack/
       breakpoints.ts         the four breakpoints, the sticky threshold, the surface plan. F1, F6
       loop.ts                the frame loop: timestamps in, one delta per frame out
       motion.ts              the one place the platform is asked for prefers-reduced-motion. Item E7
+      input.ts               the one document listener: Escape, the focus trap, focus custody. D4
       chrome.ts              the DOM sync step of DESIGN 3, and where components are mounted
       components/            readouts, betting, actions, screens, round result, overlays
     storage/                 the saved document and its store. Items I1, I2, I3. Wired at BJ-20
@@ -241,6 +256,7 @@ BlackJack/BlackJack/
       render-felt.test.ts    E5 armour: the printed lines, rail, grain, the one-blit frame
       render-surface.test.ts the DPR store, the pass order, the render directory scans
       motion.test.ts         the tween shapes, the Speed multiplier on the machine, the flash ceiling
+      input-surface.test.ts  D1's scans: one handler path, no capture, no gesture taken
       reference/             second implementations, written from the spec, never importing src/
       support/               stacked shoes, storage fixtures, and the recording canvas context
     browser/                 Playwright
@@ -251,8 +267,15 @@ BlackJack/BlackJack/
       reduced-motion.spec.ts E7: every animation removed, sequence and outcome identical
       speed-setting.spec.ts  E9: every pacing constant times 0.6, in both motion modes
       motion-demo.spec.ts    E6 armour: both arms of the peek, timed and compared
+      input-parity.spec.ts   D2: every action driven by pointer, by touch and by keyboard
+      keyboard.spec.ts       D4: tab order, Enter and Space, Escape, the trap, the ring in pixels
+      secondary-pointer.spec.ts  D5: the right and middle buttons are bound to nothing
+      gestures.spec.ts       D6 armour: touch-action, overscroll, the viewport meta, no suppression
       support/render-demo.ts the demonstration scenes, bundled at test time, never shipped
       support/motion-demo.ts the E6 capture hook: the real game at a chosen seed, never shipped
+      support/controls.ts    the control census, the three presses, and the focus walk
+      support/action-seeds.ts  seeds searched for the split round and the bust-out, headlessly
+      support/png.ts         a PNG reader, so a spec can measure a rendered focus ring
     lint/fixtures/           the deliberately violating fixture, and its controls
   tools/
     eslint-plugin-core-boundary/
@@ -265,6 +288,9 @@ BlackJack/BlackJack/
     engine/                  extracted from this game at ENG-1. Deliberately empty
 ```
 
-Three evidence artifacts are written outside this directory, to the repository root, because
+Five evidence artifacts are written outside this directory, to the repository root, because
 [../ACCEPTANCE.md](../ACCEPTANCE.md) section 5 is where the evidence index lives and it puts them there:
-`artifacts/reports/build.md`, `docs/review-checklists/build.md` and `docs/review-checklists/tokens.md`.
+`artifacts/reports/build.md`, `docs/review-checklists/build.md`, `docs/review-checklists/tokens.md`,
+`docs/review-checklists/architecture.md` (item `M1`, written at `BJ-15`) and
+`docs/review-checklists/input.md` (item `D1`, written at `BJ-17`). The count was stale by one before this
+part: `architecture.md` has existed since `BJ-15` and this sentence still said three.

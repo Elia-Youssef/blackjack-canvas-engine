@@ -683,6 +683,11 @@ export function boot(options: BootOptions = {}): Game {
     dispose(): void {
       loop.stop();
       preference.dispose();
+      // The chrome's own listeners come off before its shell does. `BJ-17`: the
+      // focus policy is the one thing in the chrome that listens outside the
+      // shell, so a game disposed by a second `boot` would otherwise leave an
+      // `Escape` handler behind for a page it no longer owns.
+      chrome.dispose();
       chrome.shell.root.remove();
       if (current === game) {
         current = null;
