@@ -810,6 +810,71 @@ function scene(overrides: Partial<SceneState>): SceneState {
 /** 300 is three chips of one denomination, so the top numeral is unambiguous. */
 const FLIGHT_WAGER = 300;
 
+describe('settled play-surface rendering', () => {
+  it('keeps a separated baked felt off the animated canvas', () => {
+    const foreground = createStyleFreeCanvas();
+    const background = createStyleFreeCanvas();
+    const surface = createPlaySurface({
+      canvas: foreground.canvas,
+      offscreen: () => background.canvas,
+      sizing: { width: 800, height: 450, dpr: 1 },
+      separateFelt: true,
+    });
+
+    surface.render(scene({ pendingWager: FLIGHT_WAGER }), 0);
+
+    expect(background.recording.calls('fill').length, 'the felt was not baked').toBeGreaterThan(0);
+    expect(foreground.recording.calls('drawImage')).toHaveLength(0);
+    expect(foreground.recording.calls('clearRect')).toHaveLength(1);
+    expect(foreground.recording.calls('fill').length, 'the moving scene did not draw').toBeGreaterThan(0);
+  });
+
+  it('reuses identical settled pixels instead of repainting every frame', () => {
+    const { surface, recording } = recordingSurface();
+    const state = scene({});
+
+    surface.render(state, 0);
+    expect(recording.entries.length, 'the first frame did not draw').toBeGreaterThan(0);
+    recording.entries.length = 0;
+    surface.render(state, 1 / 60);
+
+    expect(recording.entries).toHaveLength(0);
+    expect(surface.tweensInFlight()).toBe(0);
+  });
+
+  it('redraws a changed scene and an identical scene after resize', () => {
+    const { surface, recording } = recordingSurface();
+    const state = scene({});
+    const changed = scene({ felt: 'silver', limits: { minimum: 50, maximum: 500 } });
+
+    surface.render(state, 0);
+    recording.entries.length = 0;
+    surface.render(changed, 1 / 60);
+    expect(recording.entries.length, 'a state change did not draw').toBeGreaterThan(0);
+
+    recording.entries.length = 0;
+    surface.resize({ width: 801, height: 451, dpr: 1 });
+    surface.render(changed, 1 / 60);
+    expect(recording.entries.length, 'a resize did not redraw cleared pixels').toBeGreaterThan(0);
+  });
+
+  it('draws the final tween frame before reusing its settled pixels', () => {
+    const { surface, recording } = recordingSurface();
+    const state = scene({ pendingWager: FLIGHT_WAGER });
+
+    surface.render(state, 0);
+    expect(surface.tweensInFlight()).toBeGreaterThan(0);
+    recording.entries.length = 0;
+    surface.render(state, PACING.chipSlide);
+    expect(recording.entries.length, 'the final tween frame did not draw').toBeGreaterThan(0);
+    expect(surface.tweensInFlight()).toBe(0);
+
+    recording.entries.length = 0;
+    surface.render(state, 1 / 60);
+    expect(recording.entries).toHaveLength(0);
+  });
+});
+
 describe('E6 armour: no numeral is drawn under a rotated transform', () => {
   it('finds one when there is one, and none when there is not', () => {
     // The can-see control. A walker that never reported anything would report a

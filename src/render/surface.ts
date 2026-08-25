@@ -60,6 +60,46 @@ export interface SurfaceSizing {
   readonly dpr: number;
 }
 
+/**
+ * QUALITY-BAR section 4's play-surface size, in percent. `BJ-16`, item `F6`.
+ *
+ * SPEC 14: "Play-surface size is not a duplicate of browser zoom. Browser zoom
+ * shrinks the canvas CSS box with the viewport, so the play surface redraws at
+ * the same physical size and magnifies nothing. This setting raises the
+ * logical-to-CSS scale instead, and it is the only path a low-vision player has
+ * to a larger card." The scale it raises is the one `SurfaceSizing` above
+ * carries, which is why the setting is declared here rather than beside the
+ * control that offers it: this module is the logical-to-CSS seam.
+ *
+ * **The same union is declared a second time, in `src/storage/document.ts`, and
+ * that is deliberate rather than drift.** SPEC 13 persists the setting, so the
+ * document had to name it before any presentation module existed;
+ * `src/storage/` may not import `src/ui/` or `src/render/` and neither may
+ * import `src/storage/` before `BJ-20` wires the reload flows, so there is no
+ * edge either half could take today without inventing one this build has spent
+ * four parts keeping absent. `BJ-14`'s route for `Speed` is not available here:
+ * `Speed` went to `core/table.ts` because the machine reads it and storage
+ * already imported that module, and nothing in `core/` reads a CSS scale.
+ * `tests/unit/layout-breakpoints.test.ts` pins the two declarations to each
+ * other, value for value, so a change to one is a red suite rather than a
+ * silent disagreement, and `BJ-20` collapses them by importing this one.
+ */
+export type SurfaceSize = 100 | 125 | 150 | 200;
+
+/** The four SPEC 14 and QUALITY-BAR section 4 both list, in their order. */
+export const SURFACE_SIZES = [100, 125, 150, 200] as const satisfies readonly SurfaceSize[];
+
+/** 100 percent is the scale the layout would choose on its own. */
+export const DEFAULT_SURFACE_SIZE: SurfaceSize = 100;
+
+/** What a `SurfaceSize` is a percentage of, so the conversion is written once. */
+export const SURFACE_SIZE_WHOLE = 100;
+
+/** A `SurfaceSize` as the multiplier it applies to the logical-to-CSS scale. */
+export function surfaceSizeFactor(size: SurfaceSize): number {
+  return size / SURFACE_SIZE_WHOLE;
+}
+
 /** A sized surface. Drawing on `ctx` is in logical units from here on. */
 export interface Surface {
   readonly canvas: SurfaceCanvas;

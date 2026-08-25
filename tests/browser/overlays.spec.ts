@@ -42,6 +42,14 @@ import {
   waitForPhase,
 } from './support/game';
 
+/**
+ * This file grades `C5` at Playwright's default 1280 x 720 viewport, which is the
+ * `wide` breakpoint. That matters from `BJ-16` onward: below 768 px the narrow
+ * top bar keeps three of SPEC 11's fourteen readouts and puts the other eleven
+ * behind a disclosure, so the `toBeVisible` assertions below are width
+ * dependent by design. `tests/browser/portrait.spec.ts` grades the narrow
+ * arrangement and requires all fourteen to be reachable there.
+ */
 const SEED = 53;
 
 interface Box {

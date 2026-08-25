@@ -171,6 +171,47 @@ export interface SceneState {
   readonly motion: Motion;
 }
 
+/** Whether two immutable scene snapshots describe the same visible picture. */
+function sameCards(left: readonly Card[], right: readonly Card[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((held, index) => {
+      const other = right[index];
+      return other !== undefined && held.rank === other.rank && held.suit === other.suit;
+    })
+  );
+}
+
+/**
+ * Whether a new scene can reuse the settled pixels already on the canvas.
+ *
+ * `SceneState` is assembled from immutable readouts, so retaining the previous
+ * value is safe. The comparison is structural because the composition root
+ * creates the hand wrappers afresh each frame.
+ */
+function sameScene(left: SceneState, right: SceneState): boolean {
+  return (
+    left.felt === right.felt &&
+    left.limits.minimum === right.limits.minimum &&
+    left.limits.maximum === right.limits.maximum &&
+    left.dealerConcealed === right.dealerConcealed &&
+    left.pendingWager === right.pendingWager &&
+    left.motion.reducedMotion === right.motion.reducedMotion &&
+    left.motion.speed === right.motion.speed &&
+    sameCards(left.dealer, right.dealer) &&
+    left.hands.length === right.hands.length &&
+    left.hands.every((hand, index) => {
+      const other = right.hands[index];
+      return (
+        other !== undefined &&
+        hand.wager === other.wager &&
+        hand.won === other.won &&
+        sameCards(hand.cards, other.cards)
+      );
+    })
+  );
+}
+
 /**
  * Whether a baked felt still matches what a frame wants.
  *
@@ -629,14 +670,23 @@ export interface PlaySurfaceOptions {
    */
   readonly offscreen: () => SurfaceCanvas;
   readonly sizing: SurfaceSizing;
+  /**
+   * Keep the baked felt on the supplied offscreen canvas instead of blitting
+   * it into the animated surface. The browser shell stacks that static canvas
+   * behind the transparent scene so motion never recopies a full-size table.
+   */
+  readonly separateFelt?: boolean;
 }
 
 /** Build the play surface. The felt bakes on the first frame, not here. */
 export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
   const surface = createSurface(options.canvas, options.sizing);
+  const separateFelt = options.separateFelt ?? false;
   let felt: FeltLayer | null = null;
   const memory: SceneMemory = newMemory();
   let inFlight = 0;
+  let rendered: SceneState | null = null;
+  let resized = false;
 
   function feltFor(state: SceneState): FeltLayer {
     const wanted: FeltSpec = {
@@ -708,6 +758,9 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
 
     resize(sizing: SurfaceSizing): void {
       surface.resize(sizing);
+      // Resizing a canvas clears its backing store. Even an otherwise identical
+      // settled scene therefore owes one fresh draw at the new dimensions.
+      resized = true;
     },
 
     tweensInFlight: () => inFlight,
@@ -827,7 +880,8 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
         }
       }
 
-      const layers: ScenePasses[] = [feltFor(state)];
+      const bakedFelt = feltFor(state);
+      const layers: ScenePasses[] = separateFelt ? [] : [bakedFelt];
       const flipAt = trackFlip(state, dt);
       const pulse = trackPulse(state, dt);
       if (pulse > 0) {
@@ -906,9 +960,25 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
       prune(memory.cards, seenCards);
       prune(memory.chips, seenChips);
       pruneEasings(memory.widths, seenWidths);
+      const wasInFlight = inFlight;
       inFlight = moving;
 
-      renderFrame(surface, layers);
+      // The simulation still receives every frame, but a settled picture does
+      // not need to clear and repaint millions of identical Retina pixels sixty
+      // times a second. The previous in-flight count keeps the final tween frame
+      // drawable after `moving` reaches zero; a resize is independently dirty
+      // because changing the backing-store dimensions clears the canvas.
+      if (
+        resized ||
+        rendered === null ||
+        !sameScene(rendered, state) ||
+        wasInFlight > 0 ||
+        inFlight > 0
+      ) {
+        renderFrame(surface, layers);
+        rendered = state;
+        resized = false;
+      }
     },
   };
 }

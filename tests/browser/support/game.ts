@@ -374,6 +374,453 @@ export function phaseSeconds(log: readonly PhaseTiming[], phase: PhaseKind): num
   return (next.at - here.at) / 1000;
 }
 
+// ---------------------------------------------------------------------------
+// BJ-16: the layout probe, and the boxes the responsive specs measure
+// ---------------------------------------------------------------------------
+
+/** What the last frame resolved for the layout. Only on a harness-booted page. */
+export async function layoutProbe(page: Page): Promise<ReturnType<GameHarness['layout']>> {
+  return page.evaluate(() => {
+    const api = window.__bjGame;
+    if (api === undefined) {
+      throw new Error('no harness on this page');
+    }
+    return api.layout();
+  });
+}
+
+/** A rendered box, in CSS pixels, as `boundingBox` reports one. */
+export interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** The box a locator renders, failing loudly when it has none. */
+export async function boxOf(locator: Locator, label: string): Promise<Box> {
+  const box = await locator.boundingBox();
+  expect(box, `${label} has a rendered box`).not.toBeNull();
+  if (box === null) {
+    throw new Error(`${label} has no box`);
+  }
+  return box;
+}
+
+/** True when two rendered boxes share any area at all. */
+export function intersects(a: Box, b: Box): boolean {
+  return a.x < b.x + b.width && b.x < a.x + a.width && a.y < b.y + b.height && b.y < a.y + a.height;
+}
+
+/**
+ * What the page can say about its own scrolling and its own viewport.
+ *
+ * One evaluate rather than several, so every number in it describes the same
+ * layout: a spec that read the scroll width and the viewport width in two round
+ * trips could straddle a resize and compare two different pages.
+ */
+export interface PageMetrics {
+  readonly innerWidth: number;
+  readonly innerHeight: number;
+  readonly clientWidth: number;
+  readonly clientHeight: number;
+  readonly scrollWidth: number;
+  readonly scrollHeight: number;
+  readonly bodyScrollWidth: number;
+  /**
+   * How far each chrome container overflows its own box, horizontally.
+   *
+   * The page is not the only place a horizontal overflow can hide. A container
+   * whose computed `overflow-x` is a scrolling value absorbs its own overflow
+   * and the document never widens, which is correct for the two containers that
+   * are designated scrollers and is a defect one level down for every other one.
+   * The `BJ-16` ledger measured exactly that: a row that stopped wrapping went
+   * undetected against a reading of the document alone.
+   */
+  readonly containers: readonly { readonly selector: string; readonly overflowX: number }[];
+  readonly breakpoint: string;
+  readonly stickyBars: string;
+  readonly surfaceSize: string;
+}
+
+/** The containers that may scroll horizontally by design. DESIGN section 4. */
+export const DESIGNED_SCROLLERS = ['.bj-chips', '.bj-stage'];
+
+export async function pageMetrics(page: Page): Promise<PageMetrics> {
+  return page.evaluate(() => {
+    const root = document.documentElement;
+    const shell = document.querySelector('.bj-shell');
+    // Every match, not the first: `.bj-screen` matches five screens of which
+    // four are hidden at any moment, and `.bj-actions` is hidden at the betting
+    // phase, so a first-match reading measured a display:none box every run and
+    // said nothing. The widest overflow among the boxes that are actually
+    // rendered is the reading that means something.
+    const containers: { selector: string; overflowX: number }[] = [];
+    for (const selector of [
+      '.bj-shell',
+      '.bj-top',
+      '.bj-readouts',
+      '.bj-controls',
+      '.bj-betting',
+      '.bj-actions',
+      '.bj-screen',
+      '.bj-overlay',
+    ]) {
+      let widest: number | null = null;
+      for (const node of document.querySelectorAll(selector)) {
+        const box = node.getBoundingClientRect();
+        if (box.width <= 0 || box.height <= 0) {
+          continue;
+        }
+        const overflow = node.scrollWidth - node.clientWidth;
+        widest = widest === null ? overflow : Math.max(widest, overflow);
+      }
+      if (widest !== null) {
+        containers.push({ selector, overflowX: widest });
+      }
+    }
+    return {
+      innerWidth: window.innerWidth,
+      innerHeight: window.innerHeight,
+      clientWidth: root.clientWidth,
+      clientHeight: root.clientHeight,
+      scrollWidth: root.scrollWidth,
+      scrollHeight: root.scrollHeight,
+      bodyScrollWidth: document.body.scrollWidth,
+      containers,
+      breakpoint: shell?.getAttribute('data-breakpoint') ?? '',
+      stickyBars: shell?.getAttribute('data-sticky-bars') ?? '',
+      surfaceSize: shell?.getAttribute('data-layout-size') ?? '',
+    };
+  });
+}
+
+/**
+ * Resize the viewport and wait until the page has settled on the new shape.
+ *
+ * Two frames, not one, and the reason is in `main.ts`: the breakpoint attribute
+ * is written in the chrome sync at the end of a frame and the surface is planned
+ * from the box at the top of the next one, so the canvas reaches its new size
+ * one frame after the attribute does. Waiting on the attribute alone would read
+ * the previous frame's canvas.
+ */
+export async function resizeTo(page: Page, width: number, height: number): Promise<void> {
+  await page.setViewportSize({ width, height });
+  await settle(page);
+}
+
+/** Wait for three animation frames, which is two more than any single update. */
+export async function settle(page: Page): Promise<void> {
+  await page.evaluate(
+    async () =>
+      new Promise<void>((resolve) => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(() => {
+            requestAnimationFrame(() => {
+              resolve();
+            });
+          });
+        });
+      }),
+  );
+}
+
+/** The play surface, as an element. Its CSS box is what item `F6` measures. */
+export function surface(page: Page): Locator {
+  return page.locator('.bj-surface');
+}
+
+/**
+ * The surface's CSS box and its backing store, read off the element itself.
+ *
+ * The shipped page's own witness for item `F6`: the CSS box is the logical-to
+ * -CSS scale times the framing, and the backing store is that times the device
+ * pixel ratio, so the pair is enough to tell a magnified surface from a zoomed
+ * one with nothing injected into the page.
+ */
+export interface SurfaceMetrics {
+  readonly cssWidth: number;
+  readonly cssHeight: number;
+  readonly storeWidth: number;
+  readonly storeHeight: number;
+  readonly dpr: number;
+}
+
+export async function surfaceMetrics(page: Page): Promise<SurfaceMetrics> {
+  return page.evaluate(() => {
+    const canvas = document.querySelector('canvas.bj-surface');
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error('no play surface on this page');
+    }
+    const box = canvas.getBoundingClientRect();
+    return {
+      cssWidth: box.width,
+      cssHeight: box.height,
+      storeWidth: canvas.width,
+      storeHeight: canvas.height,
+      dpr: window.devicePixelRatio,
+    };
+  });
+}
+
+/** One control, as the page renders it right now. `BJ-16`, item `F1`. */
+export interface ControlReport {
+  /** Whatever names the control: its data attribute, or its text. */
+  readonly key: string;
+  readonly tag: string;
+  readonly box: Box;
+  /**
+   * What a click at the control's centre would land on.
+   *
+   * `self` is the control or something inside it, `other` is a different
+   * element covering it, and `none` is a centre outside the viewport. The last
+   * two are both item `F1`'s "unreachable control", and they are different
+   * defects: one is a stacking mistake and the other is an overflow.
+   */
+  readonly hit: 'self' | 'other' | 'none';
+  /** Whether the control's own text overflows the box it is drawn in. */
+  readonly textClipped: boolean;
+}
+
+/** Everything one viewport can say about its own layout. */
+export interface LayoutReport {
+  readonly breakpoint: string;
+  readonly stickyBars: string;
+  readonly surfaceSize: string;
+  readonly phase: string;
+  readonly inner: { readonly width: number; readonly height: number };
+  readonly doc: {
+    readonly scrollWidth: number;
+    readonly clientWidth: number;
+    readonly scrollHeight: number;
+    readonly clientHeight: number;
+  };
+  readonly regions: LayoutRegions;
+  readonly controls: readonly ControlReport[];
+  readonly scrollers: Record<
+    string,
+    {
+      readonly scrollWidth: number;
+      readonly clientWidth: number;
+      readonly scrollHeight: number;
+      readonly clientHeight: number;
+    }
+  >;
+  readonly styles: LayoutStyles;
+  readonly readouts: readonly {
+    readonly key: string;
+    readonly visible: boolean;
+    readonly box: Box;
+  }[];
+}
+
+/**
+ * The rendered box of each region of the shell, or `null` where there is none.
+ *
+ * Named fields rather than an index signature, so a spec that asks for a region
+ * this helper does not measure is a type error rather than an `undefined` two
+ * assertions later.
+ */
+export interface LayoutRegions {
+  readonly shell: Box | null;
+  readonly top: Box | null;
+  readonly body: Box | null;
+  readonly stage: Box | null;
+  readonly surface: Box | null;
+  readonly controls: Box | null;
+}
+
+/** The computed values the responsive specs compare across breakpoints. */
+export interface LayoutStyles {
+  readonly topPosition: string;
+  readonly controlsPosition: string;
+  readonly readoutFontSize: string;
+  readonly buttonFontSize: string;
+  readonly buttonMinHeight: string;
+  readonly summaryDisplay: string;
+  readonly shellPaddingBottom: string;
+  readonly shellPaddingTop: string;
+  readonly shellPaddingLeft: string;
+  readonly shellPaddingRight: string;
+}
+
+/**
+ * Measure the whole layout in one round trip.
+ *
+ * One evaluate rather than one per assertion, and that is not an optimisation:
+ * the page is running a frame loop, so two round trips can straddle a frame and
+ * a spec would then be comparing boxes from two different layouts. Everything
+ * below is read from one synchronous pass over one rendered page.
+ *
+ * The three specs that share it, `breakpoints`, `portrait` and `small-viewport`,
+ * each assert a different subset; nothing here decides anything.
+ */
+export async function layoutReport(page: Page): Promise<LayoutReport> {
+  return page.evaluate(() => {
+    const root = document.documentElement;
+    const shell = document.querySelector('.bj-shell');
+    const rect = (selector: string): Box | null => {
+      const node = document.querySelector(selector);
+      if (node === null) {
+        return null;
+      }
+      const box = node.getBoundingClientRect();
+      return { x: box.x, y: box.y, width: box.width, height: box.height };
+    };
+
+    /**
+     * Whether an element is actually being rendered.
+     *
+     * The closed-disclosure arm is not belt and braces. A closed `<details>`
+     * skips its contents through `content-visibility`, and a skipped subtree
+     * keeps the geometry it had when it was last laid out: Chromium answers
+     * `getBoundingClientRect` with the stale box, `display` with `flex` and
+     * `visibility` with `visible` for a readout nobody can see. Asking the
+     * disclosure instead is the one reading that is true on every engine.
+     */
+    const visible = (node: Element): boolean => {
+      const disclosure = node.closest('details');
+      if (disclosure !== null && !disclosure.open && node.closest('summary') === null) {
+        return false;
+      }
+      const box = node.getBoundingClientRect();
+      if (box.width <= 0 || box.height <= 0) {
+        return false;
+      }
+      const style = getComputedStyle(node);
+      return style.visibility !== 'hidden' && style.display !== 'none';
+    };
+
+    const nameOf = (node: Element): string => {
+      for (const attribute of [
+        'data-control',
+        'data-action',
+        'data-chip',
+        'data-open-overlay',
+        'data-table',
+        'data-coach-mode',
+        'data-speed',
+        'data-surface-size',
+      ]) {
+        const value = node.getAttribute(attribute);
+        if (value !== null) {
+          return `${attribute}=${value}`;
+        }
+      }
+      return (node.textContent ?? '').trim();
+    };
+
+    const controls: ControlReport[] = [];
+    for (const node of document.querySelectorAll('button, summary')) {
+      if (!visible(node)) {
+        continue;
+      }
+      const box = node.getBoundingClientRect();
+      const centreX = box.x + box.width / 2;
+      const centreY = box.y + box.height / 2;
+      const inside =
+        centreX >= 0 && centreY >= 0 && centreX <= window.innerWidth && centreY <= window.innerHeight;
+      const hitNode = inside ? document.elementFromPoint(centreX, centreY) : null;
+      controls.push({
+        key: nameOf(node),
+        tag: node.tagName.toLowerCase(),
+        box: { x: box.x, y: box.y, width: box.width, height: box.height },
+        hit: !inside ? 'none' : hitNode !== null && node.contains(hitNode) ? 'self' : 'other',
+        // A control whose label does not fit the box it is drawn in. `scrollWidth`
+        // is the content's width and `clientWidth` the box's, so a difference of
+        // more than a rounding pixel is a clipped label.
+        textClipped: node.scrollWidth > node.clientWidth + 1 || node.scrollHeight > node.clientHeight + 1,
+      });
+    }
+
+    const scrollers: Record<
+      string,
+      { scrollWidth: number; clientWidth: number; scrollHeight: number; clientHeight: number }
+    > = {};
+    for (const selector of ['.bj-top', '.bj-controls', '.bj-chips', '.bj-stage', '.bj-readouts']) {
+      const node = document.querySelector(selector);
+      if (node !== null) {
+        scrollers[selector] = {
+          scrollWidth: node.scrollWidth,
+          clientWidth: node.clientWidth,
+          scrollHeight: node.scrollHeight,
+          clientHeight: node.clientHeight,
+        };
+      }
+    }
+
+    const styleOf = (selector: string, property: string): string => {
+      const node = document.querySelector(selector);
+      return node === null ? '' : getComputedStyle(node).getPropertyValue(property);
+    };
+
+    const readouts: { key: string; visible: boolean; box: Box }[] = [];
+    for (const node of document.querySelectorAll('[data-readout]')) {
+      const box = node.getBoundingClientRect();
+      readouts.push({
+        key: node.getAttribute('data-readout') ?? '',
+        visible: visible(node),
+        box: { x: box.x, y: box.y, width: box.width, height: box.height },
+      });
+    }
+
+    return {
+      breakpoint: shell?.getAttribute('data-breakpoint') ?? '',
+      stickyBars: shell?.getAttribute('data-sticky-bars') ?? '',
+      surfaceSize: shell?.getAttribute('data-layout-size') ?? '',
+      phase: shell?.getAttribute('data-phase') ?? '',
+      inner: { width: window.innerWidth, height: window.innerHeight },
+      doc: {
+        scrollWidth: root.scrollWidth,
+        clientWidth: root.clientWidth,
+        scrollHeight: root.scrollHeight,
+        clientHeight: root.clientHeight,
+      },
+      regions: {
+        shell: rect('.bj-shell'),
+        top: rect('.bj-top'),
+        body: rect('.bj-body'),
+        stage: rect('.bj-stage'),
+        surface: rect('.bj-surface'),
+        controls: rect('.bj-controls'),
+      },
+      controls,
+      scrollers,
+      styles: {
+        topPosition: styleOf('.bj-top', 'position'),
+        controlsPosition: styleOf('.bj-controls', 'position'),
+        readoutFontSize: styleOf('.bj-readout__value', 'font-size'),
+        buttonFontSize: styleOf('.bj-button', 'font-size'),
+        buttonMinHeight: styleOf('.bj-button', 'min-height'),
+        summaryDisplay: styleOf('.bj-readouts__summary', 'display'),
+        shellPaddingBottom: styleOf('.bj-shell', 'padding-bottom'),
+        shellPaddingTop: styleOf('.bj-shell', 'padding-top'),
+        shellPaddingLeft: styleOf('.bj-shell', 'padding-left'),
+        shellPaddingRight: styleOf('.bj-shell', 'padding-right'),
+      },
+      readouts,
+    };
+  });
+}
+
+/** Every control the report found, by the key `layoutReport` names it with. */
+export function controlNamed(report: LayoutReport, key: string): ControlReport | undefined {
+  return report.controls.find((entry) => entry.key === key);
+}
+
+/** Open Settings, press one control by its data attribute, and close again. */
+export async function chooseInSettings(page: Page, selector: string): Promise<void> {
+  await page.locator('[data-open-overlay="settings"]').click();
+  await expect(page.locator('[data-overlay-host="true"]')).toBeVisible();
+  const button = page.locator(selector);
+  await button.scrollIntoViewIfNeeded();
+  await button.click();
+  await expect(button).toHaveAttribute('aria-pressed', 'true');
+  await control(page, 'close-overlay').click();
+  await expect(page.locator('[data-overlay-host="true"]')).toBeHidden();
+  await settle(page);
+}
+
 /** Boot, leave SPEC 10's start screen, and arrive at the betting phase. */
 export async function atBetting(page: Page, options: HarnessBootOptions = {}): Promise<void> {
   await bootGame(page, options);

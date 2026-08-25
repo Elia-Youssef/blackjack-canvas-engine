@@ -47,7 +47,22 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: isCI,
   retries: isCI ? 1 : 0,
-  workers: isCI ? 1 : '50%',
+  // CI runs one worker; local runs four. `BJ-16`.
+  //
+  // **Four is measured, not chosen.** The default was half the cores, which on a
+  // 32-thread machine is sixteen browsers at once, and `BJ-16` grew the suite to
+  // a hundred tests per engine. At that load the frame interval inside a WebKit
+  // worker stretched to 0.117 to 0.158 s, and `motion-demo.spec.ts`'s peek timing
+  // needs samples finer than a quarter of the peek pause to tell the two arms
+  // apart: every one of its six attempts came back too coarse and the gate went
+  // red twice in a row while passing in isolation. That is a measurement whose
+  // answer depends on how many other browsers are running, which is not a gate.
+  //
+  // The alternative was to widen that spec's tolerance to whatever interval it
+  // observed, which would have removed the discrimination item `E6` is graded on.
+  // Fewer workers costs wall clock and removes nothing: the whole suite runs
+  // green here in under four minutes with no flags.
+  workers: isCI ? 1 : 4,
   reporter: isCI ? [['list'], ['html', { open: 'never' }]] : [['list']],
 
   use: {
@@ -65,7 +80,11 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
     { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
-    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    // Cross-engine behaviour is compared at one CSS-to-device-pixel ratio. The
+    // F6 zoom case creates its own DPR 1 and 1.25 contexts, so keeping Retina DPR
+    // here would turn every unrelated WebKit timing assertion into a backing-
+    // store throughput measurement while adding no density coverage.
+    { name: 'webkit', use: { ...devices['Desktop Safari'], deviceScaleFactor: 1 } },
   ],
 
   webServer: {

@@ -98,6 +98,8 @@ export const FELT_GEOMETRY = Object.freeze({
   /** Grain: per-cell alpha ceiling, and the cell size. */
   noiseAlpha: 0.05,
   noiseCell: SPACE[1],
+  /** Alpha bands used to batch the deterministic cells into canvas paths. */
+  noiseSteps: 8,
 } as const);
 
 /**
@@ -199,20 +201,37 @@ function drawGrain(ctx: CanvasRenderingContext2D, spec: FeltSpec, frame: FeltFra
   const cell = g.noiseCell;
   const columns = Math.ceil(spec.width / cell);
   const rows = Math.ceil(spec.height / cell);
+  const buckets: number[][] = Array.from({ length: g.noiseSteps * 2 }, () => []);
+
+  for (let row = 0; row < rows; row += 1) {
+    for (let column = 0; column < columns; column += 1) {
+      const value = grain(column, row);
+      const strength = Math.abs(value - 0.5) * 2;
+      const level = Math.max(1, Math.ceil(strength * g.noiseSteps)) - 1;
+      const operation = value < 0.5 ? 0 : g.noiseSteps;
+      buckets[operation + level]?.push(column * cell, row * cell);
+    }
+  }
 
   ctx.save();
   tablePath(ctx, frame);
   ctx.clip();
   ctx.fillStyle = felt;
-  for (let row = 0; row < rows; row += 1) {
-    for (let column = 0; column < columns; column += 1) {
-      const value = grain(column, row);
-      // One hash decides both the direction and the strength of the cell, so
-      // half the cells lift and half sink, never all one way.
-      ctx.globalCompositeOperation = value < 0.5 ? 'multiply' : 'screen';
-      ctx.globalAlpha = g.noiseAlpha * Math.abs(value - 0.5) * 2;
-      ctx.fillRect(column * cell, row * cell, cell, cell);
+  for (const [index, bucket] of buckets.entries()) {
+    if (bucket.length === 0) {
+      continue;
     }
+    // One hash still decides both the direction and strength of every cell.
+    // Quantising that subtle strength into eight bands lets the rasteriser
+    // paint sixteen paths instead of changing blend state tens of thousands
+    // of times on a large or high-density surface.
+    ctx.globalCompositeOperation = index < g.noiseSteps ? 'multiply' : 'screen';
+    ctx.globalAlpha = g.noiseAlpha * ((index % g.noiseSteps) + 1) / g.noiseSteps;
+    ctx.beginPath();
+    for (let offset = 0; offset < bucket.length; offset += 2) {
+      ctx.rect(bucket[offset] ?? 0, bucket[offset + 1] ?? 0, cell, cell);
+    }
+    ctx.fill();
   }
   ctx.restore();
 }

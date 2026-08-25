@@ -160,9 +160,11 @@ describe('E5: the table itself', () => {
     });
 
     // The grain: one cell per SPACE[1] square, clipped to the table, half
-    // lifting and half sinking, never past the alpha ceiling.
+    // lifting and half sinking, never past the alpha ceiling. Cells sharing a
+    // direction and subtle strength band are one path, so a large felt does not
+    // issue tens of thousands of separate raster operations.
     expect(recording.calls('clip')).toHaveLength(1);
-    const cells = recording.calls('fillRect');
+    const cells = recording.calls('rect');
     expect(cells).toHaveLength(Math.ceil(64 / 4) * Math.ceil(40 / 4));
 
     const operations = new Set<unknown>();

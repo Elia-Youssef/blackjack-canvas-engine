@@ -17,11 +17,29 @@
  * than a second rule about which cards count: the machine publishes the face-up
  * cards and a count of the concealed ones, so the arithmetic cannot see a card
  * the player cannot.
+ *
+ * **`BJ-16` split the fourteen into three and eleven.** DESIGN section 4 gives
+ * the two narrow breakpoints a top bar of "chips, wager and hand value" with
+ * "everything else behind the disclosure", and the portrait diagram in that
+ * section carries the same three. Fourteen readouts at 320 CSS px wrap to seven
+ * rows and eat the whole of a 256 px viewport, which is item `F7`'s "loss of
+ * function" rather than a tight fit.
+ *
+ * The disclosure is a real `<details>`, and that choice is load bearing three
+ * ways: it is keyboard operable and named by the platform, so it needs no ARIA
+ * and leaves item `G1` at `BJ-18` exactly the surface it had; it is one element
+ * rather than a fourth overlay, which SPEC 10 does not have; and its open state
+ * is a DOM property the chrome can set per breakpoint, so at `wide` and `medium`
+ * all fourteen are on screen at once and item `C5`'s measurement of fourteen
+ * rendered boxes is unchanged. Below 768 px it starts closed and the player
+ * opens it; nothing is removed from the page at any width, which is what "fully
+ * functional" in item `F3` is about.
  */
 
 import { handValue } from '../../core/hand';
 import { tableLimits } from '../../core/wallet';
 import { countUp } from '../../render/animate';
+import type { BreakpointName } from '../breakpoints';
 import { el, setText } from '../dom';
 import { NOTHING_YET, chips, percent } from '../format';
 import type { ChromeState, Component } from '../state';
@@ -91,6 +109,29 @@ const ROWS: readonly ReadoutRow[] = Object.freeze([
 ]);
 
 /**
+ * DESIGN section 4's three: the readouts the narrow top bar keeps.
+ *
+ * The other eleven are the disclosure's. The split is by key rather than by
+ * position in `ROWS`, so SPEC 11's order is still the order they are built in
+ * and a reordering of that list cannot silently change which three stay.
+ */
+export const PRIMARY_READOUT_KEYS: readonly string[] = Object.freeze([
+  BALANCE_KEY,
+  'wager',
+  'hand-value',
+]);
+
+/** The eleven behind the disclosure at `compact` and `portrait`. */
+export const SECONDARY_READOUT_KEYS: readonly string[] = Object.freeze(
+  ROWS.map((row) => row.key).filter((key) => !PRIMARY_READOUT_KEYS.includes(key)),
+);
+
+/** The two breakpoints that show all fourteen at once, disclosure open. */
+function showsEveryReadout(breakpoint: BreakpointName): boolean {
+  return breakpoint === 'wide' || breakpoint === 'medium';
+}
+
+/**
  * SPEC 5: "the balance counts up rather than snapping".
  *
  * The one piece of the chrome that holds presentation state across frames, and
@@ -122,13 +163,15 @@ interface Counting {
 /** Build the readout panel. */
 export function createReadouts(): Component {
   const values = new Map<string, HTMLElement>();
-  const list = el('dl', { className: 'bj-readouts__list' });
+  const primary = el('dl', { className: 'bj-readouts__list' });
+  const secondary = el('dl', { className: 'bj-readouts__list' });
   let counting: Counting | null = null;
 
   for (const row of ROWS) {
     const value = el('dd', { className: 'bj-readout__value', text: NOTHING_YET });
     values.set(row.key, value);
-    list.append(
+    const into = PRIMARY_READOUT_KEYS.includes(row.key) ? primary : secondary;
+    into.append(
       el('div', {
         className: 'bj-readout',
         attributes: { 'data-readout': row.key },
@@ -137,11 +180,38 @@ export function createReadouts(): Component {
     );
   }
 
+  // Open at build time, because the first frame has not resolved a breakpoint
+  // yet and a page that started with eleven readouts missing would flash them
+  // in. The sync below closes it on the frame a narrow viewport is resolved.
+  const more = el('details', {
+    className: 'bj-readouts__more',
+    attributes: { 'data-readouts': 'more', open: '' },
+    children: [
+      el('summary', {
+        className: 'bj-readouts__summary',
+        text: 'More readouts',
+        attributes: { 'data-control': 'more-readouts' },
+      }),
+      secondary,
+    ],
+  });
+
   const root = el('section', {
     className: 'bj-readouts',
     attributes: { 'aria-label': 'Table readouts' },
-    children: [list],
+    children: [primary, more],
   });
+
+  /**
+   * The breakpoint the disclosure was last set from.
+   *
+   * The open state is written **on a change of breakpoint and never otherwise**,
+   * so a player who opens the disclosure at `portrait` keeps it open: a sync
+   * step that wrote it every frame would close it under their finger. It is the
+   * same rule every other writer in the chrome follows, applied to a property a
+   * person can also change.
+   */
+  let appliedBreakpoint: BreakpointName | null = null;
 
   /** The balance to print this frame: the count's value, or the machine's. */
   function balanceText(state: ChromeState, dt: number): string {
@@ -170,6 +240,11 @@ export function createReadouts(): Component {
   return {
     root,
     update(state: ChromeState, dt: number): void {
+      const { breakpoint } = state.layout;
+      if (breakpoint !== appliedBreakpoint) {
+        appliedBreakpoint = breakpoint;
+        more.open = showsEveryReadout(breakpoint);
+      }
       for (const row of ROWS) {
         const node = values.get(row.key);
         if (node !== undefined) {

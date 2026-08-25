@@ -41,6 +41,8 @@ export interface Shell {
   readonly body: HTMLElement;
   /** The element the play surface is sized against. */
   readonly stage: HTMLElement;
+  /** The static felt layer, stacked below the animated scene. */
+  readonly feltCanvas: HTMLCanvasElement;
   /** The play surface itself. */
   readonly canvas: HTMLCanvasElement;
   /** Row 3. The notice and the phase screens. */
@@ -49,11 +51,19 @@ export interface Shell {
 
 /** Build the shell. Nothing is filled in: `chrome.ts` mounts the components. */
 export function createShell(): Shell {
+  const feltCanvas = el('canvas', {
+    className: 'bj-surface-felt',
+    attributes: { 'aria-hidden': 'true' },
+  });
   const canvas = el('canvas', {
     className: 'bj-surface',
     attributes: { 'aria-hidden': 'true' },
   });
-  const stage = el('div', { className: 'bj-stage', children: [canvas] });
+  const surface = el('div', {
+    className: 'bj-surface-stack',
+    children: [feltCanvas, canvas],
+  });
+  const stage = el('div', { className: 'bj-stage', children: [surface] });
   const top = el('header', { className: 'bj-top' });
   const body = el('div', { className: 'bj-body', children: [stage] });
   const controls = el('footer', { className: 'bj-controls' });
@@ -62,5 +72,5 @@ export function createShell(): Shell {
     children: [top, body, controls],
   });
 
-  return { root, top, body, stage, canvas, controls };
+  return { root, top, body, stage, feltCanvas, canvas, controls };
 }

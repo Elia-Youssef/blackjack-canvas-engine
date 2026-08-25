@@ -86,12 +86,31 @@ import type { Intent, SettledHand } from './core/types';
 import { LOWEST_TABLE, createWallet, tableLimits, type TableId } from './core/wallet';
 import { PACING_NAMES, resolveMotion, type Motion } from './render/animate';
 import { createPlaySurface, type PlaySurface, type SceneState } from './render/scene';
-import type { SurfaceSizing } from './render/surface';
+import { DEFAULT_SURFACE_SIZE, type SurfaceSize } from './render/surface';
+import {
+  barsStick,
+  planSurface,
+  resolveBreakpoint,
+  sameSizing,
+  type BreakpointName,
+  type ChromeHeights,
+  type StageBox,
+  type SurfacePlan,
+  type Viewport,
+} from './ui/breakpoints';
 import { createChrome } from './ui/chrome';
 import { resolvedLocale } from './ui/format';
+import type { Shell } from './ui/layout';
 import { createFrameLoop, type FrameLoop } from './ui/loop';
 import { createMotionPreference, type MotionPreference } from './ui/motion';
-import type { ChromeActions, ChromeState, HandVerdict, Notice, OverlayId } from './ui/state';
+import type {
+  ChromeActions,
+  ChromeState,
+  HandVerdict,
+  LayoutState,
+  Notice,
+  OverlayId,
+} from './ui/state';
 
 import './ui/tokens.css';
 import './ui/chrome.css';
@@ -99,17 +118,13 @@ import './ui/chrome.css';
 export const GAME_ID = 'blackjack';
 
 /**
- * The play surface's aspect, and the smallest width it is drawn at.
- *
- * DESIGN section 4 gives the surface a 1280 x 720 logical space, which is this
- * ratio; the surface is drawn at whatever size its box allows and every length
- * in `render/scene.ts` is a fraction of it, so the picture is the same at any
- * size. The floor keeps a stage that has not been laid out yet, which reports a
- * client size of zero, from asking `createSurface` for a zero-sized store.
- * Item `F1` at `BJ-16` owns what happens at the four breakpoints.
+ * The play surface's logical space, its two framings and the floor it is drawn
+ * at all moved to `src/ui/breakpoints.ts` at `BJ-16`, with the breakpoint table
+ * that decides between them. What is left here is the platform reading:
+ * `planSurface` is a pure function of a box, a breakpoint, a size setting and a
+ * device pixel ratio, and this is the only file that knows where any of the four
+ * comes from.
  */
-const SURFACE_ASPECT = 1280 / 720;
-const MIN_SURFACE_WIDTH = 320;
 
 /** Everything the composition root holds beside the machine. SPEC 13's set. */
 export interface SessionState {
@@ -127,6 +142,16 @@ export interface SessionState {
    * setting whose only home is the machine so a restore has one place to put it.
    */
   readonly speed: Speed;
+  /**
+   * QUALITY-BAR section 4's play-surface size. `BJ-16`, item `F6`.
+   *
+   * Here for the reason `speed` is: SPEC 13 persists the settings, this is the
+   * shape `BJ-20` writes, and `F6`'s "persists" clause is ruled to close there
+   * on the same terms `E9`'s did. What `BJ-16` owes that part is a value in a
+   * serialisable shape whose only home is this record, so a restore has one
+   * place to put it and the layout has one place to read it.
+   */
+  readonly surfaceSize: SurfaceSize;
 }
 
 /**
@@ -153,6 +178,34 @@ export interface MotionProbe {
   readonly pacing: Readonly<Record<string, number>>;
 }
 
+/**
+ * What the layout resolved for the last frame it drew. `BJ-16`.
+ *
+ * Read only, and nothing in the game reads it. It is `MotionProbe`'s pattern for
+ * the same kind of claim: item `F6` says the size setting "raises the
+ * logical-to-CSS scale by that factor", and a scale is a number the page has no
+ * other way to publish. Every field is measurable from the DOM as well, and the
+ * browser specs measure the DOM first and cross-check this second, so the probe
+ * cannot be the only witness to anything.
+ */
+export interface LayoutProbe {
+  readonly breakpoint: BreakpointName;
+  readonly stickyBars: boolean;
+  readonly surfaceSize: SurfaceSize;
+  /** The logical space this frame drew in. DESIGN section 4's two framings. */
+  readonly framing: { readonly width: number; readonly height: number };
+  /** CSS pixels per logical unit, at this frame's size setting. */
+  readonly scale: number;
+  /** The same, at 100 percent: what the layout would choose on its own. */
+  readonly baseScale: number;
+  /** The surface's CSS box and its backing store, in their own units. */
+  readonly cssWidth: number;
+  readonly cssHeight: number;
+  readonly storeWidth: number;
+  readonly storeHeight: number;
+  readonly dpr: number;
+}
+
 /** A running game. Returned by `boot`, and the handle `BJ-20` will persist. */
 export interface Game {
   /** The machine's snapshot. The only authority on the game's state. */
@@ -161,6 +214,8 @@ export interface Game {
   session(): SessionState;
   /** What the last frame resolved for motion. Items `E7` and `E9`. */
   motion(): MotionProbe;
+  /** What the last frame resolved for the layout. Items `F1`, `F3`, `F6`. */
+  layout(): LayoutProbe;
   /** Stop the loop and take the chrome off the page. */
   dispose(): void;
 }
@@ -181,6 +236,8 @@ export interface BootOptions {
   readonly coachMode?: CoachMode;
   /** SPEC 5's Speed. Normal by default; SPEC 13 persists it from `BJ-20`. */
   readonly speed?: Speed;
+  /** SPEC 14's play-surface size. 100 by default; SPEC 13 persists it at `BJ-20`. */
+  readonly surfaceSize?: SurfaceSize;
   /**
    * Force reduced motion on, whatever the platform says. Item `E7`.
    *
@@ -212,33 +269,80 @@ function mountPoint(options: BootOptions): HTMLElement {
 }
 
 /**
- * The logical size and backing-store scale the surface should be drawn at.
+ * The viewport, in CSS pixels. Item `F1`, and the one platform read behind it.
  *
- * `devicePixelRatio` is read bare rather than through the global object, and
- * that is a gate rather than a style: `tests/unit/storage-write-failure.test.ts`
- * requires that exactly one file under `src/` names the platform globals, and
- * the seam it means is `src/storage/store.ts`. Item `I3`'s scan reads the
- * identifier, so the chrome takes the ratio the way it takes
- * `requestAnimationFrame`, off the global scope by name.
+ * `innerWidth` and `innerHeight` are read bare rather than through the global
+ * object, and that is a gate rather than a style:
+ * `tests/unit/storage-write-failure.test.ts` requires that exactly one file
+ * under `src/` names the platform globals, and the seam it means is
+ * `src/storage/store.ts`. So the chrome takes the viewport the way it already
+ * takes `requestAnimationFrame`, `matchMedia` and `devicePixelRatio`, off the
+ * global scope by name.
  *
+ * **The visual viewport, not the document's client box.** They differ by the
+ * width of a classic scrollbar, and the difference lands exactly on the
+ * boundaries QUALITY-BAR section 5 fixes: a 1024 px window with a vertical
+ * scrollbar has a 1009 px client box, and resolving that to `medium` would make
+ * the wide floor mean something different from the number the section states and
+ * different again from what a device reports for itself.
+ */
+function viewportNow(): Viewport {
+  return { width: innerWidth, height: innerHeight };
+}
+
+/**
+ * The box the play surface is fitted into: the shell's middle row.
+ *
+ * **The row, and deliberately not the stage inside it.** Above 100 percent the
+ * surface is larger than its stage and the stage scrolls to it, so a plan
+ * measured from the stage's client box would shrink by a scrollbar's width the
+ * moment the setting was raised, and shrink again on the frame after that. The
+ * row is a grid track of a shell with a definite height: nothing inside it can
+ * change its size, which is what makes the base scale stable.
+ */
+function stageBox(body: HTMLElement): StageBox {
+  return { width: body.clientWidth, height: body.clientHeight };
+}
+
+/**
  * This is the composition root's one reading of the device pixel ratio.
  * `src/render/surface.ts` applies it to the backing store and nothing under
  * `src/render/` may name it at all, which its own directory scan enforces.
  */
-function sizingFor(stage: HTMLElement): SurfaceSizing {
-  const ratio = devicePixelRatio;
-  const boxWidth = Math.max(stage.clientWidth, MIN_SURFACE_WIDTH);
-  const boxHeight = Math.max(stage.clientHeight, MIN_SURFACE_WIDTH / SURFACE_ASPECT);
-  const width = Math.round(Math.min(boxWidth, boxHeight * SURFACE_ASPECT));
-  return {
-    width,
-    height: Math.round(width / SURFACE_ASPECT),
-    dpr: ratio > 0 ? ratio : 1,
-  };
+function pixelRatio(): number {
+  return devicePixelRatio;
 }
 
-function sameSizing(a: SurfaceSizing, b: SurfaceSizing): boolean {
-  return a.width === b.width && a.height === b.height && a.dpr === b.dpr;
+/**
+ * What the two bars need, so `barsStick` can say whether they fit.
+ *
+ * Three content heights, read off the rendering the previous frame produced.
+ * `scrollHeight` rather than a rendered box for the two bars, because a bar's
+ * content height is what it needs and is the reading that does not move when the
+ * decision moves; the overhead is what the shell adds around the three rows,
+ * derived rather than restated so that the safe-area insets are inside it.
+ *
+ * **Measuring the page to decide the page's layout is the shape of the defect
+ * `BJ-14` shipped**, so the rule is stated once and obeyed here: every input is
+ * invariant under the decision it feeds. `position: sticky` leaves an element in
+ * flow, so neither bar's content height changes when it stops sticking, and the
+ * play-surface row is a length in both modes. The floor under the overhead is
+ * for the one frame after a resize where the rows have not been re-laid yet.
+ */
+function chromeHeights(shell: Shell): ChromeHeights {
+  // The overhead is read off the shell's own box rather than derived from what
+  // the rows currently occupy, and that is the difference between a number and a
+  // coincidence: where the rows do not fill the shell, a derived reading counts
+  // the empty space as overhead and the sum stops meaning anything. Padding and
+  // the two row gaps are lengths, so they are the same in both modes.
+  const style = getComputedStyle(shell.root);
+  const padding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom);
+  const gaps = 2 * Number.parseFloat(style.rowGap);
+  return {
+    top: shell.top.scrollHeight,
+    controls: shell.controls.scrollHeight,
+    overhead: Number.isFinite(padding + gaps) ? padding + gaps : 0,
+  };
 }
 
 /**
@@ -324,6 +428,7 @@ export function boot(options: BootOptions = {}): Game {
   let verdicts: HandVerdict[] | null = coachMode === 'off' ? null : [];
   let notice: Notice | null = null;
   let overlay: OverlayId | null = null;
+  let surfaceSize: SurfaceSize = options.surfaceSize ?? DEFAULT_SURFACE_SIZE;
 
   const actions: ChromeActions = {
     queue(intent: Intent): void {
@@ -348,21 +453,53 @@ export function boot(options: BootOptions = {}): Game {
       // spent and the change is a shorter remainder rather than a restart.
       table.setSpeed(speed);
     },
+    setSurfaceSize(size: SurfaceSize): void {
+      // SPEC 14 again: immediately, mid-round included. The next frame plans the
+      // surface from the new size and resizes the backing store, and the machine
+      // is not told, because a CSS scale decides nothing about a round.
+      surfaceSize = size;
+    },
   };
 
   const chrome = createChrome(actions);
   const root = mountPoint(options);
   root.replaceChildren(chrome.shell.root);
 
-  let sizing = sizingFor(chrome.shell.stage);
+  /**
+   * The shape of the page, resolved once per frame and used by both halves.
+   *
+   * The breakpoint decides the framing the surface is planned in and the
+   * selectors the stylesheet applies, and both have to be the same answer or the
+   * canvas is drawn for one layout inside another. One resolution per frame,
+   * handed to the plan and to the chrome, is the same discipline `resolveMotion`
+   * already has for the motion policy.
+   */
+  function layoutNow(): LayoutState {
+    const viewport = viewportNow();
+    return {
+      breakpoint: resolveBreakpoint(viewport),
+      stickyBars: barsStick(viewport, chromeHeights(chrome.shell)),
+      surfaceSize,
+    };
+  }
+
+  let layout: LayoutState = layoutNow();
+  let plan: SurfacePlan = planSurface(
+    stageBox(chrome.shell.body),
+    layout.breakpoint,
+    layout.surfaceSize,
+    pixelRatio(),
+  );
   const surface: PlaySurface = createPlaySurface({
     canvas: chrome.shell.canvas,
-    offscreen: () => document.createElement('canvas'),
-    sizing,
+    offscreen: () => chrome.shell.feltCanvas,
+    sizing: plan.sizing,
+    separateFelt: true,
   });
 
   function chromeState(readout: TableReadout, motion: Motion): ChromeState {
     return {
+      layout,
       readout,
       statistics: statisticsReadout(statistics, readout.wallet, coach),
       history,
@@ -473,11 +610,25 @@ export function boot(options: BootOptions = {}): Game {
     }
     closeRound(readout);
 
-    const wanted = sizingFor(chrome.shell.stage);
-    if (!sameSizing(wanted, sizing)) {
-      sizing = wanted;
-      surface.resize(wanted);
+    // The shape of the page, then the surface that has to fit inside it. The
+    // breakpoint is resolved from the viewport, which no layout of ours can
+    // change, and the box is a grid track of a shell with a definite height, so
+    // neither reading can be moved by what this frame is about to draw. A
+    // resize is one frame behind a rotation, because the attribute that selects
+    // the new layout is written in the chrome sync at the end of this frame and
+    // the box is measured at the top of the next one; the machine's state is
+    // untouched by either, which is what item `F5` is about.
+    layout = layoutNow();
+    const wanted = planSurface(
+      stageBox(chrome.shell.body),
+      layout.breakpoint,
+      layout.surfaceSize,
+      pixelRatio(),
+    );
+    if (!sameSizing(wanted.sizing, plan.sizing)) {
+      surface.resize(wanted.sizing);
     }
+    plan = wanted;
 
     // One policy per frame, handed to both halves of the presentation. The
     // canvas and the chrome are then incapable of disagreeing about which
@@ -499,7 +650,20 @@ export function boot(options: BootOptions = {}): Game {
 
   const game: Game = {
     readout: () => table.readout(),
-    session: () => ({ statistics, history, coach, coachMode, speed: table.speed() }),
+    session: () => ({ statistics, history, coach, coachMode, speed: table.speed(), surfaceSize }),
+    layout: (): LayoutProbe => ({
+      breakpoint: layout.breakpoint,
+      stickyBars: layout.stickyBars,
+      surfaceSize: layout.surfaceSize,
+      framing: { width: plan.framing.width, height: plan.framing.height },
+      scale: plan.scale,
+      baseScale: plan.baseScale,
+      cssWidth: plan.sizing.width,
+      cssHeight: plan.sizing.height,
+      storeWidth: surface.surface.canvas.width,
+      storeHeight: surface.surface.canvas.height,
+      dpr: plan.sizing.dpr,
+    }),
     motion(): MotionProbe {
       const resolved = resolveMotion({
         reducedMotion: preference.reduced(),

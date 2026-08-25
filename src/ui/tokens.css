@@ -75,6 +75,31 @@
   --focus-ring-color: var(--bj-accent);
 
   /* ---------------------------------------------------------------------
+   * Safe-area insets and the play surface's floor. QUALITY-BAR 5, `BJ-16`.
+   *
+   * Four environment values rather than four numbers: the platform supplies
+   * them, they are `0` on every display with no notch and no home indicator,
+   * and they are only ever non-zero because `index.html` carries
+   * `viewport-fit=cover`. They are declared here, once, so that a component
+   * stylesheet adds `var(--bj-safe-bottom)` and never writes `env()` itself,
+   * and so that a test can override the four to inject an inset a headless
+   * browser has no way to produce. Item `F4` is a Demonstration item and its
+   * capture closes it on real hardware; what these carry is the mechanism.
+   *
+   * The fallback is a unitless `0`, which is a valid length and needs no token.
+   * ------------------------------------------------------------------- */
+  --bj-safe-top: env(safe-area-inset-top, 0);
+  --bj-safe-right: env(safe-area-inset-right, 0);
+  --bj-safe-bottom: env(safe-area-inset-bottom, 0);
+  --bj-safe-left: env(safe-area-inset-left, 0);
+
+  /* The height the play surface keeps once the shell stops having one to
+   * divide, below the sticky threshold. DESIGN section 4: "the play surface
+   * takes a minimum height rather than a share". Three of the largest spacing
+   * step, so the number is on the scale rather than beside it. */
+  --surface-min-height: calc(var(--space-8) * 3);
+
+  /* ---------------------------------------------------------------------
    * Motion. QUALITY-BAR 15.
    *
    * These are chrome durations. Gameplay pacing constants are simulation

@@ -6,8 +6,25 @@
  * `B13` and `B14` at BJ-5, `J1` and `J2` at BJ-6, `C2` at BJ-7, `B6`, `B9`,
  * `B10`, `B11` and `B12` at BJ-8, `J3` at BJ-9, `J5` and `J6` at BJ-10,
  * `I1`, `I2` and `I3` at BJ-11, `H6`, `M5`, `B5` and `B16` at BJ-12,
- * `E3`, `E4` and `E5` at BJ-13, `M1`, `C5`, `C8` and `B15` at BJ-15, and `E6`,
- * `E7` and `E9` at BJ-14.
+ * `E3`, `E4` and `E5` at BJ-13, `M1`, `C5`, `C8` and `B15` at BJ-15, `E6`,
+ * `E7` and `E9` at BJ-14, and `F1` to `F7` at BJ-16.
+ *
+ * The `BJ-16` block breaks the responsive layout: the two width floors and the
+ * height threshold against the contract fixture, the width-first rule that the
+ * 1024 x 1366 tablet turns on, the surface plan's factor and its refusal to
+ * clamp, the definite shell height whose absence pushed the action buttons below
+ * the fold at `BJ-14`, the wrapping that keeps 320 px free of page scroll, the
+ * portrait framing and the narrow bar's disclosure, the per-frame layout
+ * resolution a rotation depends on, the size setting's route to the layout and
+ * the four values it offers, the stage that scrolls to a magnified surface, both
+ * bars' unsticking, and the three pieces of `F4`'s safe-area mechanism. Its fix
+ * round added five more, for the two blockers the review measured: the sticky
+ * rule with its room test removed and with the play surface left out of the sum,
+ * two screens with controls that stop being rendered at all, and a controls row
+ * that hides its overflow in a scroller with no affordance. `F4` is
+ * a Demonstration item and closes at the session, so its three entries prove the
+ * armour under it can fail rather than the item itself, which is the treatment
+ * `E3`, `E4`, `E5` and `E6` already have.
  *
  * The `BJ-15` block is the first to be measured by the **browser** gate rather
  * than by `npm run test`. Its three items are graded in Playwright over the
@@ -143,6 +160,19 @@ const ROUND_RESULT = browserGate('round-result.spec.ts');
 const REDUCED_MOTION = browserGate('reduced-motion.spec.ts');
 const SPEED_SETTING = browserGate('speed-setting.spec.ts');
 const MOTION_DEMO = browserGate('motion-demo.spec.ts');
+
+// BJ-16's seven, one per item plus the armour under the Demonstration one. Six
+// of the seven are graded in the browser for the same reason the chrome items
+// are: a breakpoint, a rendered box, a scrollbar and a hit test cannot be seen
+// from a unit test. The arithmetic behind them is unit tested, and the entries
+// below say which of the two each mutation is required red by.
+const BREAKPOINTS = browserGate('breakpoints.spec.ts');
+const NO_HSCROLL = browserGate('no-hscroll.spec.ts');
+const PORTRAIT = browserGate('portrait.spec.ts');
+const ORIENTATION = browserGate('orientation.spec.ts');
+const SURFACE_SCALE = browserGate('surface-scale.spec.ts');
+const SMALL_VIEWPORT = browserGate('small-viewport.spec.ts');
+const SAFE_AREA = browserGate('safe-area.spec.ts');
 
 /**
  * Mutations that edit an existing file.
@@ -4604,6 +4634,330 @@ const EDITS = [
     find: "    return kind === 'settling' ? 'natural' : 'none';",
     replace: "    return 'natural';",
     detectedBy: MOTION_DEMO,
+  },
+
+  // ------------------------------------------------------------------
+  // F1. The four breakpoints. The first four break the table itself, which
+  // is unit tested against the contract fixture the way every token is; the
+  // last two break the layout the table decides, which only a browser sees.
+  // The width-first entry is the trap QUALITY-BAR section 5 records an
+  // earlier build falling into: a 1024 x 1366 tablet in its natural
+  // orientation matched no row at all.
+  // ------------------------------------------------------------------
+  {
+    item: 'F1',
+    name: 'the wide floor drifts off QUALITY-BAR section 5',
+    file: 'src/ui/breakpoints.ts',
+    find: 'export const WIDE_MIN_WIDTH = 1024;',
+    replace: 'export const WIDE_MIN_WIDTH = 1000;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'F1',
+    name: 'the medium floor drifts off QUALITY-BAR section 5',
+    file: 'src/ui/breakpoints.ts',
+    find: 'export const MEDIUM_MIN_WIDTH = 768;',
+    replace: 'export const MEDIUM_MIN_WIDTH = 720;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'F1',
+    name: 'orientation is consulted before width, so a tall tablet stops being wide',
+    file: 'src/ui/breakpoints.ts',
+    find: "  if (viewport.width >= WIDE_MIN_WIDTH) {\n    return 'wide';\n  }",
+    replace:
+      "  if (viewport.height >= viewport.width) {\n" +
+      "    return 'portrait';\n" +
+      '  }\n' +
+      '  if (viewport.width >= WIDE_MIN_WIDTH) {\n' +
+      "    return 'wide';\n" +
+      '  }',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'F1',
+    name: 'the surface plan is clamped back into its box, so magnification is refused',
+    file: 'src/ui/breakpoints.ts',
+    find: '  const scale = baseScale * surfaceSizeFactor(size);',
+    replace: '  const scale = Math.min(baseScale * surfaceSizeFactor(size), baseScale);',
+    detectedBy: UNIT,
+  },
+  {
+    // The layout half of the defect the BJ-14 review recorded, put back: with
+    // `min-height`, the middle row's `1fr` resolves against a height the row can
+    // grow, so the play surface grows the document and the action buttons go
+    // below the fold. Six of the nine tests in the spec go red on it.
+    item: 'F1',
+    name: 'the shell goes back to a minimum height, and the play surface grows the page',
+    file: 'src/ui/chrome.css',
+    find: '  height: 100vh;\n  height: 100dvh;\n  display: grid;',
+    replace: '  min-height: 100vh;\n  display: grid;',
+    detectedBy: BREAKPOINTS,
+  },
+  {
+    item: 'F1',
+    name: 'the resolved breakpoint never reaches the page',
+    file: 'src/ui/chrome.ts',
+    find: "      setAttribute(shell.root, 'data-breakpoint', state.layout.breakpoint);",
+    replace: '      void state.layout.breakpoint;',
+    detectedBy: BREAKPOINTS,
+  },
+  {
+    // The `BJ-16` review's first blocker, put back: with the height threshold as
+    // the only condition, the bars stick at a viewport with no room for them, the
+    // play-surface row is squeezed to nothing and controls land below a fold the
+    // page cannot scroll past. Ten tests go red on it, and with the mode
+    // expectations removed the physical invariant goes red on its own.
+    item: 'F1',
+    name: 'the bars stick wherever the threshold allows, with or without room',
+    file: 'src/ui/breakpoints.ts',
+    find:
+      '  return chrome.top + chrome.controls + chrome.overhead + MIN_SURFACE_HEIGHT <= viewport.height;',
+    replace: '  return true;',
+    detectedBy: BREAKPOINTS,
+  },
+  {
+    // The same rule with the play surface left out of the sum: the two bars fit,
+    // the row between them does not, and the surface is planned from nothing.
+    item: 'F1',
+    name: 'the sticky decision forgets the play surface needs room too',
+    file: 'src/ui/breakpoints.ts',
+    find: '  return chrome.top + chrome.controls + chrome.overhead + MIN_SURFACE_HEIGHT <= viewport.height;',
+    replace: '  return chrome.top + chrome.controls + chrome.overhead <= viewport.height;',
+    detectedBy: BREAKPOINTS,
+  },
+  {
+    // The `BJ-16` review's second blocker: a control removed from a screen was
+    // invisible to a sweep of what was on screen. Two of SPEC 4.5's five actions
+    // stop being rendered at all.
+    item: 'F1',
+    name: 'two of SPEC 4.5s five actions stop being rendered',
+    file: 'src/ui/components/actions.ts',
+    find: '  for (const row of ROWS) {\n    const control = button(',
+    replace: '  for (const row of ROWS.slice(0, 3)) {\n    const control = button(',
+    detectedBy: BREAKPOINTS,
+  },
+  {
+    item: 'F1',
+    name: "SPEC 6's start screen stops offering two of its three tables",
+    file: 'src/ui/components/screens.ts',
+    find: '  for (const limits of TABLES) {',
+    replace: '  for (const limits of TABLES.slice(0, 1)) {',
+    detectedBy: BREAKPOINTS,
+  },
+  {
+    item: 'F1',
+    name: 'the controls row hides its overflow in a scroller with no affordance',
+    file: 'src/ui/chrome.css',
+    find: '.bj-controls {\n  display: flex;\n  flex-direction: column;\n  gap: var(--space-2);\n}',
+    replace:
+      '.bj-controls {\n  display: flex;\n  flex-direction: column;\n  gap: var(--space-2);\n  overflow-y: auto;\n  max-height: var(--surface-min-height);\n}',
+    detectedBy: BREAKPOINTS,
+  },
+
+  // ------------------------------------------------------------------
+  // F2. No horizontal page scroll from 320 px upward. The control rows wrap
+  // and may shrink, and a row that refuses to shrink below its content is the
+  // defect: five buttons at their labels' width are wider than a 320 px
+  // viewport, and the row they are in then carries an overflow the page never
+  // sees, which is the reading this entry proved the spec had to grow.
+  // ------------------------------------------------------------------
+  {
+    item: 'F2',
+    name: 'the control rows refuse to shrink, and hide an overflow at 320 px',
+    file: 'src/ui/chrome.css',
+    find: '  display: flex;\n  flex-wrap: wrap;\n  gap: var(--space-2);\n  min-width: 0;\n}',
+    replace:
+      '  display: flex;\n  flex-wrap: wrap;\n  gap: var(--space-2);\n  min-width: max-content;\n}',
+    detectedBy: NO_HSCROLL,
+  },
+
+  // ------------------------------------------------------------------
+  // F3. Portrait as a re-arrangement. The first two break the framing and the
+  // split, which are arithmetic; the last two break the two things that make
+  // the narrow bar a re-arrangement rather than a scale.
+  // ------------------------------------------------------------------
+  {
+    item: 'F3',
+    name: 'portrait is framed as a squashed landscape',
+    file: 'src/ui/breakpoints.ts',
+    find: "  return breakpoint === 'portrait' ? SURFACE_FRAMING.portrait : SURFACE_FRAMING.landscape;",
+    replace: '  return SURFACE_FRAMING.landscape;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'F3',
+    name: 'the narrow top bar keeps a readout DESIGN section 4 moves behind the disclosure',
+    file: 'src/ui/components/readouts.ts',
+    find: "export const PRIMARY_READOUT_KEYS: readonly string[] = Object.freeze([\n  BALANCE_KEY,\n  'wager',\n  'hand-value',\n]);",
+    replace: "export const PRIMARY_READOUT_KEYS: readonly string[] = Object.freeze([\n  BALANCE_KEY,\n  'wager',\n  'hand-value',\n  'penetration',\n]);",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'F3',
+    name: 'the disclosure stays open at every width, so nothing is re-arranged',
+    file: 'src/ui/components/readouts.ts',
+    find: '        more.open = showsEveryReadout(breakpoint);',
+    replace: '        more.open = true;',
+    detectedBy: PORTRAIT,
+  },
+  {
+    item: 'F3',
+    name: 'the disclosure control is never shown, so the eleven are unreachable',
+    file: 'src/ui/chrome.css',
+    find: ".bj-shell[data-breakpoint='compact'] .bj-readouts__summary,\n.bj-shell[data-breakpoint='portrait'] .bj-readouts__summary {\n  display: block;",
+    replace: ".bj-shell[data-breakpoint='compact'] .bj-readouts__summary,\n.bj-shell[data-breakpoint='portrait'] .bj-readouts__summary {\n  display: none;",
+    detectedBy: PORTRAIT,
+  },
+
+  // ------------------------------------------------------------------
+  // F5. An orientation change. The layout is resolved every frame, and a
+  // layout resolved once at boot is the defect that makes a rotation need a
+  // reload: the page keeps the shape it was loaded in.
+  // ------------------------------------------------------------------
+  {
+    item: 'F5',
+    name: 'the layout is resolved once at boot and never again',
+    file: 'src/main.ts',
+    find: '    layout = layoutNow();\n    const wanted = planSurface(',
+    replace: '    const wanted = planSurface(',
+    detectedBy: ORIENTATION,
+  },
+  {
+    item: 'F5',
+    name: 'orientation stops deciding below the medium floor, so a turn changes nothing',
+    file: 'src/ui/breakpoints.ts',
+    find: "  return viewport.height >= viewport.width ? 'portrait' : 'compact';",
+    replace: "  return 'compact';",
+    detectedBy: ORIENTATION,
+  },
+
+  // ------------------------------------------------------------------
+  // F6. The play-surface size setting. One entry per clause of the criterion
+  // that this part closes: the four values, the factor reaching the machine,
+  // the factor itself, and "clips nothing".
+  // ------------------------------------------------------------------
+  {
+    item: 'F6',
+    name: 'the setting is pressed and the layout never hears about it',
+    file: 'src/main.ts',
+    find: '      surfaceSize = size;',
+    replace: '      void size;',
+    detectedBy: SURFACE_SCALE,
+  },
+  {
+    item: 'F6',
+    name: 'the panel offers three of QUALITY-BAR section 4s four sizes',
+    file: 'src/ui/components/overlays.ts',
+    find: '  for (const size of SURFACE_SIZES) {',
+    replace: '  for (const size of SURFACE_SIZES.slice(0, 3)) {',
+    detectedBy: SURFACE_SCALE,
+  },
+  {
+    item: 'F6',
+    name: 'the stage stops scrolling, so a magnified surface is clipped',
+    file: 'src/ui/chrome.css',
+    find: '  min-width: 0;\n  min-height: 0;\n  overflow: auto;\n}',
+    replace: '  min-width: 0;\n  min-height: 0;\n  overflow: hidden;\n}',
+    detectedBy: SURFACE_SCALE,
+  },
+  {
+    item: 'F6',
+    name: 'every size resolves to the same factor',
+    file: 'src/render/surface.ts',
+    find: '  return size / SURFACE_SIZE_WHOLE;',
+    replace: '  return 1;',
+    detectedBy: UNIT,
+  },
+  {
+    // The two declarations of `SurfaceSize` cannot import each other before
+    // BJ-20, so the guarantee that they agree is one test and nothing else.
+    item: 'F6',
+    name: 'the persisted size list drifts from the presentation one',
+    file: 'src/storage/document.ts',
+    find: 'export const SURFACE_SIZES = [100, 125, 150, 200] as const satisfies readonly SurfaceSize[];',
+    replace: 'export const SURFACE_SIZES = [100, 125, 150, 175] as const satisfies readonly SurfaceSize[];',
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // F7. 320 x 256, and the two bars. The threshold is arithmetic; whether the
+  // bars honour it is a computed style, and whether the row they leave the
+  // play surface is real is a rendered box.
+  // ------------------------------------------------------------------
+  {
+    item: 'F7',
+    name: 'the sticky threshold drifts off QUALITY-BAR section 5',
+    file: 'src/ui/breakpoints.ts',
+    find: 'export const STICKY_BARS_MIN_HEIGHT = 400;',
+    replace: 'export const STICKY_BARS_MIN_HEIGHT = 320;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'F7',
+    name: 'the bars unstick one pixel late, at the threshold rather than below it',
+    file: 'src/ui/breakpoints.ts',
+    find: '  if (viewport.height < STICKY_BARS_MIN_HEIGHT) {',
+    replace: '  if (viewport.height <= STICKY_BARS_MIN_HEIGHT) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'F7',
+    name: 'the top bar sticks at every height, and consumes a 256 px viewport',
+    file: 'src/ui/chrome.css',
+    find: ".bj-shell[data-sticky-bars='on'] .bj-top {",
+    replace: '.bj-shell .bj-top {',
+    detectedBy: SMALL_VIEWPORT,
+  },
+  {
+    item: 'F7',
+    name: 'the height threshold never reaches the page',
+    file: 'src/ui/chrome.ts',
+    find:
+      "      setAttribute(shell.root, 'data-sticky-bars', state.layout.stickyBars ? 'on' : 'off');",
+    replace: '      void state.layout.stickyBars;',
+    detectedBy: SMALL_VIEWPORT,
+  },
+  {
+    item: 'F7',
+    name: 'the play surface takes a share of nothing instead of its minimum height',
+    file: 'src/ui/chrome.css',
+    find: '  height: var(--surface-min-height);\n}',
+    replace: '  height: 0;\n}',
+    detectedBy: SMALL_VIEWPORT,
+  },
+
+  // ------------------------------------------------------------------
+  // F4. Safe-area insets. The item is Demonstration and closes at the
+  // session; these break the armour under it, which is the mechanism: the
+  // meta that makes the insets non-zero, the padding that spends them, and
+  // the sticky offsets that would otherwise pin a bar under the indicator.
+  // ------------------------------------------------------------------
+  {
+    item: 'F4',
+    name: 'the viewport meta loses viewport-fit=cover, and every inset becomes zero',
+    file: 'index.html',
+    find: '<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />',
+    replace: '<meta name="viewport" content="width=device-width, initial-scale=1" />',
+    detectedBy: SAFE_AREA,
+  },
+  {
+    item: 'F4',
+    name: 'the shell padding stops spending the insets',
+    file: 'src/ui/chrome.css',
+    find:
+      '  padding: calc(var(--space-3) + var(--bj-safe-top)) calc(var(--space-3) + var(--bj-safe-right))\n' +
+      '    calc(var(--space-3) + var(--bj-safe-bottom)) calc(var(--space-3) + var(--bj-safe-left));',
+    replace: '  padding: var(--space-3);',
+    detectedBy: SAFE_AREA,
+  },
+  {
+    item: 'F4',
+    name: 'the sticky top bar sticks to the notch instead of below it',
+    file: 'src/ui/chrome.css',
+    find: '  top: var(--bj-safe-top);',
+    replace: '  top: 0;',
+    detectedBy: SAFE_AREA,
   },
 ];
 

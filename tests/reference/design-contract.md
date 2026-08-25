@@ -2,6 +2,42 @@
 
 This compact fixture is the independent source used to verify the committed design-token implementations.
 
+## 5. Responsive and adaptive layout
+
+The four breakpoints, resolved by width first. Orientation distinguishes only the two cases below the
+medium floor, so a viewport at or above the wide floor in portrait, which a 1024 x 1366 tablet
+produces in its natural orientation, resolves to `wide`.
+
+| Name | Range |
+|---|---|
+| `wide` | width >= 1024 px |
+| `medium` | width 768 to 1023 px |
+| `compact` | width < 768 px, landscape |
+| `portrait` | width < 768 px, portrait |
+
+The thresholds those ranges are written on, and the two the same section fixes elsewhere.
+
+| Threshold | Value |
+|---|---|
+| `wide-min-width` | 1024px |
+| `medium-min-width` | 768px |
+| `sticky-bars-min-height` | 400px |
+| `small-viewport-width` | 320px |
+| `small-viewport-height` | 256px |
+| `surface-min-height` | 192px |
+
+`surface-min-height` is the height the play-surface row keeps when the shell has no space to divide,
+per DESIGN section 4. It is three of the largest spacing step rather than a number of its own, and
+`src/ui/tokens.css` declares it that way; it is pinned here because the layout has to know it in both
+places, as a CSS length and as a number the sticky-bar decision is made against.
+
+The play-surface size setting, per section 4. Percentages of the logical-to-CSS scale the layout would
+otherwise choose.
+
+| Setting | Values |
+|---|---|
+| `play-surface-size` | 100 / 125 / 150 / 200 |
+
 ## 15. Design tokens
 
 | Token | Value |
