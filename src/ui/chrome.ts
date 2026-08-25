@@ -35,8 +35,9 @@ import {
   createStartScreen,
 } from './components/screens';
 import { setAttribute } from './dom';
+import { createFocusPolicy } from './input';
 import { createShell, type Shell } from './layout';
-import type { ChromeActions, ChromeState, Component } from './state';
+import { OVERLAY_IDS, type ChromeActions, type ChromeState, type Component } from './state';
 
 /** The assembled chrome: its shell, and the one sync step. */
 export interface Chrome {
@@ -49,6 +50,17 @@ export interface Chrome {
    * function of the state and ignores it.
    */
   sync(state: ChromeState, dt: number): void;
+  /**
+   * Release everything the chrome attached outside its own shell. `BJ-17`.
+   *
+   * There is exactly one such thing, the focus policy's document `keydown`, and
+   * it is the reason this method exists: `boot` disposes the game it built last
+   * before building another, and a listener left behind by a disposed game would
+   * answer `Escape` on behalf of a shell that is no longer in the page. The
+   * shell itself is removed by the composition root, which owns where it was
+   * mounted.
+   */
+  dispose(): void;
 }
 
 /** Build every component, mount it in its region, and return the sync step. */
@@ -88,8 +100,32 @@ export function createChrome(actions: ChromeActions): Chrome {
     bustOutScreen,
   ]);
 
+  // `BJ-17`, item `D4`. Built here rather than in the composition root because
+  // every element it looks after is built here, and because a second holder of
+  // the shell's focus would be a second writer of the same thing.
+  const focus = createFocusPolicy({
+    root: shell.root,
+    anchor: shell.controls,
+    dialog: overlays.host,
+    // The policy is written over `string`, because a focus trap is not a
+    // Blackjack idea and STACK section 3 predicts it moving to the shared
+    // engine. So the id is narrowed here, where SPEC 10's three are known, and
+    // an id that is not one of them has no opener rather than being asserted
+    // into one.
+    opener: (id) => {
+      const known = OVERLAY_IDS.find((candidate) => candidate === id);
+      return known === undefined ? null : overlays.opener(known);
+    },
+    close: () => {
+      actions.closeOverlay();
+    },
+  });
+
   return {
     shell,
+    dispose(): void {
+      focus.dispose();
+    },
     sync(state: ChromeState, dt: number): void {
       // The phase on the shell, so a stylesheet can respond to the screen
       // without a component telling it to, and so a test can wait for one.
@@ -124,6 +160,10 @@ export function createChrome(actions: ChromeActions): Chrome {
         component.update(state, dt);
       }
       overlays.update(state, dt);
+      // Last, and it has to be last: the policy asks whether the element that
+      // holds focus is still in the page and still visible, and every writer
+      // that could have taken it away has now run. `BJ-17`, item `D4`.
+      focus.sync({ overlay: state.overlay });
     },
   };
 }

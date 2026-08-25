@@ -163,6 +163,15 @@ body {
   min-width: 0;
   min-height: 0;
   overflow: auto;
+  /* Item `D6`, and the only scroll chaining in the page that could reach a
+   * browser system gesture. Above 100 percent this box scrolls; a touch pan that
+   * runs past its end chains to the document by default, and at the top of the
+   * document that is the pull-to-refresh gesture. `contain` stops the chain and
+   * stops nothing else: the page's own pull-to-refresh still works everywhere
+   * outside this box, which is the difference between not colliding with a
+   * system gesture and capturing it. `none` here would additionally suppress the
+   * overscroll bounce, which is presentation the platform owns. */
+  overscroll-behavior: contain;
 }
 
 /* Centred by auto margins rather than by `justify-content`, which is the one
@@ -351,14 +360,46 @@ body {
 }
 
 /* After the four fills, so a disabled chip stops reading as a chip. SPEC 4.11
- * asks for exactly this state and for no other control. */
-.bj-button:disabled,
-.bj-chip:disabled {
+ * asks for exactly this state and for no other control.
+ *
+ * **The selector is `aria-disabled`, not `:disabled`.** `BJ-17`: QUALITY-BAR
+ * section 3 keeps an unavailable control focusable and in the DOM, so
+ * `src/ui/dom.ts` writes the ARIA state and never the native property, and this
+ * is the styling that has to follow it there. The state is never carried by
+ * colour alone: the border also goes dashed, which is QUALITY-BAR section 4's
+ * "never colour alone" applied to the one state the chrome has for it. */
+.bj-button[aria-disabled='true'],
+.bj-chip[aria-disabled='true'] {
   background: var(--bj-elevated);
   border-color: var(--bj-text-muted);
   border-style: dashed;
   color: var(--bj-text-muted);
   cursor: not-allowed;
+}
+
+/* ---------------------------------------------------------------------------
+ * Focus. Item `D4`, Critical, and `BJ-17`.
+ *
+ *   "... the focus indicator meets 3:1 contrast and is never removed."
+ *
+ * **There is no `outline: none` in this project and there must never be one.**
+ * That is the whole of the second half of the clause, and it is the reason the
+ * indicator is never restyled away for a control that has "its own" focus look:
+ * the ring is one declaration, spent from `--focus-ring-*`, and every focusable
+ * element in the page carries it. `tests/browser/keyboard.spec.ts` measures what
+ * it renders as, in screenshot pixels, rather than reading these three rules.
+ *
+ * The two below are the elements that receive focus without being controls:
+ * the controls row, which is the stable anchor focus lands on when the screen a
+ * control was on is replaced, and the overlay, which takes focus on open so the
+ * dialog's own name is what a screen reader reads first. Both carry
+ * `tabindex="-1"`, so neither is in the tab order and both can still be focused.
+ * ------------------------------------------------------------------------- */
+
+.bj-controls:focus-visible,
+.bj-overlay:focus-visible {
+  outline: var(--focus-ring-width) var(--focus-ring-style) var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
 }
 
 /* ---------------------------------------------------------------------------
@@ -419,6 +460,13 @@ body {
 .bj-shell[data-breakpoint='portrait'] .bj-chips {
   flex-wrap: nowrap;
   overflow-x: auto;
+  /* Item `D6`'s edge-swipe clause, and the same rule as the stage one row up.
+   * This tray is the only horizontal scroller in the page, it sits at the bottom
+   * of a narrow viewport where the back-navigation edge swipe lives, and a
+   * horizontal pan that ran past its end would chain to the document and from
+   * there to history navigation. A player flicking the chip tray must not be
+   * able to leave the game by overshooting. */
+  overscroll-behavior-x: contain;
 }
 
 .bj-shell[data-breakpoint='compact'] .bj-chip,

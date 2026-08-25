@@ -66,7 +66,21 @@ export function createShell(): Shell {
   const stage = el('div', { className: 'bj-stage', children: [surface] });
   const top = el('header', { className: 'bj-top' });
   const body = el('div', { className: 'bj-body', children: [stage] });
-  const controls = el('footer', { className: 'bj-controls' });
+  // Row 3 doubles as the focus anchor. `BJ-17`, item `D4`: SPEC 10 replaces the
+  // whole of this row at every phase, so a control really is taken out from
+  // under the caret, and QUALITY-BAR section 3 asks for a stable named place for
+  // focus to go rather than `<body>`. This row is the one that is present at
+  // every phase and is where the replacement controls appear, so one `Tab` from
+  // it reaches the first of them. `tabindex="-1"` makes it focusable without
+  // putting it in the tab order; `src/ui/input.ts` is the only caller.
+  const controls = el('footer', {
+    className: 'bj-controls',
+    attributes: {
+      tabindex: '-1',
+      'aria-label': 'Game controls',
+      'data-focus-anchor': 'controls',
+    },
+  });
   const root = el('div', {
     className: 'bj-shell',
     children: [top, body, controls],

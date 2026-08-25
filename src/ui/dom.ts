@@ -8,7 +8,7 @@
  * `button` and never a canvas context, so the only thing a component in
  * `src/ui/` can produce is DOM.
  *
- * Two rules the factory enforces on every caller:
+ * Three rules the factory enforces on every caller:
  *
  * 1. **Text is set through `textContent`, never through `innerHTML`.** A string
  *    that reaches the page as markup is a defect waiting for the first hand
@@ -18,6 +18,17 @@
  *    keyboard operation and hit testing are the platform's, and the one way to
  *    inherit them is to use the element that has them. Nothing here builds a
  *    clickable `<div>`.
+ * 3. **`click` is the only activation event in the project.** Items `D1` and
+ *    `D2` at `BJ-17`. QUALITY-BAR section 3 requires every action to be reachable
+ *    by pointer, by touch and by keyboard, and forbids separate mouse and touch
+ *    handler paths. `click` is the one event the platform raises for all three:
+ *    a mouse press, a touch tap and `Enter` or `Space` on a focused button each
+ *    produce exactly one of it. A control bound to `pointerdown` would be
+ *    unreachable by keyboard and a control bound to `keydown` would be
+ *    unreachable by touch, which is the defect the criterion's second sentence
+ *    names. The listener in `button` below is the only activation binding in the
+ *    whole of `src/`, and `docs/review-checklists/input.md` scans for a second
+ *    one.
  */
 
 /** What `el` may be given. Everything is optional; nothing is positional. */
@@ -70,8 +81,25 @@ export function button(
   const node = el('button', options);
   node.type = 'button';
   node.textContent = label;
-  node.addEventListener('click', onPress);
+  node.addEventListener('click', () => {
+    // The half of `disabled` that `aria-disabled` does not bring with it. See
+    // `setDisabled`: the control stays focusable and stays in the DOM, which is
+    // QUALITY-BAR section 3's rule, and the platform therefore still delivers
+    // the press. Refusing it here is what keeps "unavailable" meaning the same
+    // thing it meant when the attribute was the native one, and it is refused in
+    // exactly one place rather than in each of the three components that grey a
+    // control out.
+    if (unavailable(node)) {
+      return;
+    }
+    onPress();
+  });
   return node;
+}
+
+/** Whether a control is currently greyed out. See `setDisabled`. */
+export function unavailable(node: Element): boolean {
+  return node.getAttribute('aria-disabled') === 'true';
 }
 
 /** Empty an element, so a list can be rebuilt from a changed value. */
@@ -80,7 +108,7 @@ export function empty(node: Element): void {
 }
 
 /**
- * Set `disabled` and, with it, the reason a control is unavailable.
+ * Grey a control out **in place**, and with it the reason it is unavailable.
  *
  * The two move together on purpose. SPEC 4.11 asks for a reason on every
  * refusal, and a control that is greyed with no explanation is the half of that
@@ -88,14 +116,30 @@ export function empty(node: Element): void {
  * `aria-describedby` is deliberately not used here: the accessible description
  * is `BJ-18`'s to design, and a half-built one now would be harder to correct
  * than an absent one.
+ *
+ * **`aria-disabled`, and never the native `disabled` property.** `BJ-17`, and
+ * QUALITY-BAR section 3 states the rule and the defect behind it in as many
+ * words: "A control that becomes unavailable is disabled in place with
+ * `aria-disabled="true"`, kept focusable and kept in the DOM ... Without this
+ * rule, focus on **Hit** when a hand busts lands on `<body>` and the screen
+ * reader loses its place." A natively disabled button leaves the tab order the
+ * moment it is greyed, so the five action controls this game renders on every
+ * hand would take the player's focus with them each time a rule turned one off,
+ * and the tab order under a keyboard would change shape between two frames of
+ * one round. The measured version of that was in this project before this part:
+ * a tab walk of the start screen stopped at Bronze and Start, and Silver and
+ * Gold, greyed because SPEC 6 has not unlocked them, could not be reached at all
+ * to find out why.
+ *
+ * What the native attribute also did, and this does not, is refuse the press.
+ * `button` above refuses it instead, in one place, so the two halves cannot come
+ * apart.
  */
 export function setDisabled(node: HTMLButtonElement, disabled: boolean, reason: string | null): void {
   // Written only when it moved, like every other writer in this file. The sync
   // step runs on every frame, and an attribute set to the value it already has
   // still invalidates the style of an element a selector matches on.
-  if (node.disabled !== disabled) {
-    node.disabled = disabled;
-  }
+  setAttribute(node, 'aria-disabled', disabled ? 'true' : null);
   const wanted = disabled ? reason : null;
   if (wanted === null) {
     if (node.hasAttribute('title')) {
