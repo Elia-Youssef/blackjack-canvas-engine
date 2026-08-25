@@ -87,6 +87,7 @@ import { LOWEST_TABLE, createWallet, tableLimits, type TableId } from './core/wa
 import { PACING_NAMES, resolveMotion, type Motion } from './render/animate';
 import { createPlaySurface, type PlaySurface, type SceneState } from './render/scene';
 import { DEFAULT_SURFACE_SIZE, type SurfaceSize } from './render/surface';
+import { surfacePalette, type SelectedPalette } from './render/tokens';
 import {
   barsStick,
   planSurface,
@@ -98,8 +99,10 @@ import {
   type SurfacePlan,
   type Viewport,
 } from './ui/breakpoints';
+import type { QueueState } from './ui/announce';
 import { createChrome } from './ui/chrome';
 import { resolvedLocale } from './ui/format';
+import { createForcedColorsPreference, type ForcedColorsPreference } from './ui/forced-colors';
 import type { Shell } from './ui/layout';
 import { createFrameLoop, type FrameLoop } from './ui/loop';
 import { createMotionPreference, type MotionPreference } from './ui/motion';
@@ -206,6 +209,30 @@ export interface LayoutProbe {
   readonly dpr: number;
 }
 
+/**
+ * What the accessibility layer resolved for the last frame. `BJ-18`.
+ *
+ * `MotionProbe`'s pattern, for the same kind of claim and with the same rule:
+ * every field here is also observable from the DOM, and the specs measure the
+ * DOM first and cross-check this second, so the probe cannot be the only witness
+ * to anything. What it adds is the two things the page cannot publish as text.
+ *
+ * `palette` is item `G9`'s canvas half: which play-surface token set the frame
+ * selected and why. It reports `standard-fallback` under forced colors today,
+ * because SPEC 16 defines no high-contrast set for the play surface;
+ * `src/render/tokens.ts` carries that park in full and `BJ-18`'s report carries
+ * the sketched resolution.
+ *
+ * `announced` and `queue` are item `G4`'s: what each live region was last
+ * written with, and what the one queue is still holding.
+ */
+export interface AccessibilityProbe {
+  readonly forcedColors: boolean;
+  readonly palette: { readonly name: SelectedPalette['name']; readonly reason: SelectedPalette['reason'] };
+  readonly announced: { readonly polite: string | null; readonly assertive: string | null };
+  readonly queue: QueueState;
+}
+
 /** A running game. Returned by `boot`, and the handle `BJ-20` will persist. */
 export interface Game {
   /** The machine's snapshot. The only authority on the game's state. */
@@ -216,6 +243,8 @@ export interface Game {
   motion(): MotionProbe;
   /** What the last frame resolved for the layout. Items `F1`, `F3`, `F6`. */
   layout(): LayoutProbe;
+  /** What the last frame resolved for accessibility. Items `G4` and `G9`. */
+  accessibility(): AccessibilityProbe;
   /** Stop the loop and take the chrome off the page. */
   dispose(): void;
 }
@@ -420,6 +449,11 @@ export function boot(options: BootOptions = {}): Game {
   const preference: MotionPreference = createMotionPreference(
     options.alwaysReduceMotion === undefined ? {} : { alwaysReduce: options.alwaysReduceMotion },
   );
+  // The only place in the project that asks the platform for forced colors, on
+  // the same terms and for the same reason. Item `G9`: the chrome's half is done
+  // by the stylesheet, which reads the query itself; the canvas has no
+  // stylesheet, so the query is resolved here and handed to the token layer.
+  const forcedColors: ForcedColorsPreference = createForcedColorsPreference();
 
   let statistics: Statistics = openStatisticsSession(NO_STATISTICS);
   let history: History = NO_HISTORY;
@@ -497,7 +531,18 @@ export function boot(options: BootOptions = {}): Game {
     separateFelt: true,
   });
 
-  function chromeState(readout: TableReadout, motion: Motion): ChromeState {
+  /**
+   * The frame's palette selection. Item `G9`, and the play surface's half of it.
+   *
+   * Resolved beside the motion policy and from the same one platform read the
+   * chrome is given, so the stylesheet's forced-colors block and the renderer's
+   * token set are one decision rather than two answers to one question. It is
+   * held for the probe rather than passed into the draw calls, because there is
+   * currently one set to select: `src/render/tokens.ts` carries why.
+   */
+  let palette: SelectedPalette = surfacePalette(false);
+
+  function chromeState(readout: TableReadout, motion: Motion, forced: boolean): ChromeState {
     return {
       layout,
       readout,
@@ -509,6 +554,7 @@ export function boot(options: BootOptions = {}): Game {
       notice,
       overlay,
       motion,
+      forcedColors: forced,
     };
   }
 
@@ -636,8 +682,13 @@ export function boot(options: BootOptions = {}): Game {
     // "every animation" and item `E9`'s "both motion modes" each rest on.
     const motion = resolveMotion({ reducedMotion: preference.reduced(), speed: table.speed() });
 
+    // One platform read per frame, handed to both halves, exactly as the motion
+    // policy is. Item `G9`.
+    const forced = forcedColors.active();
+    palette = surfacePalette(forced);
+
     surface.render(sceneState(readout, motion), dt);
-    chrome.sync(chromeState(readout, motion), dt);
+    chrome.sync(chromeState(readout, motion, forced), dt);
   }
 
   const loop: FrameLoop = createFrameLoop({ onFrame: frame });
@@ -680,6 +731,12 @@ export function boot(options: BootOptions = {}): Game {
         pacing,
       };
     },
+    accessibility: (): AccessibilityProbe => ({
+      forcedColors: forcedColors.active(),
+      palette: { name: palette.name, reason: palette.reason },
+      announced: chrome.announcer.spoken(),
+      queue: chrome.announcer.queue(),
+    }),
     dispose(): void {
       loop.stop();
       preference.dispose();

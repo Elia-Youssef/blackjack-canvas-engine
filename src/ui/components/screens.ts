@@ -23,10 +23,11 @@
  */
 
 import { bustOut, canEnter, tableLimits, type TableId, TABLES } from '../../core/wallet';
+import { insuranceRefusal, tableLabel } from '../availability';
 import { button, el, empty, setAttribute, setDisabled, setHidden, setText } from '../dom';
 import { chips as formatChips } from '../format';
 import type { ChromeActions, ChromeState, Component } from '../state';
-import { reasonText, tableText } from '../text';
+import { offerText, reasonText, tableText } from '../text';
 
 /**
  * SPEC 10's start screen: pick a table, then Start.
@@ -44,7 +45,7 @@ export function createStartScreen(actions: ChromeActions): Component {
 
   for (const limits of TABLES) {
     const control = button(
-      `${tableText(limits.id)} ${formatChips(limits.minimum)} to ${formatChips(limits.maximum)}`,
+      tableLabel(limits.id),
       () => {
         actions.queue({ kind: 'chooseTable', table: limits.id });
       },
@@ -76,7 +77,7 @@ export function createStartScreen(actions: ChromeActions): Component {
       const { bestBalance, chips } = state.readout.wallet;
       for (const [id, control] of tableButtons) {
         const open = canEnter(id, bestBalance, chips);
-        setDisabled(control, !open, reasonText('table-locked'));
+        setDisabled(control, !open, reasonText('table-locked'), tableLabel(id));
         setAttribute(control, 'aria-pressed', String(id === state.readout.table));
       }
     },
@@ -110,15 +111,12 @@ export function createInsuranceScreen(actions: ChromeActions): Component {
         return;
       }
       const { offer } = phase;
-      const stake = formatChips(offer.stake);
-      setText(
-        prompt,
-        offer.evenMoney
-          ? `Even money on your natural, for a stake of ${stake}.`
-          : `Insurance against a dealer natural, for a stake of ${stake}. It pays 2 to 1.`,
-      );
-      const unfunded = !offer.evenMoney && wallet.chips < offer.stake;
-      setDisabled(take, unfunded, reasonText('insufficient-chips'));
+      // The sentence and the availability rule are both read from one place, so
+      // the prompt the screen prints and the prompt the mirror states are the
+      // same string and the greyed Take and the mirror's reason are one reading.
+      setText(prompt, offerText(offer));
+      const refusal = insuranceRefusal(offer, wallet.chips);
+      setDisabled(take, refusal !== null, refusal === null ? null : reasonText(refusal), 'Take');
       setAttribute(take, 'data-even-money', String(offer.evenMoney));
     },
   };

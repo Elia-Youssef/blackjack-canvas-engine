@@ -37,8 +37,8 @@ import {
   tableLimits,
   type ChipDenomination,
 } from '../../core/wallet';
+import { chipLabel } from '../availability';
 import { button, el, setDisabled, setHidden } from '../dom';
-import { chips as formatChips } from '../format';
 import type { ChromeActions, ChromeState, Component } from '../state';
 
 /** The label the disabled chips carry, per SPEC 4.11's ceiling. */
@@ -54,7 +54,7 @@ export function createBetting(actions: ChromeActions): Component {
   });
   for (const denomination of CHIP_DENOMINATIONS) {
     const control = button(
-      formatChips(denomination),
+      chipLabel(denomination),
       () => {
         actions.queue({ kind: 'tapChip', chip: denomination });
       },
@@ -110,7 +110,7 @@ export function createBetting(actions: ChromeActions): Component {
       for (const [denomination, control] of chipButtons) {
         // SPEC 4.11's one disabled case, asked of the wallet and not re-derived.
         const enabled = chipEnabled(denomination, limits, balance);
-        setDisabled(control, !enabled, OVER_CEILING);
+        setDisabled(control, !enabled, OVER_CEILING, chipLabel(denomination));
       }
     },
   };

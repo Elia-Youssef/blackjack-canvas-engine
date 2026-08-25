@@ -30,6 +30,15 @@ const isCI = process.env['CI'] !== undefined;
 const reuseServer = !isCI && process.env['BJ_REUSE_SERVER'] !== undefined;
 
 /**
+ * The one spec whose assertion is about a real frame interval. `BJ-18`.
+ *
+ * Named once and read twice, by the timing projects that run it and by the main
+ * projects that ignore it, so the two cannot come apart. The projects list below
+ * carries the whole reasoning.
+ */
+const TIMING_SPEC = /motion-demo\.spec\.ts/;
+
+/**
  * Browser gate.
  *
  * The server here is `vite preview` over the built `dist/`, never the dev
@@ -47,21 +56,9 @@ export default defineConfig({
   fullyParallel: true,
   forbidOnly: isCI,
   retries: isCI ? 1 : 0,
-  // CI runs one worker; local runs four. `BJ-16`.
-  //
-  // **Four is measured, not chosen.** The default was half the cores, which on a
-  // 32-thread machine is sixteen browsers at once, and `BJ-16` grew the suite to
-  // a hundred tests per engine. At that load the frame interval inside a WebKit
-  // worker stretched to 0.117 to 0.158 s, and `motion-demo.spec.ts`'s peek timing
-  // needs samples finer than a quarter of the peek pause to tell the two arms
-  // apart: every one of its six attempts came back too coarse and the gate went
-  // red twice in a row while passing in isolation. That is a measurement whose
-  // answer depends on how many other browsers are running, which is not a gate.
-  //
-  // The alternative was to widen that spec's tolerance to whatever interval it
-  // observed, which would have removed the discrimination item `E6` is graded on.
-  // Fewer workers costs wall clock and removes nothing: the whole suite runs
-  // green here in under four minutes with no flags.
+  // CI runs one worker; local runs four. See `TIMING_SPEC` below for why four is
+  // affordable again: the one measurement that cannot share a machine no longer
+  // shares one, so the rest of the suite is free to use the machine it is on.
   workers: isCI ? 1 : 4,
   reporter: isCI ? [['list'], ['html', { open: 'never' }]] : [['list']],
 
@@ -78,13 +75,96 @@ export default defineConfig({
   },
 
   projects: [
-    { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
-    { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
-    // Cross-engine behaviour is compared at one CSS-to-device-pixel ratio. The
-    // F6 zoom case creates its own DPR 1 and 1.25 contexts, so keeping Retina DPR
-    // here would turn every unrelated WebKit timing assertion into a backing-
-    // store throughput measurement while adding no density coverage.
-    { name: 'webkit', use: { ...devices['Desktop Safari'], deviceScaleFactor: 1 } },
+    // ------------------------------------------------------------------
+    // The timing chain. One spec, three engines, one worker each, in series.
+    // ------------------------------------------------------------------
+    //
+    // **Why this exists.** `motion-demo.spec.ts` measures item `E6`'s clause
+    // that the dealer's peek takes the same time on both of its arms, and it
+    // measures it by sampling the game's own animation frames. Its quality bar
+    // is a real frame interval no coarser than 0.075 s, a quarter of SPEC 5's
+    // 0.30 s peek pause, because two arms half a peek apart cannot be told from
+    // each other with samples wider than that. A frame interval is not a
+    // property of this project's code: it is what the machine hands the engine
+    // while every other browser on it is also asking. Under three-engine
+    // co-tenancy WebKit delivers 0.081 to 0.091 s and the spec goes red; alone
+    // it delivers well inside the bar and the whole file passes in 7.5 s.
+    //
+    // **Two things were tried first and both were wrong.** Widening the spec's
+    // tolerance to whatever interval it observed would delete the very
+    // discrimination `E6` is graded on. Cutting the global worker count taxes
+    // every one of the 789 other tests to protect twelve: `BJ-16` cut it to four
+    // for this reason, `BJ-18` cut it to three and then two, and at three the
+    // spec still failed at 0.077 to 0.091 s. Paying for isolation globally does
+    // not even buy isolation.
+    //
+    // **So the spec is isolated instead of the suite being slowed.** The three
+    // projects below run it one engine at a time, one worker each, chained by
+    // `dependencies` so that no two of them and nothing else is running while
+    // one of them measures. The three main projects ignore the spec and depend
+    // on the last link, so they start only once the timing chain is done and
+    // then use the whole machine at four workers. Measured on a normally loaded
+    // machine: 9.2 minutes for the full 801, three consecutive runs green, and
+    // the timing chain itself is about 45 s of that.
+    //
+    // **The accepted cost, stated rather than discovered.** A dependency that
+    // fails skips its dependents, so a red timing spec leaves 789 tests unrun
+    // rather than reporting them. That is deliberate and it is cheap: the
+    // failure surfaces in about 45 s instead of at the end of a nine-minute run,
+    // and the remainder is one command away with
+    // `npx playwright test --project=chromium --no-deps`. The alternative,
+    // letting the mains run anyway, would mean waiting nine minutes to be told
+    // something that was known in the first minute.
+    {
+      name: 'timing-chromium',
+      testMatch: TIMING_SPEC,
+      workers: 1,
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'timing-firefox',
+      testMatch: TIMING_SPEC,
+      workers: 1,
+      dependencies: ['timing-chromium'],
+      use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      name: 'timing-webkit',
+      testMatch: TIMING_SPEC,
+      workers: 1,
+      dependencies: ['timing-firefox'],
+      // Cross-engine timing is compared at one CSS-to-device-pixel ratio. The
+      // explicit surface tests retain DPR 2 and 2.6273 coverage.
+      use: { ...devices['Desktop Safari'], deviceScaleFactor: 1 },
+    },
+
+    // ------------------------------------------------------------------
+    // The suite. Everything else, on all three engines, at the global workers.
+    // ------------------------------------------------------------------
+    //
+    // `testIgnore` and the timing projects' `testMatch` are the same pattern
+    // read in the two directions, so the spec runs in exactly one place and
+    // adding a second timing-sensitive file means adding it to one constant.
+    {
+      name: 'chromium',
+      testIgnore: TIMING_SPEC,
+      dependencies: ['timing-webkit'],
+      use: { ...devices['Desktop Chrome'] },
+    },
+    {
+      name: 'firefox',
+      testIgnore: TIMING_SPEC,
+      dependencies: ['timing-webkit'],
+      use: { ...devices['Desktop Firefox'] },
+    },
+    {
+      name: 'webkit',
+      testIgnore: TIMING_SPEC,
+      dependencies: ['timing-webkit'],
+      // Keep unrelated WebKit assertions out of Retina backing-store throughput
+      // while the dedicated surface cases exercise high density explicitly.
+      use: { ...devices['Desktop Safari'], deviceScaleFactor: 1 },
+    },
   ],
 
   webServer: {

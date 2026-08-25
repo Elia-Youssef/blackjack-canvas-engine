@@ -65,7 +65,7 @@ import {
   type Component,
   type OverlayId,
 } from '../state';
-import { milestoneText, outcomeText, playerActionText, tableText } from '../text';
+import { milestoneRowText, outcomeText, playerActionText, tableText } from '../text';
 
 /**
  * The two coach modes this part offers. SPEC 7 has three.
@@ -349,7 +349,7 @@ function statisticsPanel(): Component {
           milestones.append(
             el('li', {
               className: 'bj-milestone',
-              text: milestoneText(id),
+              text: milestoneRowText(id, awarded),
               attributes: { 'data-milestone': id, 'data-awarded': String(awarded) },
             }),
           );

@@ -36,6 +36,7 @@
 
 import {
   boot,
+  type AccessibilityProbe,
   type BootOptions,
   type Game,
   type LayoutProbe,
@@ -112,6 +113,8 @@ export interface GameHarness {
   motion(): MotionProbe;
   /** What the last frame resolved for the layout. `BJ-16`, item `F6`. */
   layout(): LayoutProbe;
+  /** What the last frame resolved for accessibility. `BJ-18`, items `G4`, `G9`. */
+  accessibility(): AccessibilityProbe;
   /** Begin sampling the wallet every frame, until SPEC 10's round result. */
   watch(): void;
   /** Everything `watch` has sampled, oldest first. */
@@ -151,6 +154,7 @@ const harness: GameHarness = {
   session: () => running().session(),
   motion: () => running().motion(),
   layout: () => running().layout(),
+  accessibility: () => running().accessibility(),
 
   trace(): void {
     traced.length = 0;

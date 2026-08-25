@@ -9,6 +9,11 @@
  * file would agree with the first on every hand until a house rule moved, which
  * is the failure those exports exist to prevent.
  *
+ * **`BJ-18` moved the composition of those calls to `src/ui/availability.ts`**,
+ * unchanged, because item `G4`'s mirror has to state the same answers in words:
+ * the reason Double is greyed is now read once and rendered twice, on the
+ * control and in the mirror, rather than derived in each place.
+ *
  * **Stand is the one action with no predicate behind it, and that is deliberate
  * rather than an omission.** SPEC 4.5 gives Stand one condition, "hand live",
  * and `table.ts` applies no hand-level refusal to it: the phase gate is the
@@ -24,57 +29,12 @@
  * machine's own reason value on `data-reason`.
  */
 
-import {
-  doubleRefusal,
-  hitRefusal,
-  splitRefusal,
-  surrenderRefusal,
-  type ActionContext,
-  type RejectionReason,
-} from '../../core/table';
-import type { HandInPlay, PlayerAction } from '../../core/types';
-import { canFund } from '../../core/wallet';
+import type { ActionContext } from '../../core/table';
+import type { PlayerAction } from '../../core/types';
+import { ACTION_LABELS, HAND_ACTIONS, actionRefusal } from '../availability';
 import { button, el, setAttribute, setDisabled, setHidden } from '../dom';
 import type { ChromeActions, ChromeState, Component } from '../state';
 import { reasonText } from '../text';
-
-/** One control: the intent it queues, its label, and why it may be unavailable. */
-interface ActionRow {
-  readonly action: PlayerAction;
-  readonly label: string;
-  /** `null` when the action is available on this hand right now. */
-  readonly refusal: (hand: HandInPlay, context: ActionContext, chips: number) => RejectionReason | null;
-}
-
-/**
- * SPEC 4.5's table, in its order.
- *
- * Double and Split ask the availability rule first and the balance second,
- * which is the order `table.ts` applies them in: the availability layer sits
- * above the wallet, and a hand that cannot be split at all should say so rather
- * than complain about money.
- */
-const ROWS: readonly ActionRow[] = Object.freeze([
-  { action: 'hit', label: 'Hit', refusal: (hand) => hitRefusal(hand) },
-  { action: 'stand', label: 'Stand', refusal: () => null },
-  {
-    action: 'double',
-    label: 'Double',
-    refusal: (hand, context, chips) =>
-      doubleRefusal(hand, context) ?? (canFund(hand.wager, chips) ? null : 'insufficient-chips'),
-  },
-  {
-    action: 'split',
-    label: 'Split',
-    refusal: (hand, context, chips) =>
-      splitRefusal(hand, context) ?? (canFund(hand.wager, chips) ? null : 'insufficient-chips'),
-  },
-  {
-    action: 'surrender',
-    label: 'Surrender',
-    refusal: (hand, context) => surrenderRefusal(hand, context),
-  },
-]);
 
 /** Build the action bar. Visible at SPEC 10's `playerTurn` and nowhere else. */
 export function createActions(actions: ChromeActions): Component {
@@ -84,15 +44,15 @@ export function createActions(actions: ChromeActions): Component {
     attributes: { 'data-screen': 'player-turn', role: 'group', 'aria-label': 'Hand actions' },
   });
 
-  for (const row of ROWS) {
+  for (const action of HAND_ACTIONS) {
     const control = button(
-      row.label,
+      ACTION_LABELS[action],
       () => {
-        actions.queue({ kind: row.action });
+        actions.queue({ kind: action });
       },
-      { className: 'bj-button', attributes: { 'data-action': row.action } },
+      { className: 'bj-button', attributes: { 'data-action': action } },
     );
-    controls.set(row.action, control);
+    controls.set(action, control);
     root.append(control);
   }
 
@@ -109,13 +69,18 @@ export function createActions(actions: ChromeActions): Component {
         return;
       }
       const context: ActionContext = { rules, splits };
-      for (const row of ROWS) {
-        const control = controls.get(row.action);
+      for (const action of HAND_ACTIONS) {
+        const control = controls.get(action);
         if (control === undefined) {
           continue;
         }
-        const refusal = row.refusal(hand, context, wallet.chips);
-        setDisabled(control, refusal !== null, refusal === null ? null : reasonText(refusal));
+        const refusal = actionRefusal(action, hand, context, wallet.chips);
+        setDisabled(
+          control,
+          refusal !== null,
+          refusal === null ? null : reasonText(refusal),
+          ACTION_LABELS[action],
+        );
         setAttribute(control, 'data-reason', refusal);
       }
     },
