@@ -80,7 +80,11 @@ export default defineConfig({
   projects: [
     { name: 'chromium', use: { ...devices['Desktop Chrome'] } },
     { name: 'firefox', use: { ...devices['Desktop Firefox'] } },
-    { name: 'webkit', use: { ...devices['Desktop Safari'] } },
+    // Cross-engine behaviour is compared at one CSS-to-device-pixel ratio. The
+    // F6 zoom case creates its own DPR 1 and 1.25 contexts, so keeping Retina DPR
+    // here would turn every unrelated WebKit timing assertion into a backing-
+    // store throughput measurement while adding no density coverage.
+    { name: 'webkit', use: { ...devices['Desktop Safari'], deviceScaleFactor: 1 } },
   ],
 
   webServer: {
