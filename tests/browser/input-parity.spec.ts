@@ -143,6 +143,10 @@ const ROUTE_ACTIONS = Object.freeze({
   resetBankroll: ['chooseTable', 'start', 'tapChip', 'deal', 'stand', 'nextHand', 'resetBankroll'],
   overlays: ['openOverlay', 'closeOverlay'],
   settings: ['openOverlay', 'setCoachMode', 'setSpeed', 'setSurfaceSize'],
+  // `BJ-19`'s mute route. One action, and it is driven by all three methods
+  // like every other, because the control is a `<button>` and inherits the
+  // platform's activation for each of them.
+  sound: ['toggleMuted'],
   disclosure: ['moreReadouts'],
 });
 
@@ -483,6 +487,30 @@ for (const method of INPUT_METHODS) {
       driver.declared(ROUTE_ACTIONS.settings);
     });
 
+    test('toggles the sound from the play screen, once, and says so', async ({ page }) => {
+      // `BJ-19`'s one action outside every overlay. The press must work by all
+      // three methods because it is the control SPEC 14's "single action" is
+      // graded on, and the assertion beside it is the state in words: the
+      // label flips with the pressed state, which is the non-colour signal
+      // `BJ-18` requires a state to carry.
+      const driver = route(page, method);
+      await openShippedPage(page);
+      await waitForPhase(page, 'start');
+      const mute = page.locator('[data-control="mute"]');
+      await expect(mute).toHaveAttribute('aria-pressed', 'false');
+      await expect(mute).toHaveText('Mute');
+
+      await driver.press('toggleMuted', 'data-control=mute');
+      await expect(mute).toHaveAttribute('aria-pressed', 'true');
+      await expect(mute).toHaveText('Unmute');
+
+      await driver.again('data-control=mute');
+      await expect(mute).toHaveAttribute('aria-pressed', 'false');
+      await expect(mute).toHaveText('Mute');
+
+      driver.declared(ROUTE_ACTIONS.sound);
+    });
+
     test('opens the narrow bars readout disclosure', async ({ page }) => {
       // The one control in the chrome that is not a `<button>`. A `<summary>` is
       // operable by pointer, by touch and by a key on every engine, which is why
@@ -685,6 +713,7 @@ const CHROME_ACTIONS: Readonly<Record<keyof ChromeActions, string>> = Object.fre
   setCoachMode: 'setCoachMode',
   setSpeed: 'setSpeed',
   setSurfaceSize: 'setSurfaceSize',
+  toggleMuted: 'toggleMuted',
 });
 
 test.describe('D2: the action list is the machines, not this files', () => {

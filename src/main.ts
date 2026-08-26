@@ -82,12 +82,20 @@ import {
   type TableOptions,
   type TableReadout,
 } from './core/table';
-import type { Intent, SettledHand } from './core/types';
+import type { Intent, IntentKind, SettledHand } from './core/types';
 import { LOWEST_TABLE, createWallet, tableLimits, type TableId } from './core/wallet';
 import { PACING_NAMES, resolveMotion, type Motion } from './render/animate';
 import { createPlaySurface, type PlaySurface, type SceneState } from './render/scene';
 import { DEFAULT_SURFACE_SIZE, type SurfaceSize } from './render/surface';
 import { surfacePalette, type SelectedPalette } from './render/tokens';
+import {
+  DEFAULT_MUTED,
+  DEFAULT_VOLUME,
+  createAudioEngine,
+  type AudioEngine,
+  type CueId,
+} from './ui/audio';
+import { cuesFor, type CueFrame } from './ui/cues';
 import {
   barsStick,
   planSurface,
@@ -155,6 +163,23 @@ export interface SessionState {
    * place to put it and the layout has one place to read it.
    */
   readonly surfaceSize: SurfaceSize;
+  /**
+   * SPEC 14's mute. `BJ-19`, item `K3`.
+   *
+   * Here on the Speed precedent: SPEC 13 persists the settings, `BJ-20` wires
+   * the reload flows, and the "persists" clause closes there with `I4` and
+   * `I5`. What `BJ-19` owes that part is the boot pass-through below, which
+   * applies a restored value at the audio engine's creation exactly as
+   * QUALITY-BAR section 10 asks, and this read side, so a restore has one
+   * place to land and a save has one place to read.
+   */
+  readonly muted: boolean;
+  /**
+   * SPEC 14's volume, `MIN_VOLUME` to `MAX_VOLUME`. `BJ-19`, item `K3`, on the
+   * same terms as `muted` beside it. The slider that writes it is `I5` at
+   * `BJ-20`; the engine's clamping is the only arithmetic either will need.
+   */
+  readonly volume: number;
 }
 
 /**
@@ -233,6 +258,41 @@ export interface AccessibilityProbe {
   readonly queue: QueueState;
 }
 
+/**
+ * What the audio layer resolved, and what it was offered. `BJ-19`, item `K5`.
+ *
+ * `MotionProbe`'s pattern: a claim about emission cannot be observed from the
+ * DOM, because a cue that found no context, or found the game muted, changed
+ * nothing on the page. The counts below are the offers rather than the sounds,
+ * which is the half the criterion grades: "emitted on its stated trigger
+ * exactly once, and on no other trigger". `offeredInPhase` keys them by the
+ * SPEC 10 screen the machine was on, which is what makes a negative control
+ * writable from outside: a cue that must not fire in a phase is a key this
+ * record must not carry. The browser gate reads this through the test-time
+ * harness; the shipped chunk exports nothing, and the record crosses that
+ * boundary as plain numbers.
+ *
+ * **Item `K4`'s capture rides this record, and closes later.** "Every audio
+ * cue has a visual counterpart and the game is fully understandable with
+ * sound off" is method D and closes at the `BJ-23` demonstration session,
+ * which captures `artifacts/demos/audio-parity`; what this part ships is the
+ * armour, not the closure, and the armour is this tally beside the page the
+ * cues fired on, so the session can hold the two halves of the parity claim
+ * in one recording.
+ */
+export interface AudioProbe {
+  /** SPEC 14's mute, as the engine holds it. */
+  readonly muted: boolean;
+  /** SPEC 14's volume, after the engine's clamping. */
+  readonly volume: number;
+  /** Whether the first gesture has been answered, however it answered. */
+  readonly started: boolean;
+  /** How many times each of SPEC 15's thirteen cues has been offered. */
+  readonly cues: Readonly<Record<CueId, number>>;
+  /** The same counts, keyed `cue@phase`. */
+  readonly cuePhases: Readonly<Record<string, number>>;
+}
+
 /** A running game. Returned by `boot`, and the handle `BJ-20` will persist. */
 export interface Game {
   /** The machine's snapshot. The only authority on the game's state. */
@@ -245,6 +305,8 @@ export interface Game {
   layout(): LayoutProbe;
   /** What the last frame resolved for accessibility. Items `G4` and `G9`. */
   accessibility(): AccessibilityProbe;
+  /** What the audio layer holds, and every cue it has been offered. Item `K5`. */
+  audio(): AudioProbe;
   /** Stop the loop and take the chrome off the page. */
   dispose(): void;
 }
@@ -277,6 +339,22 @@ export interface BootOptions {
    * `prefers-reduced-motion` decides, which is what `E7` is graded on.
    */
   readonly alwaysReduceMotion?: boolean;
+  /**
+   * SPEC 14's mute, applied at the audio engine's creation. `BJ-19`, `K3`.
+   *
+   * The persisted-settings door `speed` and `alwaysReduceMotion` arrive
+   * through, on the `E9` precedent: QUALITY-BAR section 10 wants a restored
+   * mute applied at creation, so the value has to reach the engine before any
+   * gesture creates a context for it to govern. Unset means unmuted, which is
+   * `DEFAULT_MUTED`'s own reading; the reload that would set it is `BJ-20`.
+   */
+  readonly muted?: boolean;
+  /**
+   * SPEC 14's volume, applied at the audio engine's creation. `BJ-19`, `K3`.
+   *
+   * Clamped to `MIN_VOLUME` to `MAX_VOLUME` by the engine, whatever arrives.
+   */
+  readonly volume?: number;
 }
 
 /** The game this module last built, so a second boot can dispose the first. */
@@ -464,6 +542,16 @@ export function boot(options: BootOptions = {}): Game {
   let overlay: OverlayId | null = null;
   let surfaceSize: SurfaceSize = options.surfaceSize ?? DEFAULT_SURFACE_SIZE;
 
+  // The audio engine, `BJ-19`. Built beside the two platform preferences
+  // because it is the third thing that reads one: the gesture policy asks the
+  // page for its first pointerdown or keydown, and nothing sounds until then.
+  // The persisted mute and volume are applied here, at creation, which is the
+  // only moment QUALITY-BAR section 10 gives them to be applied in.
+  const audio: AudioEngine = createAudioEngine({
+    muted: options.muted === undefined ? DEFAULT_MUTED : options.muted,
+    volume: options.volume === undefined ? DEFAULT_VOLUME : options.volume,
+  });
+
   const actions: ChromeActions = {
     queue(intent: Intent): void {
       table.queue(intent);
@@ -492,6 +580,12 @@ export function boot(options: BootOptions = {}): Game {
       // surface from the new size and resizes the backing store, and the machine
       // is not told, because a CSS scale decides nothing about a round.
       surfaceSize = size;
+    },
+    toggleMuted(): void {
+      // SPEC 14's sound, and item `K3`'s single action. The engine holds the
+      // one copy of the value; the next frame's chrome state reads it back,
+      // so the control, the gain and the announcement cannot disagree.
+      audio.setMuted(!audio.muted());
     },
   };
 
@@ -555,6 +649,7 @@ export function boot(options: BootOptions = {}): Game {
       overlay,
       motion,
       forcedColors: forced,
+      muted: audio.muted(),
     };
   }
 
@@ -566,12 +661,20 @@ export function boot(options: BootOptions = {}): Game {
    * what basic strategy would have done in the position they did it from. The
    * active hand index is taken from the same pre-drain phase, which is what
    * makes the verdict attributable to a hand for SPEC 12.
+   *
+   * `appliedIntent` is written for the cue derivation below: an accepted
+   * intent is the trigger of SPEC 15's button-press cue, and the drain is the
+   * one boundary every press already passes through, so the audio layer
+   * observes it here rather than growing a listener of its own.
    */
+  let appliedIntent: IntentKind | null = null;
+
   function drainInput(): void {
     const before = table.readout();
     const situation = situationAt(before);
     const report = table.drain();
 
+    appliedIntent = report.applied !== null && report.applied.ok ? report.applied.kind : null;
     const applied = report.applied;
     if (applied !== null && applied.ok) {
       if (applied.kind === 'deal') {
@@ -630,6 +733,29 @@ export function boot(options: BootOptions = {}): Game {
     );
   }
 
+  /**
+   * The audio observation point. `BJ-19`, item `K5`.
+   *
+   * One place, this one, offers cues to the engine, and it is the same
+   * boundary the coach's observations and the announcer's deltas are computed
+   * at: the frame, after the drain and the update, holding the machine's
+   * snapshot, the intent the drain accepted and the awarded milestones. The
+   * double-fire hazard the part brief names, chrome sync and an audio observer
+   * each seeing one transition and each firing for it, is answered by there
+   * being no second observer: the chrome is synced from the same state below
+   * and never offers a cue. `src/ui/cues.ts` is the pure derivation and this
+   * is its only caller.
+   */
+  let previousCue: CueFrame | null = null;
+
+  function emitCues(readout: TableReadout): void {
+    const frame: CueFrame = { applied: appliedIntent, readout, milestones: statistics.milestones };
+    for (const cue of cuesFor(previousCue, frame)) {
+      audio.cue(cue, readout.phase.kind);
+    }
+    previousCue = frame;
+  }
+
   function frame(dt: number): void {
     // A game whose chrome has been taken off the page stops, rather than
     // drawing forever into a canvas nobody can see. `dispose` is the ordinary
@@ -655,6 +781,7 @@ export function boot(options: BootOptions = {}): Game {
       notice = null;
     }
     closeRound(readout);
+    emitCues(readout);
 
     // The shape of the page, then the surface that has to fit inside it. The
     // breakpoint is resolved from the viewport, which no layout of ours can
@@ -701,7 +828,16 @@ export function boot(options: BootOptions = {}): Game {
 
   const game: Game = {
     readout: () => table.readout(),
-    session: () => ({ statistics, history, coach, coachMode, speed: table.speed(), surfaceSize }),
+    session: () => ({
+      statistics,
+      history,
+      coach,
+      coachMode,
+      speed: table.speed(),
+      surfaceSize,
+      muted: audio.muted(),
+      volume: audio.volume(),
+    }),
     layout: (): LayoutProbe => ({
       breakpoint: layout.breakpoint,
       stickyBars: layout.stickyBars,
@@ -737,9 +873,23 @@ export function boot(options: BootOptions = {}): Game {
       announced: chrome.announcer.spoken(),
       queue: chrome.announcer.queue(),
     }),
+    audio(): AudioProbe {
+      return {
+        muted: audio.muted(),
+        volume: audio.volume(),
+        started: audio.started(),
+        cues: audio.offered(),
+        cuePhases: audio.offeredInPhase(),
+      };
+    },
     dispose(): void {
       loop.stop();
       preference.dispose();
+      // The audio engine's listeners come off with the rest. It listens on the
+      // document rather than in the shell, so a game disposed by a second
+      // `boot` would otherwise leave a gesture handler behind for a page it no
+      // longer owns, exactly the leak the focus policy's disposal answers for.
+      audio.dispose();
       // The chrome's own listeners come off before its shell does. `BJ-17`: the
       // focus policy is the one thing in the chrome that listens outside the
       // shell, so a game disposed by a second `boot` would otherwise leave an

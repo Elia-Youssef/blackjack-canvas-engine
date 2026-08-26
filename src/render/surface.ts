@@ -73,13 +73,14 @@ export interface SurfaceSizing {
  *
  * **The same union is declared a second time, in `src/storage/document.ts`, and
  * that is deliberate rather than drift.** SPEC 13 persists the setting, so the
- * document had to name it before any presentation module existed;
- * `src/storage/` may not import `src/ui/` or `src/render/` and neither may
- * import `src/storage/` before `BJ-20` wires the reload flows, so there is no
- * edge either half could take today without inventing one this build has spent
- * four parts keeping absent. `BJ-14`'s route for `Speed` is not available here:
- * `Speed` went to `core/table.ts` because the machine reads it and storage
- * already imported that module, and nothing in `core/` reads a CSS scale.
+ * document had to name it before any presentation module existed, and nothing
+ * imports `src/storage/` before `BJ-20` wires the reload flows. The other
+ * direction is no longer absent: `BJ-19` took `storage` to `ui` for the sound
+ * constants, `document.ts` re-exporting them from `src/ui/audio.ts` on the
+ * Speed relocation precedent, so the collapse this paragraph once called
+ * impossible is now merely deferred. `BJ-14`'s route for `Speed` itself is not
+ * available here: `Speed` went to `core/table.ts` because the machine reads
+ * it, and nothing in `core/` reads a CSS scale.
  * `tests/unit/layout-breakpoints.test.ts` pins the two declarations to each
  * other, value for value, so a change to one is a red suite rather than a
  * silent disagreement, and `BJ-20` collapses them by importing this one.

@@ -222,8 +222,10 @@ export function createFocusPolicy(options: FocusOptions): FocusPolicy {
         // ordinary case, so this is not the page taking scroll away from a
         // player who was reading something else. It runs from the sync step, on
         // a change of the element that holds focus, so it adds no listener:
-        // `tests/unit/input-surface.test.ts` pins the whole product at three,
-        // one per input path, and a fourth would have to be argued for.
+        // `tests/unit/input-surface.test.ts` pins the whole product's listener
+        // list, one activation path among them, and a listener outside that
+        // list has to be argued for. `BJ-19` argued two more in, the audio
+        // gesture and its resume hook, and the census grew with them.
         active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       }
       return;

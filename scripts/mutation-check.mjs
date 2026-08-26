@@ -8,8 +8,8 @@
  * `I1`, `I2` and `I3` at BJ-11, `H6`, `M5`, `B5` and `B16` at BJ-12,
  * `E3`, `E4` and `E5` at BJ-13, `M1`, `C5`, `C8` and `B15` at BJ-15, `E6`,
  * `E7` and `E9` at BJ-14, `F1` to `F7` at BJ-16, `D1`, `D2`, `D4`, `D5`
- * and `D6` at BJ-17, and `G1`, `G3`, `G4`, `G5`, `G6`, `G8`, `G9` and `G10`
- * at BJ-18.
+ * and `D6` at BJ-17, `G1`, `G3`, `G4`, `G5`, `G6`, `G8`, `G9` and `G10`
+ * at BJ-18, and `K1`, `K2`, `K3` and `K5` at BJ-19.
  *
  * The `BJ-18` block breaks the accessibility layer. Its edits take an
  * accessible name off a control and put an unparseable ARIA state on another,
@@ -269,6 +269,16 @@ const SCREEN_READER = browserGate('screen-reader.spec.ts');
 const TEXT_SCALE = browserGate('text-scale.spec.ts');
 const FORCED_COLORS = browserGate('forced-colors.spec.ts');
 const FOCUS_OBSCURED = browserGate('focus-obscured.spec.ts');
+
+// BJ-19's three. Two of the part's items are graded in the browser because
+// their clauses are structural on the shipped page: K2's autoplay policy is
+// about what exists before a gesture, and K3's single action is a rendered
+// control. The third, K5, rides the harness for the emission tally, which the
+// shipped chunk has no reason to export; that is `game-harness.ts`'s own
+// never-ships precedent.
+const AUDIO_START = browserGate('audio-start.spec.ts');
+const AUDIO_SETTINGS = browserGate('audio-settings.spec.ts');
+const AUDIO_CUES = browserGate('audio-cues.spec.ts');
 
 /**
  * Mutations that edit an existing file.
@@ -5264,8 +5274,10 @@ const EDITS = [
     item: 'D6',
     name: 'the play surface takes every gesture away with touch-action none',
     file: 'src/ui/chrome.css',
-    find: '.bj-surface {\n  display: block;',
-    replace: '.bj-surface {\n  touch-action: none;\n  display: block;',
+    find: '.bj-surface,\n.bj-surface-felt {\n  display: block;',
+    replace:
+      '.bj-surface {\n  touch-action: none;\n}\n\n' +
+      '.bj-surface,\n.bj-surface-felt {\n  display: block;',
     detectedBy: GESTURES,
   },
   {
@@ -5596,6 +5608,147 @@ const EDITS = [
     file: 'src/render/animate.ts',
     find: 'export const WIN_PULSE_PERIOD = WIN_PULSE_HEADROOM / (FLASH_LIMIT_HZ * FAST_SPEED_MULTIPLIER);',
     replace: 'export const WIN_PULSE_PERIOD = WIN_PULSE_HEADROOM / (FLASH_LIMIT_HZ * 4);',
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // BJ-19. The audio layer: the gesture policy, the thirteen cue mappings,
+  // the mute control, the asset scan, and the constant relocation. K2 and K3
+  // are graded in the browser where their clauses are structural on the
+  // shipped page; the engine's own rules and the cue derivation are unit
+  // tested headlessly with the platform injected; and K1 is Inspection whose
+  // automated half is the dist scanner, on the D1 precedent of a checklist
+  // that also runs in the suite.
+  // ------------------------------------------------------------------
+  {
+    item: 'K2',
+    name: 'the audio context is constructed at engine creation, before any gesture',
+    file: 'src/ui/audio.ts',
+    find:
+      "  if (gestureTarget !== null) {\n    bindGestures(gestureTarget, onGesture);\n  }\n  visibilityTarget?.addEventListener('visibilitychange', onVisibility);",
+    replace:
+      "  start();\n  if (gestureTarget !== null) {\n    bindGestures(gestureTarget, onGesture);\n  }\n  visibilityTarget?.addEventListener('visibilitychange', onVisibility);",
+    detectedBy: AUDIO_START,
+  },
+  {
+    item: 'K2',
+    name: 'resume stops being called inside the gesture that constructed the context',
+    file: 'src/ui/audio.ts',
+    find:
+      "    void context.resume().catch((error: unknown) => {\n      void error;\n    });\n  }\n\n  function onGesture(): void {",
+    replace:
+      "    void Promise.resolve().catch((error: unknown) => {\n      void error;\n    });\n  }\n\n  function onGesture(): void {",
+    detectedBy: AUDIO_START,
+  },
+  {
+    item: 'K2',
+    name: 'a failed construction is rethrown instead of swallowed',
+    file: 'src/ui/audio.ts',
+    find:
+      '      void error;\n      context = null;\n      return;\n    }\n    if (context === null) {',
+    replace: '      throw error;\n    }\n    if (context === null) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'K2',
+    name: 'the audioSession feature test is inverted',
+    file: 'src/ui/audio.ts',
+    find: "    if (session !== null) {\n      try {\n        session.type = 'playback';",
+    replace: "    if (session === null) {\n      try {\n        session?.type;",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'K2',
+    name: 'the visibilitychange resume stops answering the visible half',
+    file: 'src/ui/audio.ts',
+    find:
+      "    if (visibilityTarget === null || visibilityTarget.visibilityState !== 'visible') {\n      return;\n    }",
+    replace: "    if (visibilityTarget === null || true) {\n      return;\n    }",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'K2',
+    name: 'the gesture listeners stop being installed at all',
+    file: 'src/ui/audio.ts',
+    find:
+      "function bindGestures(target: EventTarget, onGesture: () => void): void {\n  target.addEventListener('pointerdown', onGesture);\n  target.addEventListener('keydown', onGesture);\n}",
+    replace:
+      'function bindGestures(target: EventTarget, onGesture: () => void): void {\n  void target;\n  void onGesture;\n}',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'K5',
+    name: 'a push starts firing the win cue',
+    file: 'src/ui/cues.ts',
+    find: "      } else if (settled.outcome === 'PUSH') {\n        cues.push('push');",
+    replace: "      } else if (settled.outcome === 'PUSH') {\n        cues.push('win');",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'K5',
+    name: 'the hole card reveal charges a card deal beside the flip',
+    file: 'src/ui/cues.ts',
+    find: "  if (flipped) {\n    cues.push('cardFlip');\n  } else {",
+    replace: "  if (flipped) {\n    cues.push('cardFlip');\n    cues.push('cardDeal');\n  } else {",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'K5',
+    name: 'the shuffle cue fires on every round boundary rather than a reshuffle',
+    file: 'src/ui/cues.ts',
+    find: "    if (now.shoe.dealt < before.shoe.dealt) {\n      cues.push('shuffle');\n    }",
+    replace: "    {\n      cues.push('shuffle');\n    }",
+    detectedBy: AUDIO_CUES,
+  },
+  {
+    item: 'K3',
+    name: 'the mute control stops writing its pressed state',
+    file: 'src/ui/components/sound.ts',
+    find: "      setAttribute(control, 'aria-pressed', String(state.muted));",
+    replace: '      void state;',
+    detectedBy: AUDIO_SETTINGS,
+  },
+  {
+    item: 'K3',
+    name: 'a mute change stops reaching the announcement queue',
+    file: 'src/ui/announce.ts',
+    find: '  if (next.context.muted !== prior.context.muted) {',
+    replace: '    if (false && next.context.muted !== prior.context.muted) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'K3',
+    name: 'the noise buffer is regenerated on every percussive cue',
+    file: 'src/ui/audio.ts',
+    find: '          if (noise === null) {',
+    replace: '          if (true) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'K1',
+    name: 'the asset scanner stops listing the mp3 extension',
+    file: 'tests/unit/audio-assets.test.ts',
+    find: "const AUDIO_EXTENSIONS = new Set([\n  '.mp3',",
+    replace: "const AUDIO_EXTENSIONS = new Set([\n  '.mpeg',",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'K3',
+    name: 'the document re-exports a volume constant that has drifted from its owner',
+    file: 'src/storage/document.ts',
+    find: 'export { DEFAULT_MUTED, MIN_VOLUME, MAX_VOLUME, DEFAULT_VOLUME };',
+    replace:
+      'export { DEFAULT_MUTED, MIN_VOLUME, MAX_VOLUME };\nexport const DEFAULT_VOLUME = 0.5;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'K5',
+    name: 'the reveal phase joins the concealed set, letting a draw share the flip frame',
+    file: 'src/core/table.ts',
+    find:
+      "const CONCEALED_PHASES: readonly PhaseKind[] = Object.freeze([\n  'dealing',\n  'peek',\n  'insurance',\n  'playerTurn',\n]);",
+    replace:
+      "const CONCEALED_PHASES: readonly PhaseKind[] = Object.freeze([\n  'dealing',\n  'peek',\n  'insurance',\n  'playerTurn',\n  'reveal',\n]);",
     detectedBy: UNIT,
   },
 ];

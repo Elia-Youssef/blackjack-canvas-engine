@@ -414,6 +414,28 @@ export async function accessibilityProbe(
   });
 }
 
+// ---------------------------------------------------------------------------
+// BJ-19: the audio probe
+// ---------------------------------------------------------------------------
+
+/**
+ * What the audio layer holds, and every cue it has been offered. Harness only.
+ *
+ * The cue counts cross the boundary as plain numbers, and the mute and the
+ * volume are the engine's own reading rather than a copy the page renders,
+ * which is what item `K3`'s pass-through and item `K5`'s exactly-once are
+ * asserted against.
+ */
+export async function audioProbe(page: Page): Promise<ReturnType<GameHarness['audio']>> {
+  return page.evaluate(() => {
+    const api = window.__bjGame;
+    if (api === undefined) {
+      throw new Error('no harness on this page');
+    }
+    return api.audio();
+  });
+}
+
 /** A rendered box, in CSS pixels, as `boundingBox` reports one. */
 export interface Box {
   x: number;
