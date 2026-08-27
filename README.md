@@ -3,7 +3,7 @@
 The buildable project. Requirements live one directory up in [SPEC.md](../SPEC.md); this file is only how to
 build, run and verify what is here.
 
-**State: parts `BJ-0` through `BJ-19`, with `BJ-19` built last.** The build order puts the DOM shell
+**State: parts `BJ-0` through `BJ-20`, with `BJ-20` built last.** The build order puts the DOM shell
 before the motion that plays inside it, because the composed page is what motion is graded on.
 The toolchain, the CI gates, the design tokens, and the whole
 headless game: cards, hand evaluation, the seeded stream, the shoe, the dealer, settlement, the wallet
@@ -95,8 +95,9 @@ selects its token set from the same media query the stylesheet reads; the high-c
 **parked**, because SPEC 16 defines none and no colour may be invented here. Chrome text resizes to 200
 percent at every breakpoint with nothing clipped, nothing overlapping and every control still reachable,
 and no focused control is obscured at any breakpoint, including inside the one scroller that holds
-controls. Persistence is still not wired: nothing imports `src/storage/`, because `I4` and `I5` grade it
-there. `BJ-19` gave the game its sound, all of it synthesised and none of it required. `src/ui/audio.ts`
+controls. Persistence was still unwired at `BJ-19`: nothing imported `src/storage/`, because `I4` and `I5`
+grade it at the part that wires it. `BJ-19` gave the game its sound, all of it synthesised and none of it
+required. `src/ui/audio.ts`
 holds the engine: no `AudioContext` exists until the first `pointerdown` or `keydown`, it is created and
 `resume()`d inside that handler, an `audioSession` of `playback` is written behind a feature test where
 the platform has one, the page becoming visible resumes the context again, a constructor that throws
@@ -108,9 +109,25 @@ event and the derivation is unit tested exactly-once and against negative contro
 machine. `core/` still learns nothing of any of this. SPEC 14's mute reaches the play screen as one
 button in the top bar, behind no disclosure at any width, carrying `aria-pressed`, a label that changes
 words with the state and the pressed underline, announcing its change through the one queue; the volume
-slider and the reload that would persist both settings are `BJ-20`'s, on the Speed precedent, and the
-boot pass-through, the engine's read side and the constants' new home beside the engine are what this
-part ships toward them. No audio file ships, and the suite scans every build it makes for one. See
+slider and the reload that would persist both settings were `BJ-20`'s, on the Speed precedent, and
+the boot pass-through, the engine's read side and the constants' new home beside the engine were what
+that part shipped toward them. No audio file ships, and the suite scans every build it makes for one.
+`BJ-20` closed the presentation and chrome phase. `src/storage/` is wired: `boot` opens the one
+document, maps it through `BootOptions` (an option still beats the document, so the browser gate's
+seed seam is unchanged), and saves at the round boundary, on every setting change, at the first
+How-to-Play dismissal and on a hidden tab or `pagehide`, which the frame loop now answers by pausing
+and resuming itself. The Settings panel is SPEC 14's whole list: house rules staged for the next deal
+through `table.setRules` (the machine applies them at the deal and rebuilds the shoe when the deck
+count moves), the coach's hint mode with its pre-decision mark on the action bar, Speed, surface
+size, the volume slider beside the play screen's mute, theme, reduced motion with its
+`:root[data-motion='reduce']` block mirroring the media query's own declarations, and Reset all data
+behind an in-panel confirmation that re-boots onto defaults. The ten items are graded over the built
+`dist/` with named seeds: the round's phase order on both the Ace-up and ten-up arms, the split's
+left-to-right play with its announcement by index and its differing per-hand settlement, the
+bust-out's two offers and the chooser's exact enterable set, one accepted action per frame however
+many queue at once, the hidden tab's state identity, both themes with a byte-identical felt, the
+fresh launch at 1,000 with the persisted set intact across real reloads, and the first-launch
+onboarding whose dismissal persists. See
 [../../docs/BUILD-PLAN.md](../../docs/BUILD-PLAN.md) for what fills the rest and in what order.
 
 ## Prerequisites

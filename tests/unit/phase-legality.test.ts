@@ -740,6 +740,13 @@ describe('C2: the sweep drives a real machine into every phase', () => {
     // can change how long a phase lasts and cannot change which phase is next or
     // what any phase decides. The sweep below is unaffected for the same reason:
     // every cell of it is an `apply` against a phase, and no duration is in it.
+    //
+    // **`BJ-20`'s pair is not that either, for the same stated reason.**
+    // `setRules` stages a house-rule record and `stagedRules` reads the stage
+    // back; the stage is applied by `perform`'s `deal` arm alone, which is the
+    // one boundary SPEC 14 gives ("the start of the next round, never
+    // mid-round"), so neither member can put the machine anywhere. The tests
+    // that pin the boundary itself are in `tests/unit/house-rules-staging.test.ts`.
     expect(Object.keys(table)).toEqual([
       'readout',
       'apply',
@@ -748,6 +755,8 @@ describe('C2: the sweep drives a real machine into every phase', () => {
       'update',
       'setSpeed',
       'speed',
+      'setRules',
+      'stagedRules',
     ]);
     expect(Object.isFrozen(table)).toBe(true);
   });

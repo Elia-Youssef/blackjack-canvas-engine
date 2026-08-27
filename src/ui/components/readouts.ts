@@ -76,6 +76,24 @@ function activeHandValue(state: ChromeState): string {
   return chips(handValue(hand.cards).total);
 }
 
+/**
+ * The same readout's label, which names the active hand by index at a split.
+ * `BJ-20`, item `C3`'s "visually indicated", and the review that measured the
+ * shipped page found no sighted answer anywhere: the mirror's naming and the
+ * announcer's sentence are both inside visually hidden surfaces, and the play
+ * surface gives every hand an equal band. This label is the sighted half, on
+ * the one readout DESIGN section 4 keeps in the top bar at every width, in
+ * the same words the mirror already uses, so a sighted player and a screen
+ * reader user are told the same thing by the same name.
+ */
+function activeHandTerm(state: ChromeState): string {
+  const { phase, hands } = state.readout;
+  if (phase.kind === 'playerTurn' && hands.length > 1) {
+    return `Hand ${chips(phase.activeHand + 1)} of ${chips(hands.length)}`;
+  }
+  return 'Hand';
+}
+
 /** SPEC 11's list, in SPEC 11's order. */
 const ROWS: readonly ReadoutRow[] = Object.freeze([
   { key: BALANCE_KEY, label: 'Chips', value: (s) => chips(s.readout.wallet.chips) },
@@ -166,16 +184,24 @@ export function createReadouts(): Component {
   const primary = el('dl', { className: 'bj-readouts__list' });
   const secondary = el('dl', { className: 'bj-readouts__list' });
   let counting: Counting | null = null;
+  // The one label the sync step rewrites: `activeHandTerm` names the active
+  // split hand by index. Held by reference the way the values are, and written
+  // through `setText`, which writes only when it moved.
+  let handLabel: HTMLElement | null = null;
 
   for (const row of ROWS) {
     const value = el('dd', { className: 'bj-readout__value', text: NOTHING_YET });
     values.set(row.key, value);
+    const label = el('dt', { className: 'bj-readout__label', text: row.label });
+    if (row.key === 'hand-value') {
+      handLabel = label;
+    }
     const into = PRIMARY_READOUT_KEYS.includes(row.key) ? primary : secondary;
     into.append(
       el('div', {
         className: 'bj-readout',
         attributes: { 'data-readout': row.key },
-        children: [el('dt', { className: 'bj-readout__label', text: row.label }), value],
+        children: [label, value],
       }),
     );
   }
@@ -250,6 +276,11 @@ export function createReadouts(): Component {
         if (node !== undefined) {
           setText(node, row.key === BALANCE_KEY ? balanceText(state, dt) : row.value(state));
         }
+      }
+      // Item `C3`'s sighted half: the hand readout's label names the active
+      // split hand by index, in the mirror's own words.
+      if (handLabel !== null) {
+        setText(handLabel, activeHandTerm(state));
       }
     },
   };

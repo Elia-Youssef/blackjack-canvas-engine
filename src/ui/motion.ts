@@ -19,14 +19,14 @@
  * the media query, because both read the same query; what this file adds is the
  * canvas half, which has no stylesheet to read.
  *
- * **SPEC 14's reduced-motion setting is not built here.** That section lists
- * "reduced motion (system / always)" and item `I5` at `BJ-20` builds its
- * control. `resolveReducedMotion` below is the whole of the resolution rule and
- * is already correct for both arms, so `BJ-20` passes `setting === 'always'`
- * into `setAlwaysReduce` and adds the matching `[data-motion]` selector to the
- * stylesheet for the CSS half. Nothing here reads a persisted document:
- * `src/storage/` is still imported by nothing, which is what keeps `I4` and `I5`
- * gradeable at that part.
+ * **SPEC 14's reduced-motion setting arrived at `BJ-20`, item `I5`.** The
+ * control lives in the Settings panel; this file owns the setting's words
+ * (`MotionSetting` and its list, above) and the resolution rule both arms run
+ * through. `setAlwaysReduce` is what the control calls, the matching
+ * `:root[data-motion='reduce']` selector in the stylesheet is the CSS half,
+ * and nothing here reads a persisted document: the composition root loads one
+ * and hands the resolved boolean in, which is what keeps this module testable
+ * without a store.
  *
  * `matchMedia` is read off the global scope by name rather than through
  * `window`, which is a gate rather than a style:
@@ -38,6 +38,31 @@
 
 /** The media query QUALITY-BAR section 4 and item `E7` are both written on. */
 export const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
+
+// ---------------------------------------------------------------------------
+// SPEC 14's setting. `BJ-20`, item `I5`.
+// ---------------------------------------------------------------------------
+
+/** SPEC 14's reduced-motion setting: follow the platform query, or always. */
+export type MotionSetting = 'system' | 'always';
+
+/** Both, in SPEC 14's order. */
+export const MOTION_SETTINGS = ['system', 'always'] as const satisfies readonly MotionSetting[];
+
+/** SPEC 14 prints "system / always", and QUALITY-BAR section 4 honours the query. */
+export const DEFAULT_REDUCED_MOTION: MotionSetting = 'system';
+
+/**
+ * The setting's "always" arm, as the boolean `createMotionPreference` takes.
+ *
+ * The only translation in the project between the persisted word and the
+ * resolution rule's input, so a settings control, a save and a restore cannot
+ * disagree about which arm is which. `system` is the absence of the override
+ * rather than a value of it, for the reason `themeAttribute` gives.
+ */
+export function alwaysReduceOf(setting: MotionSetting): boolean {
+  return setting === 'always';
+}
 
 /**
  * The resolution rule, as a pure function of the two inputs. SPEC 14.

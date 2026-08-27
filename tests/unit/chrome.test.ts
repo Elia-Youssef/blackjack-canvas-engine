@@ -295,3 +295,151 @@ describe('the frame loop converts timestamps into one delta per frame', () => {
     expect(clock.cancelled).toHaveLength(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// BJ-20: the loop's answer to a hidden tab. QUALITY-BAR section 7, item C7.
+// ---------------------------------------------------------------------------
+
+/**
+ * A page whose visibility the test controls, which is the platform half the
+ * loop reads. `EventTarget` carries the listener machinery; the one field the
+ * handler reads is settable here because a test that could not choose the
+ * answer would be re-reading the runner's own tab state.
+ */
+class FakePage extends EventTarget {
+  visibilityState: string = 'visible';
+
+  hide(): void {
+    this.visibilityState = 'hidden';
+    this.dispatchEvent(new Event('visibilitychange'));
+  }
+
+  show(): void {
+    this.visibilityState = 'visible';
+    this.dispatchEvent(new Event('visibilitychange'));
+  }
+
+  leave(): void {
+    this.dispatchEvent(new Event('pagehide'));
+  }
+}
+
+describe('a hidden tab pauses the loop and a visible one resumes it', () => {
+  /** The manual scheduler the existing loop tests above use. */
+  function manual(): {
+    schedule: (callback: (timestamp: number) => void) => number;
+    cancel: (handle: number) => void;
+    tick: (timestamp: number) => void;
+  } {
+    let pending: ((timestamp: number) => void) | null = null;
+    let next = 1;
+    return {
+      schedule(callback): number {
+        pending = callback;
+        return next++;
+      },
+      cancel(): void {
+        pending = null;
+      },
+      tick(timestamp): void {
+        const callback = pending;
+        pending = null;
+        callback?.(timestamp);
+      },
+    };
+  }
+
+  it('stops on hidden, writes, and resumes with no gap penalty', () => {
+    const clock = manual();
+    const page = new FakePage();
+    const deltas: number[] = [];
+    const hidden: number[] = [];
+    const loop = createFrameLoop({
+      onFrame: (dt) => deltas.push(dt),
+      schedule: clock.schedule,
+      cancel: clock.cancel,
+      visibility: page,
+      page: page,
+      onHidden: () => hidden.push(deltas.length),
+    });
+
+    loop.start();
+    clock.tick(1000);
+    clock.tick(1016);
+
+    page.hide();
+    // Nothing schedules while the tab is hidden, so however long the page
+    // stays away, no frame and no delta is produced.
+    clock.tick(99_000);
+    expect(deltas, 'no frame ran while hidden').toEqual([0, 0.016]);
+    expect(hidden, 'the write happened once, at the pause').toEqual([2]);
+
+    page.show();
+    clock.tick(99_016);
+    // The resumed frame is the first frame of a fresh run: zero, not a 98-second
+    // gap, which is SPEC 3's "no penalty applied" as this loop's own clause.
+    expect(deltas).toEqual([0, 0.016, 0]);
+  });
+
+  it('stops on pagehide and never restarts', () => {
+    const clock = manual();
+    const page = new FakePage();
+    let frames = 0;
+    let writes = 0;
+    const loop = createFrameLoop({
+      onFrame: () => {
+        frames += 1;
+      },
+      schedule: clock.schedule,
+      cancel: clock.cancel,
+      visibility: page,
+      page: page,
+      onHidden: () => {
+        writes += 1;
+      },
+    });
+
+    loop.start();
+    clock.tick(1000);
+    page.leave();
+    clock.tick(2000);
+    page.show();
+    clock.tick(3000);
+
+    expect(frames, 'the page that left ran exactly one frame').toBe(1);
+    expect(writes, 'the write happened on the way out').toBe(1);
+    expect(loop.running()).toBe(false);
+  });
+
+  it('ignores both events once stopped deliberately, and after dispose', () => {
+    const clock = manual();
+    const page = new FakePage();
+    let writes = 0;
+    const loop = createFrameLoop({
+      onFrame: () => undefined,
+      schedule: clock.schedule,
+      cancel: clock.cancel,
+      visibility: page,
+      page: page,
+      onHidden: () => {
+        writes += 1;
+      },
+    });
+
+    loop.start();
+    clock.tick(1000);
+    loop.stop();
+    page.hide();
+    page.show();
+    expect(writes, 'a stopped game does not write').toBe(0);
+    expect(loop.running(), 'a stopped game does not restart on show').toBe(false);
+
+    loop.start();
+    clock.tick(1016);
+    loop.dispose();
+    page.hide();
+    page.show();
+    expect(writes, 'a disposed game does not write').toBe(0);
+    expect(loop.running(), 'a disposed game stays stopped').toBe(false);
+  });
+});

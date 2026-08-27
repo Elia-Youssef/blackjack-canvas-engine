@@ -743,7 +743,7 @@ export interface TableReadout {
   readonly phase: Phase;
   /** The table the player is sitting at. SPEC 6. */
   readonly table: TableId;
-  /** The house rules in force. SPEC 14, fixed for this table's life. */
+  /** The house rules in force. SPEC 14: a staged change waits for the next deal. */
   readonly rules: HouseRules;
   /** This round's hands, left to right. SPEC 4.6. Empty between rounds. */
   readonly hands: readonly HandInPlay[];
@@ -813,6 +813,30 @@ export interface Table {
   setSpeed(next: Speed): void;
   /** The Speed in force, so a caller need not keep a second copy of it. */
   speed(): Speed;
+  /**
+   * SPEC 14's house rules, staged for the next round. `BJ-20`.
+   *
+   * The record is **not** applied here. SPEC 14 says house-rule changes "take
+   * effect at the start of the next round, never mid-round", and the start of
+   * a round is the `deal`: the wager commits and the cards are about to be
+   * dealt, so nothing about the round that is ending has been decided under
+   * rules it did not run under. Until then the readout keeps carrying the rules
+   * in force, a stage made during `betting` is applied to the very next deal,
+   * and a stage made mid-round is applied to the first deal of the round after.
+   *
+   * A deck-count change rebuilds the shoe at the same moment, from the same
+   * session stream it was first built from, because a 6-deck shoe cannot grow
+   * two decks and a fresh one is the only honest reading of "8 decks from the
+   * next round". The readout's shoe counters move with it, which is the
+   * tell a player expects when the shoe changes.
+   */
+  setRules(next: HouseRules): void;
+  /**
+   * The house rules staged for the next round but not yet in force, or `null`
+   * when the next round runs under the current ones. A settings panel reads
+   * this to show what it changed; the machine itself applies it at the deal.
+   */
+  stagedRules(): HouseRules | null;
 }
 
 /** What a table is built from. Every field has a default. */
@@ -846,8 +870,9 @@ export interface TableOptions {
    *
    * Partial so that turning one toggle off does not mean restating the other
    * four, which is how a default drifts out of a caller rather than out of
-   * SPEC. Read once, at construction: SPEC 14 says house-rule changes take
-   * effect at the start of the next round, so a table has no setter for them.
+   * SPEC. Read at construction for the rounds until a first `setRules` lands,
+   * and after that at each `deal`, which is the boundary SPEC 14 gives: "the
+   * start of the next round, never mid-round".
    */
   readonly rules?: Partial<HouseRules>;
   /**
@@ -931,15 +956,24 @@ interface OpenStake {
  */
 export function createTable(options: TableOptions = {}): Table {
   const wallet: Wallet = options.wallet ?? createWallet();
-  const rules: HouseRules = houseRules(options.rules);
+  let rules: HouseRules = houseRules(options.rules);
   // SPEC 4.1 and item `M3`: one session stream, and the shoe splits its own
   // child off it inside `createShoe`. A consumer added later takes another
-  // child rather than sharing the shoe's, so the deal does not shift.
-  const shoe: Shoe = options.shoe ?? createShoe(rules.decks, createRng(options.seed ?? DEFAULT_SEED));
+  // child rather than sharing the shoe's, so the deal does not shift. The
+  // stream is held for the table's life because `setRules` rebuilds the shoe
+  // from it when the deck count changes, and a rebuilt shoe is a continuation
+  // of the session's randomness rather than a restart of it.
+  const seedStream = createRng(options.seed ?? DEFAULT_SEED);
+  let shoe: Shoe = options.shoe ?? createShoe(rules.decks, seedStream);
 
   let selected: TableId = options.table ?? LOWEST_TABLE.id;
   /** SPEC 5's Speed, as `timedStep` reads it. SPEC 14 changes it mid-round. */
   let speed: Speed = options.speed ?? DEFAULT_SPEED;
+  /**
+   * SPEC 14's staged house rules, applied at the next `deal`. `null` when the
+   * next round runs under the rules in force.
+   */
+  let staged: HouseRules | null = null;
   let phase: Phase = START;
   let elapsed = 0;
   let rounds = 0;
@@ -1417,6 +1451,29 @@ export function createTable(options: TableOptions = {}): Table {
     return Object.freeze({ ok: true, kind, phase: phase.kind });
   }
 
+  /**
+   * The start of a round, which is where SPEC 14 applies a staged rule record.
+   *
+   * Called from `deal` only, after the wallet has committed the wager and
+   * before the first card is drawn, so no card, refusal or settlement is ever
+   * computed under rules the round did not run under. The shoe is rebuilt
+   * first when the deck count moved, for the reason `setRules`'s contract
+   * gives; the cut-card state of the old shoe dies with it, which is the only
+   * reading of "8 decks from the next round" that does not deal 8-deck hands
+   * out of a 6-deck shoe's remaining cards.
+   */
+  function applyStagedRules(): void {
+    if (staged === null) {
+      return;
+    }
+    const next = staged;
+    staged = null;
+    if (next.decks !== rules.decks) {
+      shoe = createShoe(next.decks, seedStream);
+    }
+    rules = next;
+  }
+
   function refused(kind: IntentKind, layer: RejectionLayer, reason: RejectionReason): IntentResult {
     return Object.freeze({ ok: false, kind, layer, reason });
   }
@@ -1554,6 +1611,10 @@ export function createTable(options: TableOptions = {}): Table {
         if (!result.ok) {
           return refused('deal', 'wallet', result.reason);
         }
+        // SPEC 14: the round starts here, so the staged house rules become the
+        // rules in force here, and nothing about the round that just ended was
+        // decided under them.
+        applyStagedRules();
         hands.push(
           Object.freeze({
             cards: Object.freeze([]),
@@ -1940,6 +2001,10 @@ export function createTable(options: TableOptions = {}): Table {
     speed = next;
   }
 
+  function setRules(next: HouseRules): void {
+    staged = next;
+  }
+
   return Object.freeze({
     readout,
     apply,
@@ -1948,5 +2013,7 @@ export function createTable(options: TableOptions = {}): Table {
     update,
     setSpeed,
     speed: () => speed,
+    setRules,
+    stagedRules: () => staged,
   });
 }

@@ -145,7 +145,7 @@ describe('D1: input is one handler path', () => {
       }
     }
 
-    // Six listeners in the whole product, and each one is somewhere its
+    // Ten listeners in the whole product, and each one is somewhere its
     // criterion can be read against: the activation, the keyboard, and the media
     // query that carries the reduced-motion preference are `D1`'s three. The
     // three `BJ-19` added are the audio engine's, and none is an activation
@@ -154,15 +154,27 @@ describe('D1: input is one handler path', () => {
     // `click` handler cannot be, because `click` arrives after the platform has
     // decided whether the press carried a user activation; and
     // `visibilitychange` is the quality bar's own resume hook, an observation of
-    // the page rather than an input from a player. The activation stays `click`
-    // and stays alone below, which is the half of this test `D1` is.
+    // the page rather than an input from a player. `BJ-20` added the loop's
+    // pair, and they are the same kind of observation: QUALITY-BAR section 7
+    // pauses the loop on a hidden tab and writes the document on `pagehide`,
+    // neither of which is an input a player made. `BJ-20` also added the
+    // volume slider's two, and neither is an activation either: `input` is a
+    // continuous control reporting its own movement under the player's hand,
+    // moving the gain live and uncommitted, and the slider's `change` is the
+    // gesture's end, the one moment the document is written, so a drag is one
+    // localStorage write rather than one per step. The activation stays
+    // `click` and stays alone below, which is the half of this test `D1` is.
     const flattened = [...bound.values()].flat().sort();
     expect(flattened, `listeners found in ${[...bound.keys()].join(', ')}`).toEqual([
       'change',
+      'change',
       'click',
+      'input',
       'keydown',
       'keydown',
+      'pagehide',
       'pointerdown',
+      'visibilitychange',
       'visibilitychange',
     ]);
 

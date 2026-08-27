@@ -9,7 +9,25 @@
  * `E3`, `E4` and `E5` at BJ-13, `M1`, `C5`, `C8` and `B15` at BJ-15, `E6`,
  * `E7` and `E9` at BJ-14, `F1` to `F7` at BJ-16, `D1`, `D2`, `D4`, `D5`
  * and `D6` at BJ-17, `G1`, `G3`, `G4`, `G5`, `G6`, `G8`, `G9` and `G10`
- * at BJ-18, and `K1`, `K2`, `K3` and `K5` at BJ-19.
+ * at BJ-18, `K1`, `K2`, `K3` and `K5` at BJ-19, and `C1`, `C3`, `C4`, `C6`,
+ * `C7`, `E2`, `I4`, `I5`, `J4` and `J7` at BJ-20.
+ *
+ * The `BJ-20` block breaks the round flow and the chrome that carries it. Its
+ * edits skip the insurance screen on an Ace up card, jump the reveal straight
+ * past the dealer's turn, take the active-hand naming out of the mirror, and
+ * empty the bust-out screen's lower-table list while seating the free reset
+ * back at the table it was meant to leave; they stop the theme reaching the
+ * root attribute, stop the hint being computed, and swap the two accuracy
+ * scopes the statistics panel prints; they make the drain apply a whole burst
+ * of presses in one frame and blind the per-frame sampler that would see it,
+ * and leave a hidden tab animating; they boot the first launch without its
+ * onboarding overlay and let the dismissal forget to persist; and they cut the
+ * persistence wiring itself, with the boot ignoring the loaded document, the
+ * save going nowhere, the reset firing without its confirmation, the
+ * browser-only sentence dropped and the reduced-motion selector silenced. The
+ * unit entries under those break the rule-staging boundary, the shoe rebuild,
+ * the hidden-tab write and the setting's resolution rule where the unit suite
+ * is the gate that watches them.
  *
  * The `BJ-18` block breaks the accessibility layer. Its edits take an
  * accessible name off a control and put an unparseable ARIA state on another,
@@ -279,6 +297,21 @@ const FOCUS_OBSCURED = browserGate('focus-obscured.spec.ts');
 const AUDIO_START = browserGate('audio-start.spec.ts');
 const AUDIO_SETTINGS = browserGate('audio-settings.spec.ts');
 const AUDIO_CUES = browserGate('audio-cues.spec.ts');
+// BJ-20's ten. Nine of them are graded in the browser because their clauses
+// are structural on the shipped page: a phase sequence, a reload, an overlay
+// state and a canvas are invisible to `npm run test`. The staging and loop
+// entries under them break properties the unit suite grades directly, and
+// the labels say which of the two each mutation is required red by.
+const ROUND_FLOW = browserGate('round-flow.spec.ts');
+const SPLIT_FLOW = browserGate('split-flow.spec.ts');
+const RAPID_INPUT = browserGate('rapid-input.spec.ts');
+const VISIBILITY = browserGate('visibility.spec.ts');
+const BUST_OUT = browserGate('bust-out.spec.ts');
+const THEME = browserGate('theme.spec.ts');
+const COACH = browserGate('coach.spec.ts');
+const ONBOARDING = browserGate('onboarding.spec.ts');
+const PERSISTENCE = browserGate('persistence.spec.ts');
+const DATA_RESET = browserGate('data-reset.spec.ts');
 
 /**
  * Mutations that edit an existing file.
@@ -2112,8 +2145,11 @@ const EDITS = [
     item: 'B6',
     name: 'the seed is ignored, so every session deals the same shoe',
     file: 'src/core/table.ts',
-    find: 'createShoe(rules.decks, createRng(options.seed ?? DEFAULT_SEED))',
-    replace: 'createShoe(rules.decks, createRng(DEFAULT_SEED))',
+    // `BJ-20` hoisted the stream into a named `seedStream` so a rule-driven
+    // shoe rebuild can continue the session's randomness; the seed read this
+    // entry breaks moved with it.
+    find: 'const seedStream = createRng(options.seed ?? DEFAULT_SEED);',
+    replace: 'const seedStream = createRng(DEFAULT_SEED);',
     detectedBy: UNIT,
   },
   {
@@ -4991,11 +5027,13 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
-    // The two declarations of `SurfaceSize` cannot import each other before
-    // BJ-20, so the guarantee that they agree is one test and nothing else.
+    // `BJ-20` collapsed the document's duplicate declaration onto the
+    // presentation module's one list, so the drift the entry used to stage
+    // between two files is now a drift of the one list both sides read, and
+    // the test that guards it is unchanged.
     item: 'F6',
-    name: 'the persisted size list drifts from the presentation one',
-    file: 'src/storage/document.ts',
+    name: 'the size list drifts off the four the setting offers',
+    file: 'src/render/surface.ts',
     find: 'export const SURFACE_SIZES = [100, 125, 150, 200] as const satisfies readonly SurfaceSize[];',
     replace: 'export const SURFACE_SIZES = [100, 125, 150, 175] as const satisfies readonly SurfaceSize[];',
     detectedBy: UNIT,
@@ -5750,6 +5788,237 @@ const EDITS = [
     replace:
       "const CONCEALED_PHASES: readonly PhaseKind[] = Object.freeze([\n  'dealing',\n  'peek',\n  'insurance',\n  'playerTurn',\n  'reveal',\n]);",
     detectedBy: UNIT,
+  },
+  {
+    item: 'I4',
+    name: 'the boot seats itself at Bronze whatever the document says',
+    file: 'src/main.ts',
+    find: 'table: options.table ?? restored.launch.table,',
+    replace: "table: options.table ?? 'bronze',",
+    detectedBy: PERSISTENCE,
+  },
+  {
+    item: 'I4',
+    name: 'the save assembles a document and writes nothing',
+    file: 'src/main.ts',
+    find: 'persistence.save(document);',
+    replace: 'void document;',
+    detectedBy: PERSISTENCE,
+  },
+  {
+    item: 'I5',
+    name: 'Reset all data fires from the first press, with no confirmation',
+    file: 'src/ui/components/overlays.ts',
+    find: "  const reset = button(\n    'Reset all data',\n    () => {\n      confirming = true;\n    },",
+    replace:
+      "  const reset = button(\n    'Reset all data',\n    () => {\n      actions.resetAllData();\n    },",
+    detectedBy: DATA_RESET,
+  },
+  {
+    item: 'I5',
+    name: 'the browser-only sentence is paraphrased away',
+    file: 'src/ui/components/overlays.ts',
+    find:
+      "    text: 'Progress is stored in this browser only and can be cleared by the browser itself.',",
+    replace: "    text: 'Progress is stored locally.',",
+    detectedBy: DATA_RESET,
+  },
+  {
+    item: 'I5',
+    name: "the reduced-motion attribute selector stops answering",
+    file: 'src/ui/tokens.css',
+    find: ":root[data-motion='reduce'] {\n  --dur-1: var(--dur-0);",
+    replace: ":root[data-motion='never'] {\n  --dur-1: var(--dur-0);",
+    detectedBy: DATA_RESET,
+  },
+  {
+    item: 'I5',
+    name: 'the slider input arm stops moving the gain while the finger is down',
+    file: 'src/ui/components/overlays.ts',
+    find: "    if (Number.isFinite(value)) {\n      actions.setVolume(value, false);\n    }",
+    replace: '    if (Number.isFinite(value)) {\n      void value;\n    }',
+    detectedBy: PERSISTENCE,
+  },
+  {
+    item: 'I5',
+    name: 'the slider change arm never commits the write',
+    file: 'src/ui/components/overlays.ts',
+    find: '      actions.setVolume(value, true);',
+    replace: '      void value;',
+    detectedBy: PERSISTENCE,
+  },
+  {
+    item: 'C1',
+    name: 'an Ace up card deals straight past the insurance screen',
+    file: 'src/core/table.ts',
+    find: "      case 'insurance':\n        phase = Object.freeze({ kind: 'insurance', offer: insuranceOffer() });\n        return;",
+    replace: "      case 'insurance':\n        phase = handOverToPlayer();\n        return;",
+    detectedBy: ROUND_FLOW,
+  },
+  {
+    item: 'C1',
+    name: 'the reveal jumps straight to settlement, past the dealer turn',
+    file: 'src/core/table.ts',
+    find: 'phase = inContention() ? DEALER_TURN : SETTLING;',
+    replace: 'phase = SETTLING;',
+    detectedBy: ROUND_FLOW,
+  },
+  {
+    item: 'C3',
+    name: 'the mirror stops naming the active hand',
+    file: 'src/ui/components/mirror.ts',
+    find: 'const active = current.kind === \'playerTurn\' && current.activeHand === index;',
+    replace: 'const active = false;',
+    detectedBy: SPLIT_FLOW,
+  },
+  {
+    item: 'C6',
+    name: 'the drain keeps accepting intents until the phase changes',
+    file: 'src/core/table.ts',
+    find:
+      '      if (phase !== before) {\n        discarded = queued.length;\n        queued.length = 0;\n      }\n      break;',
+    replace:
+      '      if (phase !== before) {\n        discarded = queued.length;\n        queued.length = 0;\n        break;\n      }',
+    detectedBy: RAPID_INPUT,
+  },
+  {
+    item: 'C6',
+    name: 'the per-frame sampler stops reading the wager',
+    file: 'tests/browser/support/game-harness.ts',
+    find: 'wager: snapshot.wallet.wager,',
+    replace: 'wager: 0,',
+    detectedBy: RAPID_INPUT,
+  },
+  {
+    item: 'C7',
+    name: 'a hidden tab keeps animating',
+    file: 'src/ui/loop.ts',
+    find: "    if (visibilityTarget.visibilityState === 'hidden') {",
+    replace: "    if (visibilityTarget.visibilityState === 'never-hidden') {",
+    detectedBy: VISIBILITY,
+  },
+  {
+    item: 'C4',
+    name: "the bust-out screen's lower-table list never builds",
+    file: 'src/ui/components/screens.ts',
+    find: '        for (const id of offer.lowerTables) {',
+    replace: '        for (const id of [] as typeof offer.lowerTables) {',
+    detectedBy: BUST_OUT,
+  },
+  {
+    item: 'C4',
+    name: 'the free reset seats back at the table it was leaving',
+    file: 'src/core/table.ts',
+    find: 'wallet.reset();\n        selected = LOWEST_TABLE.id;',
+    replace: 'wallet.reset();',
+    detectedBy: BUST_OUT,
+  },
+  {
+    item: 'E2',
+    name: 'the theme never reaches the root attribute',
+    file: 'src/ui/chrome.ts',
+    find: "setAttribute(document.documentElement, 'data-theme', themeAttribute(state.theme));",
+    replace: "setAttribute(document.documentElement, 'data-theme', null);",
+    detectedBy: THEME,
+  },
+  {
+    item: 'J4',
+    name: 'the hint is computed for a mode nobody can select',
+    file: 'src/main.ts',
+    find: "  function currentHint(readout: TableReadout): CoachAction | null {\n    if (coachMode !== 'hint') {",
+    replace: "  function currentHint(readout: TableReadout): CoachAction | null {\n    if (coachMode !== 'never') {",
+    detectedBy: COACH,
+  },
+  {
+    item: 'J4',
+    name: 'the statistics panel prints the lifetime accuracy as the session one',
+    file: 'src/ui/components/overlays.ts',
+    find: "    sessionAccuracy: stat('Session accuracy', 'session-accuracy'),",
+    replace: "    sessionAccuracy: stat('Session accuracy', 'lifetime-accuracy'),",
+    detectedBy: COACH,
+  },
+  {
+    item: 'J7',
+    name: 'the first launch boots with no overlay',
+    file: 'src/main.ts',
+    find: "let overlay: OverlayId | null = howToPlaySeen ? null : 'howToPlay';",
+    replace: 'let overlay: OverlayId | null = null;',
+    detectedBy: ONBOARDING,
+  },
+  {
+    item: 'J7',
+    name: 'the dismissal sets the flag and never persists it',
+    file: 'src/main.ts',
+    find:
+      "      if (overlay === 'howToPlay' && !howToPlaySeen) {\n        howToPlaySeen = true;\n        save();\n      }",
+    replace:
+      "      if (overlay === 'howToPlay' && !howToPlaySeen) {\n        howToPlaySeen = true;\n      }",
+    detectedBy: ONBOARDING,
+  },
+  {
+    item: 'I5',
+    name: 'a staged rule record applies the moment it is staged',
+    file: 'src/core/table.ts',
+    find: '  function setRules(next: HouseRules): void {\n    staged = next;\n  }',
+    replace: '  function setRules(next: HouseRules): void {\n    staged = next;\n    applyStagedRules();\n  }',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I5',
+    name: 'a deck-count change keeps dealing from the old shoe',
+    file: 'src/core/table.ts',
+    find: 'if (next.decks !== rules.decks) {\n      shoe = createShoe(next.decks, seedStream);\n    }',
+    replace: 'if (false) {\n      shoe = createShoe(next.decks, seedStream);\n    }',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'C7',
+    name: 'the hidden tab pauses without writing the document',
+    file: 'src/ui/loop.ts',
+    find: 'pausedByVisibility = true;\n        stop();\n        options.onHidden?.();',
+    replace: 'pausedByVisibility = true;\n        stop();',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I5',
+    name: "the reduced-motion setting's always arm stops resolving",
+    file: 'src/ui/motion.ts',
+    find: "export function alwaysReduceOf(setting: MotionSetting): boolean {\n  return setting === 'always';\n}",
+    replace:
+      'export function alwaysReduceOf(setting: MotionSetting): boolean {\n  return false;\n}',
+    detectedBy: DATA_RESET,
+  },
+  {
+    item: 'I5',
+    name: 'the rebuilt shoe abandons the session stream for a constant one',
+    file: 'src/core/table.ts',
+    find: 'shoe = createShoe(next.decks, seedStream);',
+    replace: 'shoe = createShoe(next.decks, createRng(1));',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'C3',
+    name: 'the hand readout label never names the active split hand',
+    file: 'src/ui/components/readouts.ts',
+    find: '    return `Hand ${chips(phase.activeHand + 1)} of ${chips(hands.length)}`;',
+    replace: "    return 'Hand';",
+    detectedBy: SPLIT_FLOW,
+  },
+  {
+    item: 'I5',
+    name: 'every step of a volume drag writes the whole document',
+    file: 'src/main.ts',
+    find: '      audio.setVolume(volume);\n      if (commit) {\n        save();\n      }',
+    replace: '      audio.setVolume(volume);\n      void commit;\n      save();',
+    detectedBy: PERSISTENCE,
+  },
+  {
+    item: 'D2',
+    name: 'a settings control leaves the panel and no list notices',
+    file: 'src/ui/components/overlays.ts',
+    find: "  const sound = el('div', { className: 'bj-setting', children: [volume, volumeText] });",
+    replace: "  const sound = el('div', { className: 'bj-setting', children: [volumeText] });",
+    detectedBy: INPUT_PARITY,
   },
 ];
 

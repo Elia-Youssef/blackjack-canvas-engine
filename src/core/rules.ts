@@ -37,8 +37,9 @@
  *
  * **Nothing here is applied mid-round.** SPEC 14: house-rule changes take effect
  * at the start of the next round. A record is handed to `createTable` and is read
- * from there on; swapping one in mid-round is a caller defect that the table has
- * no setter for, which is the same stance it takes on the phase.
+ * from there on; `table.setRules`, which `BJ-20` added for the Settings panel,
+ * stages a record rather than applying it, and the table applies the stage at the
+ * next `deal`, which is the one moment SPEC 14's sentence names.
  *
  * No DOM, no canvas, no renderer import, no `Math.random()`, no clock.
  */

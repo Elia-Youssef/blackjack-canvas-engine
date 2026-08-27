@@ -323,14 +323,43 @@ test.describe('D4: an open overlay traps focus', () => {
     const wrapped = await focusedStop(page);
     expect(wrapped.key, 'Shift+Tab from the first control left the panel').not.toBe(first.key);
 
+    // The last focusable control in the panel, by name, computed from the DOM
+    // rather than assumed: `BJ-20` grew the panel past the size buttons, and
+    // the property under test is that the wrap reaches the panel's own last
+    // stop, whichever control that is today.
     const last = await page.evaluate(() => {
       const host = document.querySelector('[data-overlay-host="true"]');
-      const all = [...(host?.querySelectorAll('button') ?? [])];
-      return all[all.length - 1]?.getAttribute('data-surface-size') ?? '';
+      const focusable = [...(host?.querySelectorAll('button, summary, input') ?? [])].filter(
+        (node) => node instanceof HTMLElement && node.getClientRects().length > 0,
+      );
+      const node = focusable[focusable.length - 1];
+      if (node === undefined) {
+        return '';
+      }
+      for (const attribute of [
+        'data-control',
+        'data-action',
+        'data-chip',
+        'data-open-overlay',
+        'data-table',
+        'data-drop-table',
+        'data-coach-mode',
+        'data-speed',
+        'data-surface-size',
+        'data-decks',
+        'data-rule',
+        'data-split-rule',
+        'data-theme',
+        'data-motion-setting',
+      ]) {
+        const value = node.getAttribute(attribute);
+        if (value !== null) {
+          return `${attribute}=${value}`;
+        }
+      }
+      return node.tagName.toLowerCase();
     });
-    expect(wrapped.key, 'the wrap landed on the last control in the panel').toBe(
-      `data-surface-size=${last}`,
-    );
+    expect(wrapped.key, 'the wrap landed on the last control in the panel').toBe(last);
   });
 
   test('pulls focus back when it is put on a control behind the panel', async ({ page }) => {
