@@ -99,6 +99,13 @@ import type { PlayerAction } from '../core/types';
 import type { TableId } from '../core/wallet';
 import { LOWEST_TABLE, STARTING_CHIPS, isTableId } from '../core/wallet';
 import { DEFAULT_MUTED, DEFAULT_VOLUME, MAX_VOLUME, MIN_VOLUME } from '../ui/audio';
+import { DEFAULT_REDUCED_MOTION, MOTION_SETTINGS, type MotionSetting } from '../ui/motion';
+import { DEFAULT_THEME, THEMES, type Theme } from '../ui/theme';
+import {
+  DEFAULT_SURFACE_SIZE,
+  SURFACE_SIZES,
+  type SurfaceSize,
+} from '../render/surface';
 
 // ---------------------------------------------------------------------------
 // The key and the schema version. QUALITY-BAR section 8
@@ -163,32 +170,33 @@ export const MIN_DOCUMENT_VERSION = 1;
 export type { Speed };
 export { SPEEDS, DEFAULT_SPEED };
 
-/** QUALITY-BAR section 4's play-surface size, in percent. */
-export type SurfaceSize = 100 | 125 | 150 | 200;
+/**
+ * QUALITY-BAR section 4's play-surface size, in percent. `BJ-20`.
+ *
+ * Declared by `src/render/surface.ts`, the logical-to-CSS seam, and re-exported
+ * here rather than declared a second time: the duplicate this file carried from
+ * `BJ-11` collapses now that something wires the reload flows, on the ruling
+ * that corrected `surface.ts`'s header at `BJ-19` to say exactly this. The
+ * import edge runs one way (`render/` imports nothing from `src/storage/`),
+ * the same direction the sound constants' edge took at `BJ-19`.
+ */
+export type { SurfaceSize };
+export { SURFACE_SIZES, DEFAULT_SURFACE_SIZE };
 
-/** The four sizes QUALITY-BAR section 4 and SPEC 14 both list, in their order. */
-export const SURFACE_SIZES = [100, 125, 150, 200] as const satisfies readonly SurfaceSize[];
+/**
+ * SPEC 14's theme setting. Re-exported from `src/ui/theme.ts`, which `BJ-20`
+ * built beside the attribute writer that reads it, on the Speed precedent.
+ */
+export type { Theme };
+export { THEMES, DEFAULT_THEME };
 
-/** 100 percent is the unscaled surface, which is what the setting scales up from. */
-export const DEFAULT_SURFACE_SIZE: SurfaceSize = 100;
-
-/** SPEC 14's theme setting. */
-export type Theme = 'system' | 'light' | 'dark';
-
-/** The three, in SPEC 14's order. */
-export const THEMES = ['system', 'light', 'dark'] as const satisfies readonly Theme[];
-
-/** SPEC 14 prints "system / light / dark", and the platform's answer is first. */
-export const DEFAULT_THEME: Theme = 'system';
-
-/** SPEC 14's reduced-motion setting: follow the platform, or always reduce. */
-export type MotionSetting = 'system' | 'always';
-
-/** Both, in SPEC 14's order. */
-export const MOTION_SETTINGS = ['system', 'always'] as const satisfies readonly MotionSetting[];
-
-/** SPEC 14 prints "system / always", and QUALITY-BAR section 4 honours the query. */
-export const DEFAULT_REDUCED_MOTION: MotionSetting = 'system';
+/**
+ * SPEC 14's reduced-motion setting. Re-exported from `src/ui/motion.ts`, the
+ * module that owns the resolution rule both arms run through, on the same
+ * precedent.
+ */
+export type { MotionSetting };
+export { MOTION_SETTINGS, DEFAULT_REDUCED_MOTION };
 
 /**
  * SPEC 14's sound: not muted until a player mutes it.

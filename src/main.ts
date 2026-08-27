@@ -29,10 +29,11 @@
  *   - `core/` has no clock and may not invent a session seed (item `M3`), so
  *     SPEC 4.1's seed has to arrive from outside `core/` and this is outside.
  *   - SPEC 13's persisted document, the best chip balance, the selected table,
- *     the settings and the coach record, is loaded at `BJ-20` and handed in
- *     exactly here. `src/storage/` is deliberately not imported yet: nothing
- *     reads or writes it until that part, and a half-wired persistence would
- *     make `I4` and `I5` ungradeable.
+ *     the statistics, the history, the settings and the coach record, is loaded
+ *     at `BJ-20` exactly here, saved at the round boundary and on setting
+ *     changes, and written once more on the way out of sight. `src/storage/`
+ *     is imported by this file and by nothing else outside its own directory,
+ *     which keeps the load, the save and the reset each at one caller.
  *   - The browser gate needs a known deal over the shipped bundle, and a
  *     parameterised entry point is the smallest way to give it one. It is the
  *     same device `TableOptions.seed` and `TableOptions.shoe` already are in
@@ -53,10 +54,9 @@
  * `catch` in this file at all.
  */
 
-import { record as recordRound, NO_HISTORY, type History } from './core/history';
-import type { HouseRules } from './core/rules';
+import { record as recordRound, type History } from './core/history';
+import { houseRules, type HouseRules } from './core/rules';
 import {
-  NO_STATISTICS,
   observeBankrollReset,
   observeRound,
   openSession as openStatisticsSession,
@@ -64,18 +64,17 @@ import {
   type Statistics,
 } from './core/statistics';
 import {
-  DEFAULT_COACH_MODE,
-  NO_DECISIONS,
   actionOf,
   observe,
   openSession as openCoachSession,
+  recommend,
   situationAt,
   strategyTable,
+  type CoachAction,
   type CoachMode,
   type CoachRecord,
 } from './core/strategy';
 import {
-  DEFAULT_SPEED,
   createTable,
   type Speed,
   type Table,
@@ -83,14 +82,12 @@ import {
   type TableReadout,
 } from './core/table';
 import type { Intent, IntentKind, SettledHand } from './core/types';
-import { LOWEST_TABLE, createWallet, tableLimits, type TableId } from './core/wallet';
+import { createWallet, tableLimits, type TableId } from './core/wallet';
 import { PACING_NAMES, resolveMotion, type Motion } from './render/animate';
 import { createPlaySurface, type PlaySurface, type SceneState } from './render/scene';
-import { DEFAULT_SURFACE_SIZE, type SurfaceSize } from './render/surface';
+import type { SurfaceSize } from './render/surface';
 import { surfacePalette, type SelectedPalette } from './render/tokens';
 import {
-  DEFAULT_MUTED,
-  DEFAULT_VOLUME,
   createAudioEngine,
   type AudioEngine,
   type CueId,
@@ -113,7 +110,13 @@ import { resolvedLocale } from './ui/format';
 import { createForcedColorsPreference, type ForcedColorsPreference } from './ui/forced-colors';
 import type { Shell } from './ui/layout';
 import { createFrameLoop, type FrameLoop } from './ui/loop';
-import { createMotionPreference, type MotionPreference } from './ui/motion';
+import {
+  alwaysReduceOf,
+  createMotionPreference,
+  type MotionPreference,
+  type MotionSetting,
+} from './ui/motion';
+import type { Theme } from './ui/theme';
 import type {
   ChromeActions,
   ChromeState,
@@ -122,6 +125,8 @@ import type {
   Notice,
   OverlayId,
 } from './ui/state';
+import type { GameDocument } from './storage/document';
+import { openPersistence, type Persistence } from './storage/persistence';
 
 import './ui/tokens.css';
 import './ui/chrome.css';
@@ -180,6 +185,32 @@ export interface SessionState {
    * `BJ-20`; the engine's clamping is the only arithmetic either will need.
    */
   readonly volume: number;
+  /**
+   * SPEC 14's theme. `BJ-20`, item `E2`.
+   *
+   * On the Speed precedent: the document was the first thing that had to name
+   * it, and this is the shape the save reads and the restore writes. The
+   * chrome resolves it to the one `data-theme` attribute the stylesheet's
+   * selectors already answer to; the play surface never sees it, because SPEC
+   * 16 fixes the felt's palette across both themes.
+   */
+  readonly theme: Theme;
+  /**
+   * SPEC 14's reduced-motion setting, as the word rather than the boolean.
+   * `BJ-20`, item `I5`.
+   *
+   * The boolean the frame resolves is `alwaysReduceOf(this) || the platform
+   * query`, which is `resolveReducedMotion`'s whole rule; the word is what
+   * persists and what the Settings control offers.
+   */
+  readonly reducedMotion: MotionSetting;
+  /**
+   * SPEC 17's How-to-Play seen flag. `BJ-20`, item `J7`.
+   *
+   * False until the player dismisses the overlay the first time, true from
+   * then on, saved at the dismissal itself so a reload honours it.
+   */
+  readonly howToPlaySeen: boolean;
 }
 
 /**
@@ -297,7 +328,10 @@ export interface AudioProbe {
 export interface Game {
   /** The machine's snapshot. The only authority on the game's state. */
   readout(): TableReadout;
-  /** What SPEC 13 persists, as one value. Nothing writes it yet. */
+  /**
+   * What the session holds beside the machine, as one value. SPEC 13's set,
+   * assembled for the save and for the harness a spec reads.
+   */
   session(): SessionState;
   /** What the last frame resolved for motion. Items `E7` and `E9`. */
   motion(): MotionProbe;
@@ -359,6 +393,20 @@ export interface BootOptions {
 
 /** The game this module last built, so a second boot can dispose the first. */
 let current: Game | null = null;
+
+/**
+ * The game this module currently runs, or `null` before the first boot.
+ *
+ * The test harness's window: an in-page Reset re-boots internally, so a
+ * handle a caller took from `boot` goes stale the moment the player confirms,
+ * and the `BJ-20` review found the harness holding exactly that disposed
+ * closure. Reading through this accessor follows the re-boot. Nothing in the
+ * shipped page needs it, and the emitted application chunk carries no exports
+ * either way.
+ */
+export function currentGame(): Game | null {
+  return current;
+}
 
 /** The mount point, created if the page does not carry one. */
 function mountPoint(options: BootOptions): HTMLElement {
@@ -501,6 +549,11 @@ function sceneState(readout: TableReadout, motion: Motion): SceneState {
  * bundle.
  */
 export function boot(options: BootOptions = {}): Game {
+  return bootSession(options);
+}
+
+/** Build a session, optionally carrying an already-open persistence fallback. */
+function bootSession(options: BootOptions, carriedPersistence?: Persistence): Game {
   current?.dispose();
 
   document.documentElement.dataset['game'] = GAME_ID;
@@ -509,38 +562,71 @@ export function boot(options: BootOptions = {}): Game {
   // are otherwise unrelated. Items `L1` to `L5` at `BJ-21` grade the sweep.
   document.documentElement.lang = resolvedLocale();
 
+  // SPEC 13's load, once, before anything is built from it. `BJ-20`, item `I4`.
+  // The probe inside answers for a store the platform refuses to hand over, the
+  // read answers for a document nothing could be salvaged from, and every field
+  // below reads the sanitised result rather than the stored bytes. An explicit
+  // option still wins over the document, which is the override seam the browser
+  // gate drives a known deal through and the reason every merge below runs the
+  // option on the right.
+  const persistence: Persistence = carriedPersistence ?? openPersistence();
+  const restored = persistence.session();
+  const persisted: GameDocument = restored.document;
+
   const wallet = createWallet(
-    options.bestBalance === undefined ? {} : { bestBalance: options.bestBalance },
+    options.bestBalance === undefined
+      ? { bestBalance: persisted.bestBalance }
+      : { bestBalance: options.bestBalance },
   );
   const tableOptions: TableOptions = {
     wallet,
-    table: options.table ?? LOWEST_TABLE.id,
-    rules: options.rules ?? {},
+    table: options.table ?? restored.launch.table,
+    rules: { ...persisted.settings.rules, ...options.rules },
     seed: options.seed ?? Date.now(),
-    speed: options.speed ?? DEFAULT_SPEED,
+    speed: options.speed ?? persisted.settings.speed,
   };
   const table: Table = createTable(tableOptions);
-  const chart = strategyTable(table.readout().rules);
+  let chart: ReturnType<typeof strategyTable> = strategyTable(table.readout().rules);
+  let chartRules: HouseRules = table.readout().rules;
+
+  // SPEC 14's settings, as the session holds them. The rules the panel stages
+  // sit beside the machine's in-force record until the next deal applies them,
+  // which is the one boundary SPEC 14 gives a house-rule change.
+  let settingsRules: HouseRules = houseRules({
+    ...persisted.settings.rules,
+    ...options.rules,
+  });
+  let reducedMotion: MotionSetting =
+    options.alwaysReduceMotion === undefined
+      ? persisted.settings.reducedMotion
+      : options.alwaysReduceMotion
+        ? 'always'
+        : 'system';
 
   // The only place in the project that asks the platform for the flag. SPEC 14's
-  // reduced-motion setting joins it at `BJ-20`; the option is its "always" arm.
-  const preference: MotionPreference = createMotionPreference(
-    options.alwaysReduceMotion === undefined ? {} : { alwaysReduce: options.alwaysReduceMotion },
-  );
+  // reduced-motion setting is resolved through it: "always" adds reduction and
+  // "system" leaves the query to answer, which `resolveReducedMotion` states.
+  const preference: MotionPreference = createMotionPreference({
+    alwaysReduce: alwaysReduceOf(reducedMotion),
+  });
   // The only place in the project that asks the platform for forced colors, on
   // the same terms and for the same reason. Item `G9`: the chrome's half is done
   // by the stylesheet, which reads the query itself; the canvas has no
   // stylesheet, so the query is resolved here and handed to the token layer.
   const forcedColors: ForcedColorsPreference = createForcedColorsPreference();
 
-  let statistics: Statistics = openStatisticsSession(NO_STATISTICS);
-  let history: History = NO_HISTORY;
-  let coach: CoachRecord = openCoachSession(NO_DECISIONS);
-  let coachMode: CoachMode = options.coachMode ?? DEFAULT_COACH_MODE;
+  let statistics: Statistics = openStatisticsSession(restored.statistics);
+  let history: History = restored.history;
+  let coach: CoachRecord = openCoachSession(restored.coach);
+  let coachMode: CoachMode = options.coachMode ?? persisted.settings.coach;
   let verdicts: HandVerdict[] | null = coachMode === 'off' ? null : [];
   let notice: Notice | null = null;
-  let overlay: OverlayId | null = null;
-  let surfaceSize: SurfaceSize = options.surfaceSize ?? DEFAULT_SURFACE_SIZE;
+  let surfaceSize: SurfaceSize = options.surfaceSize ?? persisted.settings.surfaceSize;
+  let theme: Theme = persisted.settings.theme;
+  let howToPlaySeen: boolean = restored.howToPlaySeen;
+  // SPEC 17: shown automatically on first launch, and only then. The dismissal
+  // writes the flag below, so the second launch starts with no overlay.
+  let overlay: OverlayId | null = howToPlaySeen ? null : 'howToPlay';
 
   // The audio engine, `BJ-19`. Built beside the two platform preferences
   // because it is the third thing that reads one: the gesture policy asks the
@@ -548,9 +634,42 @@ export function boot(options: BootOptions = {}): Game {
   // The persisted mute and volume are applied here, at creation, which is the
   // only moment QUALITY-BAR section 10 gives them to be applied in.
   const audio: AudioEngine = createAudioEngine({
-    muted: options.muted === undefined ? DEFAULT_MUTED : options.muted,
-    volume: options.volume === undefined ? DEFAULT_VOLUME : options.volume,
+    muted: options.muted === undefined ? persisted.settings.muted : options.muted,
+    volume: options.volume === undefined ? persisted.settings.volume : options.volume,
   });
+
+  /**
+   * SPEC 13's save, from the live session. `BJ-20`, item `I4`.
+   *
+   * The document is assembled, never stored: every field is read off the thing
+   * that owns it, so there is no second copy of a setting to drift. The
+   * session scope is projected out inside `persistence.save`, the wallet's
+   * high-water mark is the document's `bestBalance`, and the machine's own
+   * table names the seat. A write that throws degrades only the carry, which
+   * is `persistence.ts`'s contract and not this function's business.
+   */
+  function save(): void {
+    const snapshot = table.readout();
+    const document: GameDocument = Object.freeze({
+      bestBalance: snapshot.wallet.bestBalance,
+      table: snapshot.table,
+      statistics,
+      coach,
+      history,
+      settings: Object.freeze({
+        rules: settingsRules,
+        coach: coachMode,
+        speed: table.speed(),
+        surfaceSize,
+        muted: audio.muted(),
+        volume: audio.volume(),
+        theme,
+        reducedMotion,
+      }),
+      howToPlaySeen,
+    });
+    persistence.save(document);
+  }
 
   const actions: ChromeActions = {
     queue(intent: Intent): void {
@@ -560,6 +679,16 @@ export function boot(options: BootOptions = {}): Game {
       overlay = id;
     },
     closeOverlay(): void {
+      // SPEC 17: the first dismissal of How to Play is the seen flag. It is
+      // written here rather than in the frame, because closing the overlay is
+      // the one route every dismissal takes, whether the player pressed the
+      // Close button, answered Escape through the focus policy, or moved on;
+      // and it is saved at once, so a crash between the dismissal and the next
+      // round boundary cannot un-see what the player saw.
+      if (overlay === 'howToPlay' && !howToPlaySeen) {
+        howToPlaySeen = true;
+        save();
+      }
       overlay = null;
     },
     setCoachMode(mode: CoachMode): void {
@@ -567,6 +696,7 @@ export function boot(options: BootOptions = {}): Game {
       if (mode !== 'off' && verdicts === null) {
         verdicts = [];
       }
+      save();
     },
     setSpeed(speed: Speed): void {
       // SPEC 14: immediately, mid-round included. There is nothing to defer to a
@@ -574,18 +704,69 @@ export function boot(options: BootOptions = {}): Game {
       // leaves the accumulator alone, so a phase already half spent stays half
       // spent and the change is a shorter remainder rather than a restart.
       table.setSpeed(speed);
+      save();
     },
     setSurfaceSize(size: SurfaceSize): void {
       // SPEC 14 again: immediately, mid-round included. The next frame plans the
       // surface from the new size and resizes the backing store, and the machine
       // is not told, because a CSS scale decides nothing about a round.
       surfaceSize = size;
+      save();
+    },
+    setRules(patch: Partial<HouseRules>): void {
+      // SPEC 14: staged, not applied. The machine holds the stage until the
+      // next deal, the panel reads the merged record for its pressed states,
+      // and the save carries the merged record so a reload restores the choice.
+      settingsRules = Object.freeze({ ...settingsRules, ...patch });
+      table.setRules(settingsRules);
+      save();
+    },
+    setTheme(next: Theme): void {
+      theme = next;
+      save();
+    },
+    setReducedMotion(setting: MotionSetting): void {
+      // SPEC 14's two words. "always" adds reduction; "system" hands the
+      // question back to the platform query, which `resolveReducedMotion`
+      // reads the way it always has.
+      reducedMotion = setting;
+      preference.setAlwaysReduce(alwaysReduceOf(setting));
+      save();
     },
     toggleMuted(): void {
       // SPEC 14's sound, and item `K3`'s single action. The engine holds the
       // one copy of the value; the next frame's chrome state reads it back,
       // so the control, the gain and the announcement cannot disagree.
       audio.setMuted(!audio.muted());
+      save();
+    },
+    setVolume(volume: number, commit: boolean): void {
+      // SPEC 14's other sound control, `I5`. The engine clamps whatever the
+      // slider sends, and the frame's chrome state reads the clamped value
+      // back, so the control and the gain cannot disagree. The gain moves on
+      // every call; the document is written only on the committing one, which
+      // is the slider's gesture end, so a drag is one write and not a storm.
+      audio.setVolume(volume);
+      if (commit) {
+        save();
+      }
+    },
+    resetAllData(): void {
+      // SPEC 14's Reset all data, `I5`. The stored document goes first, then
+      // the whole game re-boots onto the defaults: the ruling's natural route.
+      // A full re-boot is the honest shape of "clears every persisted value",
+      // because a fresh boot is the one route that already answers for a first
+      // launch, from the How-to-Play overlay to the 1,000 chips. The previous
+      // game's `dispose` runs inside `boot` and takes its listeners with it,
+      // and it saves nothing on the way out: `persistence.resetAll` has already
+      // replaced the in-memory document with the default one, and a
+      // dispose-time save would write the cleared values straight back.
+      persistence.resetAll();
+      // The mount is the one option a reset carries forward: it is where the
+      // page put the game, not a piece of the state being cleared, and a
+      // fresh boot that fell back to `#app` would re-mount a game the page
+      // had deliberately placed elsewhere.
+      bootSession(options.root === undefined ? {} : { root: options.root }, persistence);
     },
   };
 
@@ -650,7 +831,32 @@ export function boot(options: BootOptions = {}): Game {
       motion,
       forcedColors: forced,
       muted: audio.muted(),
+      volume: audio.volume(),
+      theme,
+      reducedMotion,
+      stagedRules: settingsRules,
+      hint: currentHint(readout),
     };
+  }
+
+  /**
+   * SPEC 7's hint, for the frame that is about to draw. `BJ-20`, item `J4`.
+   *
+   * Null everywhere but `playerTurn` under the hint mode, and computed from
+   * the same chart the coach's observations use, so the highlighted control
+   * and the recorded verdict cannot disagree about what was recommended. The
+   * lookup only happens in hint mode: `strategy.ts` gates the mode itself,
+   * and an off coach is one that never ran rather than one that ran quietly.
+   */
+  function currentHint(readout: TableReadout): CoachAction | null {
+    if (coachMode !== 'hint') {
+      return null;
+    }
+    const situation = situationAt(readout);
+    if (situation === null) {
+      return null;
+    }
+    return recommend(chart, situation)?.action ?? null;
   }
 
   /**
@@ -731,6 +937,12 @@ export function boot(options: BootOptions = {}): Game {
       readout,
       verdicts === null ? null : verdicts.map((entry) => entry.verdict),
     );
+    // SPEC 13's round boundary is the first of the two save points: the chips
+    // are not in the document, but the high-water mark, the lifetime tallies,
+    // the milestones and the history entry all just moved, and the boundary is
+    // the moment nothing else is half-written. The second point is a setting
+    // change, in the actions above.
+    save();
   }
 
   /**
@@ -773,6 +985,15 @@ export function boot(options: BootOptions = {}): Game {
     table.update(dt);
 
     const readout = table.readout();
+    // SPEC 14 and SPEC 7: the coach's table is generated from the rules in
+    // force, so it moves when they do. The machine applies a staged record at
+    // the deal and publishes a new frozen one, which makes identity the whole
+    // of the dirty check; recommendations never run off a chart the round is
+    // not playing under.
+    if (readout.rules !== chartRules) {
+      chartRules = readout.rules;
+      chart = strategyTable(readout.rules);
+    }
     // A reason belongs to the screen it was refused on. SPEC 10 gives each
     // control one screen, so carrying "that is below the table minimum" into the
     // deal would be a sentence about a control the player can no longer see. A
@@ -818,7 +1039,13 @@ export function boot(options: BootOptions = {}): Game {
     chrome.sync(chromeState(readout, motion, forced), dt);
   }
 
-  const loop: FrameLoop = createFrameLoop({ onFrame: frame });
+  // QUALITY-BAR section 7, and item `C7`'s mechanism. A hidden tab pauses the
+  // animation by stopping the loop, and the pause is where the document is
+  // written on the way out of sight, because `pagehide` covers the unload the
+  // hidden moment misses and `beforeunload` is the one hook the section
+  // forbids. The machine needs no telling: a loop that stops asks `update`
+  // nothing, so no accumulator advances while nobody can see it.
+  const loop: FrameLoop = createFrameLoop({ onFrame: frame, onHidden: save });
 
   // One synchronous frame before the loop starts, so the page is never briefly
   // blank and so a caller that reads the DOM immediately after `boot` finds a
@@ -837,6 +1064,9 @@ export function boot(options: BootOptions = {}): Game {
       surfaceSize,
       muted: audio.muted(),
       volume: audio.volume(),
+      theme,
+      reducedMotion,
+      howToPlaySeen,
     }),
     layout: (): LayoutProbe => ({
       breakpoint: layout.breakpoint,
@@ -883,7 +1113,12 @@ export function boot(options: BootOptions = {}): Game {
       };
     },
     dispose(): void {
-      loop.stop();
+      // `dispose`, not `stop`: this takes the visibility listeners off too, so
+      // a game that is gone cannot answer a later tab switch on behalf of a
+      // page it no longer owns. Nothing is saved here, for the reason the
+      // reset action spells out: a dispose-time write would race the very
+      // reset that disposed it.
+      loop.dispose();
       preference.dispose();
       // The audio engine's listeners come off with the rest. It listens on the
       // document rather than in the shell, so a game disposed by a second

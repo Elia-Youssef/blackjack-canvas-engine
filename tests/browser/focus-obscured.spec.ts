@@ -328,12 +328,22 @@ test.describe('G10: a sticky bar can only stick where nothing scrolls under it',
         `${viewport.name}: the bars stick on a page that scrolls, so one can cover a control`,
       ).toBe(false);
 
-      const positions = await page.evaluate(() => ({
-        top: getComputedStyle(document.querySelector('.bj-top') as Element).position,
-        controls: getComputedStyle(document.querySelector('.bj-controls') as Element).position,
-      }));
-      expect(positions.top === 'sticky', `${viewport.name}: the top bar`).toBe(sticky);
-      expect(positions.controls === 'sticky', `${viewport.name}: the controls row`).toBe(sticky);
+      // Read the selector input and its computed result in one evaluation. The
+      // frame loop can legitimately finish a layout update between two protocol
+      // calls; comparing an earlier attribute with a later style would compare
+      // two different frames rather than test the stylesheet's relationship.
+      const positions = await page.evaluate(() => {
+        const shell = document.querySelector('.bj-shell');
+        return {
+          sticky: shell?.getAttribute('data-sticky-bars') === 'on',
+          top: getComputedStyle(document.querySelector('.bj-top') as Element).position,
+          controls: getComputedStyle(document.querySelector('.bj-controls') as Element).position,
+        };
+      });
+      expect(positions.top === 'sticky', `${viewport.name}: the top bar`).toBe(positions.sticky);
+      expect(positions.controls === 'sticky', `${viewport.name}: the controls row`).toBe(
+        positions.sticky,
+      );
     });
   }
 });

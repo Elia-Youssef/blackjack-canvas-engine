@@ -18,13 +18,16 @@
  */
 
 import type { History } from '../core/history';
+import type { HouseRules } from '../core/rules';
 import type { MilestoneId, StatisticsReadout } from '../core/statistics';
-import type { CoachMode, CoachVerdict } from '../core/strategy';
+import type { CoachAction, CoachMode, CoachVerdict } from '../core/strategy';
 import type { RejectionLayer, RejectionReason, Speed, TableReadout } from '../core/table';
 import type { Intent, IntentKind } from '../core/types';
 import type { Motion } from '../render/animate';
 import type { SurfaceSize } from '../render/surface';
 import type { BreakpointName } from './breakpoints';
+import type { MotionSetting } from './motion';
+import type { Theme } from './theme';
 
 /** SPEC 10's three overlays, and there is no fourth. */
 export type OverlayId = 'settings' | 'howToPlay' | 'statistics';
@@ -152,6 +155,52 @@ export interface ChromeState {
    * about whether the game is quiet.
    */
   readonly muted: boolean;
+  /**
+   * SPEC 14's volume, after the engine's clamping. `BJ-20`, item `I5`.
+   *
+   * On `muted`'s terms exactly: the engine owns the value, this is the copy
+   * the slider renders, and the composition root sets it from the engine
+   * every frame so the two cannot disagree.
+   */
+  readonly volume: number;
+  /**
+   * SPEC 14's theme. `BJ-20`, item `E2`.
+   *
+   * The word, not the resolved palette: the stylesheet resolves it against
+   * `prefers-color-scheme`, which is the clause "follows the query by
+   * default, and the override wins in both directions". The chrome writes
+   * the one `data-theme` attribute the stylesheet answers to.
+   */
+  readonly theme: Theme;
+  /**
+   * SPEC 14's reduced-motion setting, as the word. `BJ-20`, item `I5`.
+   *
+   * `motion.reducedMotion` beside it is what the frame resolved this word
+   * and the platform query to; the word is what the Settings control offers
+   * and what persists.
+   */
+  readonly reducedMotion: MotionSetting;
+  /**
+   * SPEC 14's house rules as the Settings panel holds them, staged for the
+   * next round. `BJ-20`.
+   *
+   * Deliberately not `readout.rules`, which are the rules in force: SPEC 14
+   * applies a change "at the start of the next round, never mid-round", so
+   * between the change and that boundary the two records differ, and the
+   * panel's pressed states must show what the player chose rather than snap
+   * back to what the round is running under.
+   */
+  readonly stagedRules: HouseRules;
+  /**
+   * SPEC 7's hint for the hand in front of the player, or `null`. `BJ-20`,
+   * item `J4`.
+   *
+   * Null everywhere except `playerTurn` under the hint mode. The actions
+   * component reads it to mark the recommended control; nothing may use it
+   * to refuse or delay one, because "the coach never blocks an action" is
+   * the clause the item exists for.
+   */
+  readonly hint: CoachAction | null;
 }
 
 /**
@@ -203,6 +252,43 @@ export interface ChromeActions {
    * the engine's `setVolume`, which needs no chrome action to be reachable.
    */
   toggleMuted(): void;
+  /**
+   * SPEC 14's volume. `BJ-20`, item `I5`.
+   *
+   * The slider's route to the engine, beside `toggleMuted` for the same
+   * reason that action exists: the control is inside the Settings panel but
+   * the value belongs to the engine, and a second holder of it is how the
+   * slider and the gain start disagreeing. `commit` is the write: a drag's
+   * `input` stream moves the gain with it uncommitted, and the gesture's end
+   * commits once, so a slide is one localStorage write rather than one per
+   * step (the `BJ-20` review measured forty).
+   */
+  setVolume(volume: number, commit: boolean): void;
+  /**
+   * SPEC 14's theme. `BJ-20`, item `E2`. The word is stored; the chrome
+   * resolves it to the attribute the stylesheet selects on.
+   */
+  setTheme(theme: Theme): void;
+  /**
+   * SPEC 14's reduced-motion setting. `BJ-20`, item `I5`.
+   */
+  setReducedMotion(setting: MotionSetting): void;
+  /**
+   * SPEC 14's house rules, staged for the next round. `BJ-20`.
+   *
+   * A patch rather than a record, so the panel changes one toggle without
+   * restating the other four, which is how a default drifts out of a caller.
+   * The composition root merges, stages and saves; the machine applies at
+   * the next deal, which is SPEC 14's boundary.
+   */
+  setRules(rules: Partial<HouseRules>): void;
+  /**
+   * SPEC 14's Reset all data, behind its confirmation. `BJ-20`, item `I5`.
+   *
+   * The confirm dialog is chrome state the panel holds; this action is the
+   * one that fires when the player confirms.
+   */
+  resetAllData(): void;
 }
 
 /** One assembled piece of chrome: its root element, and how it is synced. */

@@ -41,6 +41,7 @@ import {
 import { setAttribute, setDocumentTitle } from './dom';
 import { createFocusPolicy } from './input';
 import { createShell, type Shell } from './layout';
+import { themeAttribute } from './theme';
 import { OVERLAY_IDS, type ChromeActions, type ChromeState, type Component } from './state';
 import { documentTitle } from './text';
 
@@ -179,11 +180,27 @@ export function createChrome(actions: ChromeActions): Chrome {
       // media query are visibly one decision.
       setAttribute(shell.root, 'data-forced-colors', state.forcedColors ? 'active' : 'none');
       // The motion mode on the shell as well, so the browser gate can read what
-      // the page resolved rather than what it emulated, and so a later part has
-      // a hook for the reduced-motion setting SPEC 14 lists. It is written from
+      // the page resolved rather than what it emulated. It is written from
       // the same boolean the play surface was handed, so the canvas and the
       // chrome cannot disagree about which mode the frame is in.
       setAttribute(shell.root, 'data-motion', state.motion.reducedMotion ? 'reduce' : 'full');
+      // The same answer on the root, `BJ-20`. The stylesheet's attribute
+      // selector needs it there: the reduced-motion media query redefines the
+      // four duration tokens at `:root`, and the "always" arm of SPEC 14's
+      // setting has to reach the same declarations from outside a media
+      // query, which is what `:root[data-motion='reduce']` is. The shell copy
+      // above stays because the browser gate reads it and the root copy is
+      // the stylesheet's; one value, written twice, never two values.
+      setAttribute(
+        document.documentElement,
+        'data-motion',
+        state.motion.reducedMotion ? 'reduce' : 'full',
+      );
+      // Item `E2`, and the theme's whole DOM footprint: one attribute on the
+      // root, present only when the player chose. The stylesheet resolves it
+      // against `prefers-color-scheme` itself, which is the clause "follows
+      // the query by default, and the override wins in both directions".
+      setAttribute(document.documentElement, 'data-theme', themeAttribute(state.theme));
       // Named apart from the Speed control's own `data-speed`, so a selector
       // for one cannot resolve to the other: the shell says what the frame
       // resolved and the button says what it would choose.

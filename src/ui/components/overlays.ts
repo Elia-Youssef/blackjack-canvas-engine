@@ -25,38 +25,43 @@
  * state" means and what makes the play surface persist behind it. A pause would
  * be a fifth thing an overlay does to the game, and SPEC 10 gives it none.
  *
- * The Settings panel here is deliberately partial: it carries SPEC 7's coach
- * control, because `C8` needs the coach to be switchable, SPEC 5's Speed
- * control, which item `E9` at `BJ-14` grades, QUALITY-BAR section 4's
- * play-surface size, which item `F6` at `BJ-16` grades, and it states the house
- * rules in force. SPEC 14's editable house-rule toggles, sound, theme, the
- * reduced-motion setting and Reset all data are item `I5` at `BJ-20`, and a
- * control that did nothing would be worse than an absent one.
+ * The Settings panel is SPEC 14's whole list since `BJ-20`, item `I5`: the
+ * house rules, the coach (all three modes, hint restored with its pre-decision
+ * highlight), Speed, play-surface size, sound with the volume slider beside
+ * the play screen's mute, theme, reduced motion, and Reset all data behind a
+ * confirmation, with the "stored in this browser only" sentence beside it.
+ * The read-only statement panel it was until this part kept its statements,
+ * and they stay true: what changed is that every one of them is now a control.
  *
- * **The two settings SPEC 14 calls immediate are the two that are built.** That
+ * **The two settings SPEC 14 calls immediate are the two that always were.** That
  * section groups Speed and play-surface size as presentation settings that
  * "take effect immediately, mid-round included, because neither can change an
- * outcome", and every other setting in it either changes the house rules at a
- * round boundary or waits on a subsystem a later part builds. Neither of the two
- * is persisted here; both persist at `BJ-20`, which is the ruling `E9` already
- * carries and which `F6` takes on the same terms.
+ * outcome", and the house rules are their opposite: staged, and applied by the
+ * machine at the next deal, which is that section's own boundary. The two
+ * presentation settings and the staged rules are therefore different routes in
+ * `ChromeActions`, and the panel says which is which in its own notes.
  *
- * **Speed is the first real setting in this panel**, and it is here rather than
- * at `BJ-20` because `E9` grades it: SPEC 14 says Speed "takes effect
- * immediately, mid-round included, because neither can change an outcome", so
- * the control hands the value straight to `table.setSpeed` through
- * `ChromeActions` and nothing waits for a round boundary. Its persistence is the
- * one clause of `E9` this part does not close; `BJ-20`'s reload specs do, and
- * `tests/browser/speed-setting.spec.ts` says so in its own header.
+ * **Chrome CSS durations deliberately do not scale with Speed.** SPEC 5 scopes
+ * the Fast multiplier to the constants it lists, and the `--dur-*` tokens are
+ * QUALITY-BAR 15's, not SPEC 5's: a Speed that also shortened the chrome's
+ * transitions would be a fourth motion mode rather than a faster game. Stated
+ * here once, where the Speed control lands, so nobody "fixes" it.
  */
 
 import type { CoachMode } from '../../core/strategy';
+import { COACH_MODES } from '../../core/strategy';
+import { DEFAULT_RULES } from '../../core/rules';
 import type { History, HistoryEntry } from '../../core/history';
 import { MILESTONES, type MilestoneId } from '../../core/statistics';
 import { SPEEDS, type Speed } from '../../core/table';
+import type { DeckCount } from '../../core/shoe';
+import { DECK_COUNTS } from '../../core/shoe';
+import type { SplitRule } from '../../core/hand';
 import { SURFACE_SIZES, type SurfaceSize } from '../../render/surface';
+import { MAX_VOLUME, MIN_VOLUME } from '../audio';
 import { button, el, empty, setAttribute, setHidden, setText } from '../dom';
 import { NOTHING_YET, chips as formatChips, delta as formatDelta, percentOfHundred } from '../format';
+import { MOTION_SETTINGS, type MotionSetting } from '../motion';
 import {
   OVERLAY_IDS,
   OVERLAY_TITLES,
@@ -65,22 +70,8 @@ import {
   type Component,
   type OverlayId,
 } from '../state';
+import { THEMES, type Theme } from '../theme';
 import { milestoneRowText, outcomeText, playerActionText, tableText } from '../text';
-
-/**
- * The two coach modes this part offers. SPEC 7 has three.
- *
- * `hint` is deliberately absent. Its surface is the recommendation highlighted
- * **before** the player acts, which is item `J4` at `BJ-20`; offering the mode
- * here would put a control in Settings that changed nothing a player could see.
- * `review` is the mode whose surface is the round result, which is `C8` and is
- * built. `strategy.ts` still carries all three, `COACH_MODES` still lists them,
- * and `BJ-20` adds the third control to this same group.
- */
-const OFFERED_MODES: readonly { readonly mode: CoachMode; readonly label: string }[] = Object.freeze([
-  { mode: 'off', label: 'Off' },
-  { mode: 'review', label: 'Review' },
-]);
 
 /**
  * SPEC 5's two speeds, with the words SPEC 5 and SPEC 14 both use.
@@ -128,16 +119,76 @@ function historyLine(entry: HistoryEntry, index: number): HTMLElement {
   });
 }
 
-/** The Settings panel. SPEC 7's coach control, and the rules in force. */
+/**
+ * SPEC 7's three coach modes, in `COACH_MODES`' own order.
+ *
+ * `hint` is offered since `BJ-20`, item `J4`: its surface is the recommendation
+ * highlighted on the action bar before the player acts, which the actions
+ * component now draws, so the control changes something a player can see.
+ * Built from the strategy module's own list so a fourth mode added there is a
+ * missing label here rather than a mode nobody can choose.
+ */
+const MODE_LABELS: Readonly<Record<CoachMode, string>> = Object.freeze({
+  off: 'Off',
+  hint: 'Hint',
+  review: 'Review',
+});
+
+/** SPEC 14's split comparison, in the words the house-rule note uses. */
+const SPLIT_RULE_LABELS: Readonly<Record<SplitRule, string>> = Object.freeze({
+  equalValue: 'Equal value',
+  equalRank: 'Equal rank',
+});
+
+/** SPEC 14's theme trio, in SPEC 14's order. */
+const THEME_LABELS: Readonly<Record<Theme, string>> = Object.freeze({
+  system: 'System',
+  light: 'Light',
+  dark: 'Dark',
+});
+
+/** SPEC 14's reduced-motion pair, in SPEC 14's order. */
+const MOTION_SETTING_LABELS: Readonly<Record<MotionSetting, string>> = Object.freeze({
+  system: 'System',
+  always: 'Always',
+});
+
+/**
+ * The slider's granularity: one percent of full volume, fine enough to land on
+ * the engine's own clamps and coarse enough to tab through.
+ */
+const VOLUME_STEP = 0.01;
+
+/** The three boolean house rules, which are toggles rather than pairs. */
+type RuleToggle = 'doubleAfterSplit' | 'surrender' | 'evenMoney';
+
+const RULE_TOGGLE_LABELS: Readonly<Record<RuleToggle, string>> = Object.freeze({
+  doubleAfterSplit: 'Double after split',
+  surrender: 'Surrender',
+  evenMoney: 'Even money',
+});
+
+/**
+ * One setting as a row: its label, the group of controls, and the note that
+ * says when it takes effect where it has one.
+ */
+function settingRow(label: string, group: HTMLElement): HTMLElement {
+  return el('div', {
+    className: 'bj-setting',
+    children: [el('p', { className: 'bj-setting__label', text: label }), group],
+  });
+}
+
+/** The Settings panel: SPEC 14's whole list, since `BJ-20` item `I5`. */
 function settingsPanel(actions: ChromeActions): Component {
   const modeButtons = new Map<CoachMode, HTMLButtonElement>();
   const group = el('div', {
     className: 'bj-modes',
     attributes: { role: 'group', 'aria-label': 'Strategy coach' },
   });
-  for (const { mode, label } of OFFERED_MODES) {
+  for (const mode of COACH_MODES) {
     const control = button(
-      label,
+      MODE_LABELS[mode],
       () => {
         actions.setCoachMode(mode);
       },
@@ -184,7 +235,215 @@ function settingsPanel(actions: ChromeActions): Component {
     sizes.append(control);
   }
 
-  const rules = el('p', { className: 'bj-rules', attributes: { 'data-field': 'house-rules' } });
+  // SPEC 14's first house rule: the shoe size, as the pair SPEC 4.1 allows. A
+  // pair rather than a toggle, because "6 or 8, and there is no third" is a
+  // choice between two named things rather than a yes.
+  const deckButtons = new Map<DeckCount, HTMLButtonElement>();
+  const decks = el('div', {
+    className: 'bj-modes',
+    attributes: { role: 'group', 'aria-label': 'Shoe size' },
+  });
+  for (const count of DECK_COUNTS) {
+    const control = button(
+      `${String(count)} decks`,
+      () => {
+        actions.setRules({ decks: count });
+      },
+      { className: 'bj-button', attributes: { 'data-decks': String(count) } },
+    );
+    deckButtons.set(count, control);
+    decks.append(control);
+  }
+
+  /**
+   * The staged house rules as the panel holds them between frames.
+   *
+   * The toggles' inversions read against a copy because a click handler has no
+   * access to the frame's state; the copy is re-taken from `stagedRules`
+   * whenever the composition root replaces the record, which is every change
+   * any control made, so the copy and the real stage cannot come apart.
+   */
+  let held: {
+    decks: DeckCount;
+    doubleAfterSplit: boolean;
+    surrender: boolean;
+    evenMoney: boolean;
+    splitRule: SplitRule;
+  } = {
+    decks: DEFAULT_RULES.decks,
+    doubleAfterSplit: DEFAULT_RULES.doubleAfterSplit,
+    surrender: DEFAULT_RULES.surrender,
+    evenMoney: DEFAULT_RULES.evenMoney,
+    splitRule: DEFAULT_RULES.splitRule,
+  };
+
+  // SPEC 14's three house-rule toggles. One button each, pressed when the rule
+  // is on, because a toggle is what each of them is: `aria-pressed` carries the
+  // state to a screen reader and the pressed style carries it to an eye.
+  const ruleButtons = new Map<RuleToggle, HTMLButtonElement>();
+  const toggles = el('div', {
+    className: 'bj-modes',
+    attributes: { role: 'group', 'aria-label': 'House-rule toggles' },
+  });
+  for (const key of ['doubleAfterSplit', 'surrender', 'evenMoney'] as const) {
+    const control = button(
+      RULE_TOGGLE_LABELS[key],
+      () => {
+        actions.setRules({ [key]: !held[key] });
+      },
+      { className: 'bj-button', attributes: { 'data-rule': key } },
+    );
+    ruleButtons.set(key, control);
+    toggles.append(control);
+  }
+
+  // SPEC 14's split comparison, as the pair of readings SPEC 4.6 offers.
+  const splitButtons = new Map<SplitRule, HTMLButtonElement>();
+  const splitComparison = el('div', {
+    className: 'bj-modes',
+    attributes: { role: 'group', 'aria-label': 'Split comparison' },
+  });
+  for (const rule of ['equalValue', 'equalRank'] as const) {
+    const control = button(
+      SPLIT_RULE_LABELS[rule],
+      () => {
+        actions.setRules({ splitRule: rule });
+      },
+      { className: 'bj-button', attributes: { 'data-split-rule': rule } },
+    );
+    splitButtons.set(rule, control);
+    splitComparison.append(control);
+  }
+
+  // SPEC 14's sound: the volume half, beside the play screen's mute. A real
+  // `<input type="range">`, which the platform operates by pointer, by touch
+  // and by arrow key, and whose `input` event is the one listener under
+  // `src/ui/` that is not an activation: it is a continuous control reporting
+  // its own movement, and the listener census carries it for that reason.
+  const volume = el('input', {
+    className: 'bj-volume',
+    attributes: {
+      type: 'range',
+      'data-control': 'volume',
+      'aria-label': 'Volume',
+      min: String(MIN_VOLUME),
+      max: String(MAX_VOLUME),
+      step: String(VOLUME_STEP),
+    },
+  });
+  const volumeText = el('p', { className: 'bj-panel__note' });
+  // Two events, one gain and one write. `input` fires on every step of a drag
+  // and moves the engine's gain live, uncommitted; `change` fires once, when
+  // the gesture ends, and is the write. The `BJ-20` review measured the
+  // one-event shape at 40 synchronous localStorage writes for a single drag
+  // of the track, which is a storm SPEC 14's "take effect immediately" never
+  // asked for: immediacy is the gain, and the document needs only the value
+  // the finger settled on.
+  volume.addEventListener('input', () => {
+    const value = Number.parseFloat(volume.value);
+    if (Number.isFinite(value)) {
+      actions.setVolume(value, false);
+    }
+  });
+  volume.addEventListener('change', () => {
+    const value = Number.parseFloat(volume.value);
+    if (Number.isFinite(value)) {
+      actions.setVolume(value, true);
+    }
+  });
+  const sound = el('div', { className: 'bj-setting', children: [volume, volumeText] });
+
+  // SPEC 14's theme, as the trio that section lists.
+  const themeButtons = new Map<Theme, HTMLButtonElement>();
+  const themes = el('div', {
+    className: 'bj-modes',
+    attributes: { role: 'group', 'aria-label': 'Theme' },
+  });
+  for (const theme of THEMES) {
+    const control = button(
+      THEME_LABELS[theme],
+      () => {
+        actions.setTheme(theme);
+      },
+      { className: 'bj-button', attributes: { 'data-theme': theme } },
+    );
+    themeButtons.set(theme, control);
+    themes.append(control);
+  }
+
+  // SPEC 14's reduced motion, as the pair that section prints.
+  const motionButtons = new Map<MotionSetting, HTMLButtonElement>();
+  const motions = el('div', {
+    className: 'bj-modes',
+    attributes: { role: 'group', 'aria-label': 'Reduced motion' },
+  });
+  for (const setting of MOTION_SETTINGS) {
+    const control = button(
+      MOTION_SETTING_LABELS[setting],
+      () => {
+        actions.setReducedMotion(setting);
+      },
+      { className: 'bj-button', attributes: { 'data-motion-setting': setting } },
+    );
+    motionButtons.set(setting, control);
+    motions.append(control);
+  }
+
+  /**
+   * Whether the confirmation is asking its question. Panel state, held here
+   * for the reason the readout panel holds its count: a confirm dialog is the
+   * one piece of a settings panel that is genuinely a flow rather than a value.
+   * It is disarmed whenever the panel itself closes, so a re-opened Settings
+   * never inherits an armed reset from a session that only looked at it.
+   */
+  let confirming = false;
+
+  // SPEC 14's Reset all data, behind the confirmation the same section
+  // requires. The confirm group is inside the panel, which is inside the
+  // overlay host the focus policy already traps, so it takes the existing
+  // dialog route rather than inventing a second overlay SPEC 10 does not have.
+  const resetNote = el('p', {
+    className: 'bj-panel__note',
+    // SPEC 14's own sentence, which item `I5` grades: progress is this
+    // browser's business and nobody else's.
+    text: 'Progress is stored in this browser only and can be cleared by the browser itself.',
+  });
+  const reset = button(
+    'Reset all data',
+    () => {
+      confirming = true;
+    },
+    { className: 'bj-button', attributes: { 'data-control': 'reset-data' } },
+  );
+  const confirmText = el('p', {
+    className: 'bj-panel__note',
+    text: 'This clears best balance, statistics, milestones, unlocks, history and settings.',
+  });
+  const confirmReset = button(
+    'Clear everything',
+    () => {
+      actions.resetAllData();
+    },
+    { className: 'bj-button bj-button--primary', attributes: { 'data-control': 'confirm-reset' } },
+  );
+  const cancelReset = button(
+    'Cancel',
+    () => {
+      confirming = false;
+    },
+    { className: 'bj-button', attributes: { 'data-control': 'cancel-reset' } },
+  );
+  const confirm = el('div', {
+    className: 'bj-confirm',
+    attributes: { role: 'group', 'aria-label': 'Confirm reset' },
+    children: [
+      confirmText,
+      el('div', { className: 'bj-modes', children: [confirmReset, cancelReset] }),
+    ],
+  });
+  confirm.hidden = true;
+
+  const inForce = el('p', { className: 'bj-rules', attributes: { 'data-field': 'house-rules' } });
 
   const root = el('div', {
     className: 'bj-panel',
@@ -193,7 +452,9 @@ function settingsPanel(actions: ChromeActions): Component {
       el('h3', { className: 'bj-panel__heading', text: 'Strategy coach' }),
       el('p', {
         className: 'bj-panel__note',
-        text: 'Review names the correct action in the round result when yours differed.',
+        text:
+          'Hint marks the recommended action before you act. Review names the correct one in ' +
+          'the round result when yours differed.',
       }),
       group,
       el('h3', { className: 'bj-panel__heading', text: 'Speed' }),
@@ -208,14 +469,41 @@ function settingsPanel(actions: ChromeActions): Component {
       el('p', {
         className: 'bj-panel__note',
         // SPEC 14's own sentence, shortened: browser zoom shrinks the canvas box
-        // with the viewport and magnifies nothing, so this is the only path to a
-        // larger card. Written out because a player choosing between the two
+        // with the viewport and magnifies nothing, so this is the only path to
+        // a larger card. Written out because a player choosing between the two
         // needs to know the browser's own control will not do it.
         text: 'Browser zoom does not enlarge the cards. This does, and it applies at once.',
       }),
       sizes,
       el('h3', { className: 'bj-panel__heading', text: 'House rules' }),
-      rules,
+      el('p', {
+        className: 'bj-panel__note',
+        // SPEC 14's boundary, as the note beside the controls it governs: the
+        // stage is applied at the next deal, and the statement below carries
+        // what the current round is running under until then.
+        text: 'Rule changes take effect at the start of the next round, never mid-round.',
+      }),
+      settingRow('Shoe size', decks),
+      toggles,
+      settingRow('Split comparison', splitComparison),
+      inForce,
+      el('h3', { className: 'bj-panel__heading', text: 'Sound' }),
+      sound,
+      el('h3', { className: 'bj-panel__heading', text: 'Appearance' }),
+      settingRow('Theme', themes),
+      settingRow('Reduced motion', motions),
+      el('p', {
+        className: 'bj-panel__note',
+        // The note the Speed control's own comment promises: the chrome's
+        // transitions are QUALITY-BAR 15's durations, and SPEC 5 scopes the
+        // Fast multiplier to the constants it lists. Stated so nobody reads
+        // their steadiness as the setting failing to reach.
+        text: 'Speed shortens the pauses of the game, not of this panel.',
+      }),
+      el('h3', { className: 'bj-panel__heading', text: 'Data' }),
+      resetNote,
+      reset,
+      confirm,
     ],
   });
 
@@ -234,15 +522,63 @@ function settingsPanel(actions: ChromeActions): Component {
         // cannot disagree about which size the frame is at.
         setAttribute(control, 'aria-pressed', String(size === state.layout.surfaceSize));
       }
+
+      // The house rules, read off the staged record rather than the machine's:
+      // SPEC 14 keeps a change off the felt until the next deal, and a control
+      // that snapped back to the rules in force would be a control that looked
+      // like it did nothing.
+      held = {
+        decks: state.stagedRules.decks,
+        doubleAfterSplit: state.stagedRules.doubleAfterSplit,
+        surrender: state.stagedRules.surrender,
+        evenMoney: state.stagedRules.evenMoney,
+        splitRule: state.stagedRules.splitRule,
+      };
+      for (const [count, control] of deckButtons) {
+        setAttribute(control, 'aria-pressed', String(count === held.decks));
+      }
+      for (const [key, control] of ruleButtons) {
+        setAttribute(control, 'aria-pressed', String(held[key]));
+      }
+      for (const [rule, control] of splitButtons) {
+        setAttribute(control, 'aria-pressed', String(rule === held.splitRule));
+      }
+
+      // The statement of the rules in force, which is the read-only sentence
+      // this panel carried before it grew controls, and which now doubles as
+      // the honest answer to "has my change landed yet".
       const house = state.readout.rules;
       setText(
-        rules,
-        `${formatChips(house.decks)} decks. Dealer stands on all 17s. ` +
+        inForce,
+        `This round runs ${String(house.decks)} decks. Dealer stands on all 17s. ` +
           `Double after split ${house.doubleAfterSplit ? 'on' : 'off'}. ` +
           `Surrender ${house.surrender ? 'on' : 'off'}. ` +
           `Even money ${house.evenMoney ? 'on' : 'off'}. ` +
           `Split on ${house.splitRule === 'equalValue' ? 'equal value' : 'equal rank'}.`,
       );
+
+      // The volume slider and its reading. Written from the engine's clamped
+      // value, so the slider and the gain cannot disagree; the write is
+      // guarded so a drag in progress is never yanked back mid-movement.
+      const wanted = String(state.volume);
+      if (volume.value !== wanted) {
+        volume.value = wanted;
+      }
+      setText(volumeText, `Volume ${percentOfHundred(state.volume * 100)} of full.`);
+
+      for (const [theme, control] of themeButtons) {
+        setAttribute(control, 'aria-pressed', String(theme === state.theme));
+      }
+      for (const [setting, control] of motionButtons) {
+        setAttribute(control, 'aria-pressed', String(setting === state.reducedMotion));
+      }
+
+      // The confirmation, hidden until asked and disarmed when the panel
+      // itself goes, so a reset is never armed in a panel nobody is looking at.
+      if (state.overlay !== 'settings') {
+        confirming = false;
+      }
+      setHidden(confirm, !confirming);
     },
   };
 }

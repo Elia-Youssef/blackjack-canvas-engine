@@ -95,15 +95,51 @@ async function buildSupport(entry: string): Promise<string> {
   throw new Error(`${entry} bundled to no chunk`);
 }
 
+/**
+ * Dismiss the onboarding overlay a first launch opens. `BJ-20`, item `J7`.
+ *
+ * SPEC 17 shows How to Play automatically on a first launch, and every test
+ * context is a first launch, so the page these helpers hand the specs would
+ * otherwise carry an open dialog over the play surface for the whole of every
+ * spec. What the existing suites grade is the screens underneath it, so the
+ * shared entries close it the way a player does, through its own Close button,
+ * and `onboarding.spec.ts` is where the overlay itself is the subject: the
+ * auto-show is asserted there against a raw `page.goto`, with no helper in
+ * front of it.
+ *
+ * The dismissal is guarded rather than unconditional because a context that
+ * has seen the game before, a reload inside one test, boots with no overlay.
+ */
+async function dismissOnboarding(page: Page): Promise<boolean> {
+  await settle(page);
+  if ((await shell(page).getAttribute('data-overlay')) !== 'howToPlay') {
+    return false;
+  }
+  await control(page, 'close-overlay').click();
+  await expect(page.locator('[data-overlay-host="true"]')).toBeHidden();
+  return true;
+}
+
 /** Load the shipped page and drive it as it ships. No injection at all. */
 export async function openShippedPage(page: Page): Promise<void> {
   await page.goto('/');
   await expect(page.locator('.bj-shell')).toBeVisible();
+  if (await dismissOnboarding(page)) {
+    // The dismissal is itself a press, and one spec's premise is "a page
+    // nobody has pressed yet", which reads focus exactly as loaded. The seen
+    // flag the dismissal wrote is in the context now, so a reload boots the
+    // same page with no overlay and nothing pressed on it: the state every
+    // existing shipped-page spec was written against, reached honestly.
+    await page.reload();
+    await expect(page.locator('.bj-shell')).toBeVisible();
+    await settle(page);
+  }
 }
 
 /** Load the shipped page, then boot a game with known options over it. */
 export async function bootGame(page: Page, options: HarnessBootOptions = {}): Promise<void> {
   await page.goto('/');
+  await dismissOnboarding(page);
   await page.addScriptTag({ content: await bundle() });
   await page.waitForFunction(() => window.__bjGame !== undefined, undefined, {
     timeout: PHASE_TIMEOUT,
@@ -115,6 +151,9 @@ export async function bootGame(page: Page, options: HarnessBootOptions = {}): Pr
     }
     api.boot(given);
   }, options);
+  // The harness's own boot is a first launch of its own on a clean context, so
+  // the same dismissal the shipped entry applies applies to the game it built.
+  await dismissOnboarding(page);
 }
 
 /** The machine's snapshot. Only available on a harness-booted page. */
@@ -748,6 +787,11 @@ export async function layoutReport(page: Page): Promise<LayoutReport> {
         'data-coach-mode',
         'data-speed',
         'data-surface-size',
+        'data-decks',
+        'data-rule',
+        'data-split-rule',
+        'data-theme',
+        'data-motion-setting',
       ]) {
         const value = node.getAttribute(attribute);
         if (value !== null) {

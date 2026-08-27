@@ -497,6 +497,44 @@ body {
 }
 
 .bj-screen__title,
+/* One setting's row: the label beside the group of controls that offer it.
+ * `BJ-20`, item `I5`. A row rather than a stack, so a player scanning the
+ * panel pairs each label with its choices without holding the label in mind;
+ * the pair wraps under itself rather than overflowing at the narrow end. */
+.bj-setting {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  min-width: 0;
+}
+
+.bj-setting__label {
+  margin: 0;
+  color: var(--bj-text-muted);
+  font-size: var(--type-sm);
+  min-width: calc(var(--space-8) * 2);
+  flex: none;
+}
+
+/* The volume slider, which is the one control in the panel the platform draws
+ * the shape of. Its accent takes the theme's own accent so it is never a
+ * foreign object in either palette, and its thumb keeps the touch target the
+ * buttons keep through the token the focus ring's width already carries. */
+.bj-volume {
+  accent-color: var(--bj-accent);
+  min-height: var(--focus-ring-width);
+  flex: 1 1 calc(var(--space-8) * 2.5);
+}
+
+/* SPEC 7's hint mark, `BJ-20`, item `J4`. The underline is the same shape the
+ * pressed state carries, for the same reason `BJ-18` chose it: it survives
+ * forced colors and every colour-vision deficiency, and it says "this one"
+ * without disabling or weighing anything. */
+.bj-actions [data-hint='true'] {
+  text-decoration: underline;
+}
+
 .bj-panel__heading {
   margin: 0;
   font-size: var(--type-lg);

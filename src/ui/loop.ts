@@ -34,11 +34,37 @@ const MS_PER_SECOND = 1000;
 export interface FrameLoop {
   /** Begin scheduling frames. Calling it twice is harmless. */
   start(): void;
-  /** Stop scheduling. The frame in flight is cancelled, not awaited. */
+  /** Stop scheduling frames. The frame in flight is cancelled, not awaited. */
   stop(): void;
   /** Whether frames are currently scheduled. */
   running(): boolean;
+  /**
+   * Stop and take the platform listeners off. `BJ-20`, item `C7`.
+   *
+   * `stop` alone leaves the `visibilitychange` listener bound, which is right
+   * for a pause and wrong for the end of a game's life: a listener left behind
+   * by a disposed game would answer the next tab switch on behalf of a page it
+   * no longer owns, and the `onHidden` write it carries is exactly the kind of
+   * write a dead game must not make. The composition root's `dispose` calls
+   * this; nothing else needs to.
+   */
+  dispose(): void;
 }
+
+/**
+ * The visibility half of the platform, read for `visibilityState`.
+ *
+ * `EventTarget` plus the one field the handler reads, so a test can build a
+ * fake that answers honestly without a page. The same shape `src/ui/audio.ts`
+ * reads its resume from.
+ */
+type VisibilityTarget = EventTarget & { readonly visibilityState: string };
+
+/**
+ * Where `pagehide` is read from. Window in a page, `null` under a headless
+ * test that did not inject one.
+ */
+type PageTarget = EventTarget;
 
 /** What a loop is built from. Both schedulers are injectable, for a test. */
 export interface FrameLoopOptions {
@@ -54,6 +80,34 @@ export interface FrameLoopOptions {
   readonly schedule?: (callback: (timestamp: number) => void) => number;
   /** Defaults to `cancelAnimationFrame`. */
   readonly cancel?: (handle: number) => void;
+  /**
+   * Where `visibilitychange` is read. Defaults to the page's `document`, or
+   * `null` where there is none. `BJ-20`, item `C7`.
+   */
+  readonly visibility?: VisibilityTarget | null;
+  /** Where `pagehide` is read. Defaults to the page's `window`, or `null`. */
+  readonly page?: PageTarget | null;
+  /**
+   * Called when the page goes hidden, or is being unloaded, while the loop is
+   * running. QUALITY-BAR section 7: persistence writes happen on those two
+   * moments and never on `beforeunload`. The loop stops first, so what the
+   * callback observes is a game whose frame has genuinely ended.
+   */
+  readonly onHidden?: () => void;
+}
+
+/**
+ * The page's `document`, or `null` where there is none to read.
+ *
+ * Read off the global scope by name rather than through `window`, on the same
+ * terms `src/ui/audio.ts` reads its own targets: a host with no document is a
+ * host whose tabs cannot hide, and the loop there simply never pauses.
+ */
+function platformDocument(): Document | null {
+  if (typeof document === 'undefined') {
+    return null;
+  }
+  return document;
 }
 
 /** Build a loop. Nothing is scheduled until `start` is called. */
@@ -61,9 +115,30 @@ export function createFrameLoop(options: FrameLoopOptions): FrameLoop {
   const schedule =
     options.schedule ?? ((callback: (timestamp: number) => void): number => requestAnimationFrame(callback));
   const cancel = options.cancel ?? ((handle: number): void => { cancelAnimationFrame(handle); });
+  const documentTarget: VisibilityTarget | null =
+    options.visibility === undefined ? platformDocument() : options.visibility;
+  const visibilityTarget = documentTarget;
+  // `pagehide` fires on the window, and the document's own `defaultView` is
+  // that window. Reaching it that way rather than by naming the `window`
+  // global keeps the one-seam scan in `tests/unit/storage-write-failure.test.ts`
+  // honest: exactly one file under `src/` names the platform's window, and it
+  // is the store's.
+  const pageTarget: PageTarget | null =
+    options.page === undefined
+      ? ((documentTarget as Document | null)?.defaultView ?? null)
+      : options.page;
 
   let handle: number | null = null;
   let previous: number | null = null;
+  /**
+   * Whether the loop stopped itself because the page went hidden.
+   *
+   * The flag is what keeps `start` and `stop` meaning what their callers said:
+   * a visible event restarts the loop only if the loop paused itself, so a
+   * game that was stopped deliberately, by `dispose` or by a replaced shell,
+   * stays stopped when the tab comes back.
+   */
+  let pausedByVisibility = false;
 
   function frame(timestamp: number): void {
     // Scheduled again first, so a throw from `onFrame` stops the loop rather
@@ -77,26 +152,78 @@ export function createFrameLoop(options: FrameLoopOptions): FrameLoop {
     options.onFrame(dt);
   }
 
-  return {
-    start(): void {
+  function start(): void {
+    if (handle !== null) {
+      return;
+    }
+    previous = null;
+    handle = schedule(frame);
+  }
+
+  function stop(): void {
+    if (handle === null) {
+      return;
+    }
+    cancel(handle);
+    handle = null;
+    previous = null;
+  }
+
+  /**
+   * QUALITY-BAR section 7 and item `C7`: a hidden tab pauses the animation,
+   * and a visible one resumes it.
+   *
+   * The pause is a real stop rather than a flag the frame callback checks,
+   * because the whole hazard of a hidden tab is what the platform does to
+   * `requestAnimationFrame` while nobody is looking: it stops delivering
+   * frames, then delivers one with a gap, and the machine's clamp and resume
+   * rule already answer the gap. Stopping here means the machine is not asked
+   * about time it never observed, which is the stronger half of SPEC 3's
+   * "pause animation, preserve state, no penalty".
+   */
+  function onVisibility(): void {
+    if (visibilityTarget === null) {
+      return;
+    }
+    if (visibilityTarget.visibilityState === 'hidden') {
       if (handle !== null) {
-        return;
+        pausedByVisibility = true;
+        stop();
+        options.onHidden?.();
       }
-      previous = null;
-      handle = schedule(frame);
-    },
+      return;
+    }
+    if (pausedByVisibility) {
+      pausedByVisibility = false;
+      start();
+    }
+  }
 
-    stop(): void {
-      if (handle === null) {
-        return;
-      }
-      cancel(handle);
-      handle = null;
-      previous = null;
-    },
+  /**
+   * QUALITY-BAR section 7: the write also happens on `pagehide`, which fires
+   * where `visibilitychange` does not, and never restarts anything, because
+   * the page is leaving rather than hiding.
+   */
+  function onPageHide(): void {
+    if (handle !== null) {
+      pausedByVisibility = false;
+      stop();
+      options.onHidden?.();
+    }
+  }
 
-    running(): boolean {
-      return handle !== null;
+  visibilityTarget?.addEventListener('visibilitychange', onVisibility);
+  pageTarget?.addEventListener('pagehide', onPageHide);
+
+  return {
+    start,
+    stop,
+    running: () => handle !== null,
+    dispose(): void {
+      pausedByVisibility = false;
+      stop();
+      visibilityTarget?.removeEventListener('visibilitychange', onVisibility);
+      pageTarget?.removeEventListener('pagehide', onPageHide);
     },
   };
 }

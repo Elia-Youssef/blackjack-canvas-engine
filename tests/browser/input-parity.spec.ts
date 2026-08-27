@@ -56,6 +56,7 @@ import type { ChromeActions } from '../../src/ui/state';
 import { BUST_OUT_WAGER, bustOutSeed, splitSeed } from './support/action-seeds';
 import {
   INPUT_METHODS,
+  CONTROL_ATTRIBUTES,
   SCREEN_CONTROLS,
   controlsInDomOrder,
   focusByTab,
@@ -117,6 +118,15 @@ function route(page: Page, method: InputMethod) {
     async again(key: string): Promise<void> {
       await pressBy(page, method, selectorFor(key));
     },
+    /**
+     * Record an action this route drove by hand rather than through `pressBy`.
+     * `BJ-20`'s volume slider is the one control whose platform activation is
+     * a value change rather than a press, so the keyboard arm drives it with
+     * the arrow the platform gives it and records the action it performed.
+     */
+    saw(action: string): void {
+      seen.add(action);
+    },
     /** Require the route to have pressed exactly what it declared. */
     declared(actions: readonly string[]): void {
       expect([...seen].sort(), `${method}: the route drove what it declares`).toEqual(
@@ -143,6 +153,15 @@ const ROUTE_ACTIONS = Object.freeze({
   resetBankroll: ['chooseTable', 'start', 'tapChip', 'deal', 'stand', 'nextHand', 'resetBankroll'],
   overlays: ['openOverlay', 'closeOverlay'],
   settings: ['openOverlay', 'setCoachMode', 'setSpeed', 'setSurfaceSize'],
+  // `BJ-20`'s settings routes. The house rules stage, the volume slider drives
+  // its own element, and the theme, the reduced-motion setting and the reset
+  // arrive with the editable panel. Each is driven by all three methods below
+  // like every other action, because each control is a real `<button>` and the
+  // slider is a real `<input>`.
+  houseRules: ['openOverlay', 'setRules'],
+  volume: ['openOverlay', 'setVolume'],
+  appearance: ['openOverlay', 'setTheme', 'setReducedMotion'],
+  reset: ['openOverlay', 'resetAllData'],
   // `BJ-19`'s mute route. One action, and it is driven by all three methods
   // like every other, because the control is a `<button>` and inherits the
   // platform's activation for each of them.
@@ -487,6 +506,114 @@ for (const method of INPUT_METHODS) {
       driver.declared(ROUTE_ACTIONS.settings);
     });
 
+    test('stages a house rule from the Settings panel', async ({ page }) => {
+      // `BJ-20`. The house rules stage for the next round, which is SPEC 14's
+      // boundary, and the control that stages one is a real button like every
+      // other: the shoe size is the pair SPEC 4.1 allows.
+      const driver = route(page, method);
+      await openShippedPage(page);
+      await waitForPhase(page, 'start');
+      await driver.press('openOverlay', 'data-open-overlay=settings');
+      await expect(page.locator('[data-overlay-host="true"]')).toBeVisible();
+
+      await driver.press('setRules', 'data-decks=8');
+      await expect(page.locator('[data-decks="8"]')).toHaveAttribute('aria-pressed', 'true');
+      await expect(page.locator('[data-decks="6"]')).toHaveAttribute('aria-pressed', 'false');
+
+      driver.declared(ROUTE_ACTIONS.houseRules);
+    });
+
+    test('sets the volume through the slider', async ({ page }) => {
+      // `BJ-20`, item `I5`. The one control in the panel that is not a button,
+      // and the reason it can satisfy all three methods at all: the platform
+      // operates a range input by arrow key, by a press on the track and by a
+      // tap on the track, and each of the three moves the value and fires the
+      // one `input` event the slider listens for.
+      const driver = route(page, method);
+      await openShippedPage(page);
+      await waitForPhase(page, 'start');
+      await driver.press('openOverlay', 'data-open-overlay=settings');
+      const slider = page.locator('[data-control="volume"]');
+      await expect(slider).toBeVisible();
+      await expect(page.locator('[data-panel="settings"]')).toContainText('Volume 100% of full.');
+
+      // The panel is taller than the viewport at this width, so the slider is
+      // scrolled to before either kind of press lands on it.
+      await slider.scrollIntoViewIfNeeded();
+      if (method === 'keyboard') {
+        await slider.focus();
+        await expect(slider).toBeFocused();
+        // One step down from full, which is the smallest move the arrows make.
+        await page.keyboard.press('ArrowDown');
+        driver.saw('setVolume');
+      } else {
+        // A press on the track, left of the thumb at full: every engine moves
+        // the value toward the press, whether it steps or jumps.
+        const box = await slider.boundingBox();
+        expect(box, 'the slider has a rendered box').not.toBeNull();
+        if (box === null) {
+          throw new Error('the slider has no box');
+        }
+        const x = box.x + box.width * 0.1;
+        const y = box.y + box.height / 2;
+        if (method === 'pointer') {
+          await page.mouse.click(x, y);
+        } else {
+          await page.touchscreen.tap(x, y);
+        }
+        driver.saw('setVolume');
+      }
+
+      await expect(page.locator('[data-panel="settings"]'), 'the volume moved').not.toContainText(
+        'Volume 100% of full.',
+      );
+      driver.declared(ROUTE_ACTIONS.volume);
+    });
+
+    test('sets the theme and the reduced-motion setting', async ({ page }) => {
+      // `BJ-20`, items `E2` and `I5`. Two groups, each a real button pair, and
+      // each with a page-level answer to read back: the theme writes the root
+      // attribute the stylesheet selects on, and the reduced-motion setting
+      // resolves the frame the shell reports.
+      const driver = route(page, method);
+      await openShippedPage(page);
+      await waitForPhase(page, 'start');
+      await driver.press('openOverlay', 'data-open-overlay=settings');
+
+      await driver.press('setTheme', 'data-theme=dark');
+      await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+
+      await driver.press('setReducedMotion', 'data-motion-setting=always');
+      await expect(shell(page)).toHaveAttribute('data-motion', 'reduce');
+      await expect(page.locator('html')).toHaveAttribute('data-motion', 'reduce');
+
+      driver.declared(ROUTE_ACTIONS.appearance);
+    });
+
+    test('resets all data through the confirmation', async ({ page }) => {
+      // `BJ-20`, item `I5`. The reset re-boots the whole game, so what the
+      // route leaves behind is a first launch: the stored document is gone,
+      // the balance is back at 1,000, and How to Play is showing again,
+      // because the seen flag was one of the cleared values.
+      const driver = route(page, method);
+      await openShippedPage(page);
+      await waitForPhase(page, 'start');
+      await driver.press('openOverlay', 'data-open-overlay=settings');
+
+      await driver.press('resetAllData', 'data-control=reset-data');
+      const confirm = page.locator('[data-control="confirm-reset"]');
+      await expect(confirm).toBeVisible();
+      await driver.again('data-control=confirm-reset');
+
+      const host = page.locator('[data-overlay-host="true"]');
+      await expect(host).toBeVisible();
+      await expect(host).toHaveAttribute('data-open', 'howToPlay');
+      await expect
+          .poll(async () => numberIn(readoutValue(page, 'chips')), { message: 'the balance restarted' })
+          .toBe(1000);
+      driver.declared(ROUTE_ACTIONS.reset);
+    });
+
     test('toggles the sound from the play screen, once, and says so', async ({ page }) => {
       // `BJ-19`'s one action outside every overlay. The press must work by all
       // three methods because it is the control SPEC 14's "single action" is
@@ -714,6 +841,11 @@ const CHROME_ACTIONS: Readonly<Record<keyof ChromeActions, string>> = Object.fre
   setSpeed: 'setSpeed',
   setSurfaceSize: 'setSurfaceSize',
   toggleMuted: 'toggleMuted',
+  setVolume: 'setVolume',
+  setTheme: 'setTheme',
+  setReducedMotion: 'setReducedMotion',
+  setRules: 'setRules',
+  resetAllData: 'resetAllData',
 });
 
 test.describe('D2: the action list is the machines, not this files', () => {
@@ -782,6 +914,24 @@ test.describe('D2: the action list is the machines, not this files', () => {
           }
           continue;
         }
+        // **A native form control is the third thing the platform activates
+        // from all three methods, and `BJ-20` shipped the chrome's first one.**
+        // The volume slider is an `<input type="range">`: a press on the track
+        // and a tap on the track move it by pointer and by touch, and the
+        // arrow keys move it by keyboard, all of it the platform's own
+        // behaviour with nothing of ours bound to it beyond the one `input`
+        // listener that reads the movement. It is the opposite of a
+        // hand-rolled activation, so it is allowed here on its tag the way the
+        // scroll container is allowed on its computed style, and any other
+        // kind of `input` a later part ships is audited by this same branch:
+        // the native ones pass it and a `role="button"` on a div still does
+        // not.
+        if (tag === 'input' || tag === 'select' || tag === 'textarea') {
+          if (node.tabIndex < 0) {
+            strays.push(`${tag}(${named}) is out of the tab order`);
+          }
+          continue;
+        }
         // `tabindex="-1"` on something that is not a control is the focus anchor
         // and the dialog: focusable on purpose, in the tab order of neither, and
         // activated by nothing.
@@ -813,5 +963,72 @@ test.describe('D2: the action list is the machines, not this files', () => {
     expect(audit.buttons, 'the scan found the buttons').toBeGreaterThan(5);
     expect(audit.summaries, 'the scan found the disclosure').toBe(1);
     expect(audit.submitters, 'a button that would submit rather than press').toBe(0);
+  });
+});
+
+test.describe('D2 armour: the settings panel census', () => {
+  test('every focusable control in the open panel is named, and the names are these', async ({
+    page,
+  }) => {
+    // The `BJ-20` review's gap: the per-phase SCREEN_CONTROLS lists cannot
+    // hold overlay interiors, because they assert rendered boxes on the phase
+    // screen and a closed overlay renders none, and the routes above drive
+    // only the controls someone remembered to name. This census is the
+    // presence half those lists could not carry: the open panel's visible
+    // focusable controls, each mapped to the identifying attribute the walks
+    // and the focus reports key on, frozen as a set. A control added without
+    // a name fails the mapping; a control removed, or renamed, fails the set.
+    await page.goto('/');
+    await waitForPhase(page, 'start');
+    await page.locator('[data-open-overlay="settings"]').click();
+    await expect(page.locator('[data-panel="settings"]')).toBeVisible();
+
+    const found = await page.evaluate((attributes: readonly string[]) => {
+      const panel = document.querySelector('[data-panel="settings"]');
+      if (panel === null) {
+        return ['NO PANEL'];
+      }
+      const focusable = panel.querySelectorAll<HTMLElement>(
+        'button, input, select, textarea, [tabindex]',
+      );
+      return [...focusable]
+        .filter((node) => node.checkVisibility())
+        .map((node) => {
+          for (const attribute of attributes) {
+            const value = node.getAttribute(attribute);
+            if (value !== null) {
+              return `${attribute}=${value}`;
+            }
+          }
+          return `UNNAMED <${node.tagName.toLowerCase()}> ${node.textContent?.trim() ?? ''}`;
+        })
+        .sort();
+    }, CONTROL_ATTRIBUTES);
+
+    expect(found).toEqual([
+      'data-coach-mode=hint',
+      'data-coach-mode=off',
+      'data-coach-mode=review',
+      'data-control=reset-data',
+      'data-control=volume',
+      'data-decks=6',
+      'data-decks=8',
+      'data-motion-setting=always',
+      'data-motion-setting=system',
+      'data-rule=doubleAfterSplit',
+      'data-rule=evenMoney',
+      'data-rule=surrender',
+      'data-speed=fast',
+      'data-speed=normal',
+      'data-split-rule=equalRank',
+      'data-split-rule=equalValue',
+      'data-surface-size=100',
+      'data-surface-size=125',
+      'data-surface-size=150',
+      'data-surface-size=200',
+      'data-theme=dark',
+      'data-theme=light',
+      'data-theme=system',
+    ]);
   });
 });

@@ -27,6 +27,17 @@
  * every refusal, and a greyed button with no explanation is the half of that
  * sentence a player cannot act on, so the sentence rides on `title` and the
  * machine's own reason value on `data-reason`.
+ *
+ * **SPEC 7's hint marks a control rather than touching it. `BJ-20`, `J4`.**
+ * Under the hint mode the frame's state carries the recommended action, and
+ * this component marks that one control with `data-hint` and a name that says
+ * so, which is the whole of the highlight. The two are written after the
+ * grey-out and can never meet on one control, for a reason rather than a hope:
+ * `strategy.recommend` walks the chart down to the first action that is
+ * **legal**, through the same refusal predicates the grey-out uses, so the
+ * recommended control is by construction one the rules allow, and the coach
+ * never blocks, delays or refuses anything, which is the clause `J4` exists
+ * to enforce.
  */
 
 import type { ActionContext } from '../../core/table';
@@ -82,6 +93,21 @@ export function createActions(actions: ChromeActions): Component {
           ACTION_LABELS[action],
         );
         setAttribute(control, 'data-reason', refusal);
+        // SPEC 7's hint, after the grey-out and disjoint from it: the
+        // recommendation is the first legal action in its cell, so the control
+        // it marks is never the one the refusal greyed. The underline is the
+        // pressed state's own shape, read again; the name carries the state to
+        // a screen reader, prefix-first so SC 2.5.3 keeps holding.
+        const hinted = state.hint === action;
+        setAttribute(control, 'data-hint', hinted ? 'true' : null);
+        // Written only when hinted, and never removed here: the grey-out
+        // composes this control's name when it refuses it, and a hint pass
+        // that wrote `null` on its way out took the refusal reason with it.
+        // The two states never share a control, but every frame shares this
+        // loop, so the ordering rule is what keeps both names honest.
+        if (hinted) {
+          setAttribute(control, 'aria-label', `${ACTION_LABELS[action]}. Recommended by the coach.`);
+        }
       }
     },
   };

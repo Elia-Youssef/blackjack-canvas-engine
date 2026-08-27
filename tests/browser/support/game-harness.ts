@@ -36,6 +36,7 @@
 
 import {
   boot,
+  currentGame,
   type AccessibilityProbe,
   type AudioProbe,
   type BootOptions,
@@ -100,6 +101,13 @@ export interface MotionSample {
   readonly balance: string;
   /** The balance the machine held on the same frame. */
   readonly chips: number;
+  /**
+   * The pending wager the machine held on the same frame. `BJ-20`, item `C6`:
+   * SPEC 4.11 moves the wager out of the balance at the deal rather than at
+   * the tap, so the per-frame reading a rapid burst of chip presses shows is
+   * this one and not the balance's.
+   */
+  readonly wager: number;
 }
 
 /** No trace runs longer than this, so a spec cannot hang on a stuck page. */
@@ -147,6 +155,15 @@ function balanceText(): string {
 }
 
 function running(): Game {
+  // The module's own accessor first: an in-page Reset re-boots internally,
+  // which disposes the game this harness booted and replaces it with a fresh
+  // one the local variable never learns about. `currentGame()` follows the
+  // re-boot; the local is the fallback for the window between `boot` being
+  // called and the module registering the result.
+  const live = currentGame();
+  if (live !== null) {
+    return live;
+  }
   if (game === null) {
     throw new Error('the harness has not booted a game');
   }
@@ -181,6 +198,7 @@ const harness: GameHarness = {
         speed: probe.speed,
         balance: balanceText(),
         chips: snapshot.wallet.chips,
+        wager: snapshot.wallet.wager,
       });
       frames += 1;
       if (tracing && frames < TRACE_FRAME_LIMIT) {

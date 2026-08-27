@@ -247,6 +247,30 @@
 }
 
 /*
+ * The same four declarations, selected by the game rather than by the platform.
+ * `BJ-20`, SPEC 14's reduced-motion setting, item `I5`.
+ *
+ * "System / always" is the setting's pair of words: "system" leaves the media
+ * query above as the only selector, and "always" writes data-motion='reduce' on
+ * the root, which this block answers with exactly the declarations the query
+ * carries. Mirroring them line for line is the point and the constraint: the
+ * token tests pin this file to QUALITY-BAR 15 and SPEC 16, so no new number may
+ * appear here, and a setting that reduced motion by any other amount than the
+ * platform query does would be a third motion mode rather than an arm of one.
+ *
+ * The attribute is written by the chrome sync from the same boolean the canvas
+ * was handed, so the two selectors cannot both be answered by one frame. There
+ * is deliberately no "restore animation under always" arm: reduction only ever
+ * adds, which is resolveReducedMotion's own rule in the stylesheet's place.
+ */
+:root[data-motion='reduce'] {
+  --dur-1: var(--dur-0);
+  --dur-2: var(--dur-0);
+  --dur-3: var(--dur-0);
+  --dur-4: var(--dur-0);
+}
+
+/*
  * Forced colors. QUALITY-BAR section 5, item `G9`, and `BJ-18`.
  *
  *   "Under `forced-colors: active` the chrome adopts the system palette and no

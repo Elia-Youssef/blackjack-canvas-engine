@@ -106,7 +106,7 @@ export const SCREEN_CONTROLS: Readonly<Record<string, readonly string[]>> = Obje
  * "the control the report found" and "the control that has focus" are the same
  * string for the same button and a spec can compare the two.
  */
-const CONTROL_ATTRIBUTES = [
+export const CONTROL_ATTRIBUTES = [
   'data-control',
   'data-action',
   'data-chip',
@@ -116,6 +116,13 @@ const CONTROL_ATTRIBUTES = [
   'data-coach-mode',
   'data-speed',
   'data-surface-size',
+  // `BJ-20`'s settings controls, named so the walks and the focus reports can
+  // tell one from another the way they tell a chip from an action.
+  'data-decks',
+  'data-rule',
+  'data-split-rule',
+  'data-theme',
+  'data-motion-setting',
   'data-focus-anchor',
   'data-overlay-host',
 ] as const;

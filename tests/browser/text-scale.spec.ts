@@ -279,15 +279,12 @@ async function visibleControls(page: Page): Promise<readonly { key: string; box:
       width: number;
       height: number;
     }
-    const overlaps = (a: DOMRect, b: DOMRect): boolean =>
-      a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
-
     const found: { key: string; box: Box }[] = [];
-    for (const node of document.querySelectorAll('button, summary')) {
+    for (const node of document.querySelectorAll('button, summary, input')) {
       if (!(node instanceof HTMLElement)) {
         continue;
       }
-      const rect = node.getBoundingClientRect();
+      let rect = node.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) {
         continue;
       }
@@ -299,17 +296,36 @@ async function visibleControls(page: Page): Promise<readonly { key: string; box:
       if (disclosure !== null && !disclosure.open && node.closest('summary') === null) {
         continue;
       }
+      // Clip the box to every scrollport it sits inside, and keep the clipped
+      // box for the comparison below. `BJ-20` made the settings panel a real
+      // scroller at 200 percent text, and a control that is scrolled part way
+      // out of its scroller occupies only its visible part: an unclipped rect
+      // made a panel button "overlap" the chip bar behind the overlay, which
+      // is arithmetic rather than a defect, and hid any real collision under
+      // the same noise.
       const viewport = new DOMRect(0, 0, window.innerWidth, window.innerHeight);
-      let shown = overlaps(rect, viewport);
+      let clip = viewport;
       let parent = node.parentElement;
-      while (shown && parent !== null) {
+      while (parent !== null) {
         const parentStyle = getComputedStyle(parent);
         if (parentStyle.overflowX !== 'visible' || parentStyle.overflowY !== 'visible') {
-          shown = overlaps(rect, parent.getBoundingClientRect());
+          const box = parent.getBoundingClientRect();
+          clip = new DOMRect(
+            Math.max(clip.left, box.left),
+            Math.max(clip.top, box.top),
+            Math.min(clip.right, box.right) - Math.max(clip.left, box.left),
+            Math.min(clip.bottom, box.bottom) - Math.max(clip.top, box.top),
+          );
         }
         parent = parent.parentElement;
       }
-      if (!shown) {
+      rect = new DOMRect(
+        Math.max(rect.left, clip.left),
+        Math.max(rect.top, clip.top),
+        Math.min(rect.right, clip.right) - Math.max(rect.left, clip.left),
+        Math.min(rect.bottom, clip.bottom) - Math.max(rect.top, clip.top),
+      );
+      if (rect.width <= 0 || rect.height <= 0) {
         continue;
       }
       let key = node.tagName.toLowerCase();
