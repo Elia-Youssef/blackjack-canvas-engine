@@ -98,6 +98,7 @@ import { DEFAULT_SPEED, PLAYER_ACTIONS, SPEEDS } from '../core/table';
 import type { PlayerAction } from '../core/types';
 import type { TableId } from '../core/wallet';
 import { LOWEST_TABLE, STARTING_CHIPS, isTableId } from '../core/wallet';
+import { DEFAULT_MUTED, DEFAULT_VOLUME, MAX_VOLUME, MIN_VOLUME } from '../ui/audio';
 
 // ---------------------------------------------------------------------------
 // The key and the schema version. QUALITY-BAR section 8
@@ -189,25 +190,23 @@ export const MOTION_SETTINGS = ['system', 'always'] as const satisfies readonly 
 /** SPEC 14 prints "system / always", and QUALITY-BAR section 4 honours the query. */
 export const DEFAULT_REDUCED_MOTION: MotionSetting = 'system';
 
-/** SPEC 14's sound: not muted until a player mutes it. */
-export const DEFAULT_MUTED = false;
-
-/** SPEC 14's volume floor and ceiling, as a fraction of full output. */
-export const MIN_VOLUME = 0;
-export const MAX_VOLUME = 1;
-
 /**
- * The volume a player who has never touched the control has.
+ * SPEC 14's sound: not muted until a player mutes it.
  *
- * **A documented reading rather than a quoted figure, and flagged as one.** SPEC
- * 14 names "sound (mute and volume)" and QUALITY-BAR section 10 says only that
- * persisted mute and volume are applied at creation; neither states a starting
- * number. `MAX_VOLUME` is taken because it is the one value that is not an
- * invention: it is the gain node's identity, so any other default would be this
- * file quietly attenuating cues `BJ-19` has not written yet. One constant, and
- * `BJ-19` flips it by editing this line if the measured cues want a lower floor.
+ * `BJ-11` declared these beside the persisted settings because the document
+ * was the first thing that had to name the values, and said in as many words
+ * that a later part should move each to the module that reads it. `BJ-14` did
+ * that for Speed, from here to `core/table.ts`. `BJ-19` does it for sound,
+ * from here to `src/ui/audio.ts`: the engine applies both at the context's
+ * creation, so the constants live beside the engine and this file re-exports
+ * them the way it already re-exports `SPEEDS` and `DEFAULT_SPEED`. That gives
+ * this file a `storage` to `ui` import, an edge earlier headers declared
+ * absent on purpose; it is taken here deliberately under the ruling that
+ * moves each setting's constants to the module that reads them, it runs in
+ * one direction only (`src/ui/audio.ts` imports nothing from this directory),
+ * and nothing imports `src/storage/` until `BJ-20`.
  */
-export const DEFAULT_VOLUME = MAX_VOLUME;
+export { DEFAULT_MUTED, MIN_VOLUME, MAX_VOLUME, DEFAULT_VOLUME };
 
 /**
  * SPEC 14's settings panel, as a persisted value.

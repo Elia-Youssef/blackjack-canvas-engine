@@ -141,6 +141,17 @@ export interface ChromeState {
    * a browser spec see what the page resolved rather than what it emulated.
    */
   readonly forcedColors: boolean;
+  /**
+   * SPEC 14's mute, as the frame resolved it. `BJ-19`, item `K3`.
+   *
+   * The audio engine owns the value; this is the copy the sync step renders
+   * the mute control from, on the same terms the Speed control reads
+   * `motion.speed` rather than keeping a second copy in the chrome. The
+   * composition root sets it from the engine every frame, so a control
+   * pressed on screen and a gain applied under the page cannot disagree
+   * about whether the game is quiet.
+   */
+  readonly muted: boolean;
 }
 
 /**
@@ -173,14 +184,25 @@ export interface ChromeActions {
   /**
    * SPEC 14's play-surface size. `BJ-16`, item `F6`.
    *
-   * The second presentation setting, and it takes the first one's route for the
-   * same reason: SPEC 14 groups Speed and play-surface size as the two settings
+   * The second presentation setting, and it takes the first one's route for
+   * the same reason: SPEC 14 groups Speed and play-surface size as the two settings
    * that "take effect immediately, mid-round included, because neither can
    * change an outcome", so neither is an intent and neither waits for a round
    * boundary. The composition root applies it to the next frame's surface plan,
    * which is the only thing it touches.
    */
   setSurfaceSize(size: SurfaceSize): void;
+  /**
+   * SPEC 14's sound, and item `K3`'s single action: toggle the master mute.
+   *
+   * Not an intent and not an overlay, for the two reasons the settings above
+   * are not: it decides no transition, and it must be reachable in one press
+   * from the play screen rather than from inside a panel. The composition
+   * root wires it to the audio engine, which is the one thing that holds the
+   * value; the volume slider SPEC 14 also lists is `I5` at `BJ-20` and takes
+   * the engine's `setVolume`, which needs no chrome action to be reachable.
+   */
+  toggleMuted(): void;
 }
 
 /** One assembled piece of chrome: its root element, and how it is synced. */

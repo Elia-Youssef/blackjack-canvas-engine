@@ -37,6 +37,7 @@
 import {
   boot,
   type AccessibilityProbe,
+  type AudioProbe,
   type BootOptions,
   type Game,
   type LayoutProbe,
@@ -115,6 +116,14 @@ export interface GameHarness {
   layout(): LayoutProbe;
   /** What the last frame resolved for accessibility. `BJ-18`, items `G4`, `G9`. */
   accessibility(): AccessibilityProbe;
+  /**
+   * What the audio layer holds, and every cue it has been offered. `BJ-19`.
+   *
+   * The cue tally is the only window into item `K5`'s emission claim from
+   * outside the page: a cue that was muted or found no context changed
+   * nothing observable, so the counts are the offers. Read-only.
+   */
+  audio(): AudioProbe;
   /** Begin sampling the wallet every frame, until SPEC 10's round result. */
   watch(): void;
   /** Everything `watch` has sampled, oldest first. */
@@ -155,6 +164,7 @@ const harness: GameHarness = {
   motion: () => running().motion(),
   layout: () => running().layout(),
   accessibility: () => running().accessibility(),
+  audio: () => running().audio(),
 
   trace(): void {
     traced.length = 0;

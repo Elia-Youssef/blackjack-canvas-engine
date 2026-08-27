@@ -145,14 +145,25 @@ describe('D1: input is one handler path', () => {
       }
     }
 
-    // Three listeners in the whole product, and each one is somewhere the
+    // Six listeners in the whole product, and each one is somewhere its
     // criterion can be read against: the activation, the keyboard, and the media
-    // query that carries the reduced-motion preference.
+    // query that carries the reduced-motion preference are `D1`'s three. The
+    // three `BJ-19` added are the audio engine's, and none is an activation
+    // path: QUALITY-BAR section 10 requires the `AudioContext` to be created
+    // inside the first `pointerdown` / `keydown`, which is the one thing a
+    // `click` handler cannot be, because `click` arrives after the platform has
+    // decided whether the press carried a user activation; and
+    // `visibilitychange` is the quality bar's own resume hook, an observation of
+    // the page rather than an input from a player. The activation stays `click`
+    // and stays alone below, which is the half of this test `D1` is.
     const flattened = [...bound.values()].flat().sort();
     expect(flattened, `listeners found in ${[...bound.keys()].join(', ')}`).toEqual([
       'change',
       'click',
       'keydown',
+      'keydown',
+      'pointerdown',
+      'visibilitychange',
     ]);
 
     const clicks = [...bound.entries()].filter(([, events]) => events.includes('click'));

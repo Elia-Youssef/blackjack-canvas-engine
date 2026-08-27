@@ -102,7 +102,7 @@ export function createAnnouncer(): Announcer {
     update(state: ChromeState, dt: number): void {
       const frame: AnnounceFrame = {
         readout: state.readout,
-        context: { notice: state.notice, milestones: state.milestones },
+        context: { notice: state.notice, milestones: state.milestones, muted: state.muted },
       };
       for (const announcement of announcementsFor(previous, frame)) {
         queue.push(announcement);

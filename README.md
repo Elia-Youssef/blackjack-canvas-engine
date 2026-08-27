@@ -3,7 +3,7 @@
 The buildable project. Requirements live one directory up in [SPEC.md](../SPEC.md); this file is only how to
 build, run and verify what is here.
 
-**State: parts `BJ-0` through `BJ-18`, with `BJ-18` built last.** The build order puts the DOM shell
+**State: parts `BJ-0` through `BJ-19`, with `BJ-19` built last.** The build order puts the DOM shell
 before the motion that plays inside it, because the composed page is what motion is graded on.
 The toolchain, the CI gates, the design tokens, and the whole
 headless game: cards, hand evaluation, the seeded stream, the shoe, the dealer, settlement, the wallet
@@ -96,7 +96,21 @@ selects its token set from the same media query the stylesheet reads; the high-c
 percent at every breakpoint with nothing clipped, nothing overlapping and every control still reachable,
 and no focused control is obscured at any breakpoint, including inside the one scroller that holds
 controls. Persistence is still not wired: nothing imports `src/storage/`, because `I4` and `I5` grade it
-there. See
+there. `BJ-19` gave the game its sound, all of it synthesised and none of it required. `src/ui/audio.ts`
+holds the engine: no `AudioContext` exists until the first `pointerdown` or `keydown`, it is created and
+`resume()`d inside that handler, an `audioSession` of `playback` is written behind a feature test where
+the platform has one, the page becoming visible resumes the context again, a constructor that throws
+leaves the game playing on in silence rather than in error, and one noise buffer is generated on the
+first percussive cue and reused by every one after it. The thirteen cues SPEC 15 names are derived in
+`src/ui/cues.ts` as a pure function of two machine snapshots plus the intent the frame accepted, at the
+same observation boundary the coach and the announcer already use, so no cue can fire twice for one
+event and the derivation is unit tested exactly-once and against negative controls over the real
+machine. `core/` still learns nothing of any of this. SPEC 14's mute reaches the play screen as one
+button in the top bar, behind no disclosure at any width, carrying `aria-pressed`, a label that changes
+words with the state and the pressed underline, announcing its change through the one queue; the volume
+slider and the reload that would persist both settings are `BJ-20`'s, on the Speed precedent, and the
+boot pass-through, the engine's read side and the constants' new home beside the engine are what this
+part ships toward them. No audio file ships, and the suite scans every build it makes for one. See
 [../../docs/BUILD-PLAN.md](../../docs/BUILD-PLAN.md) for what fills the rest and in what order.
 
 ## Prerequisites

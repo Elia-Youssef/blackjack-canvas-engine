@@ -301,7 +301,7 @@ function session(table: Table, notice: Notice | null = null, milestones: readonl
   const said: Announcement[] = [];
   const record: Session = { table, said, frame: null };
   const observe = (): void => {
-    const next: AnnounceFrame = { readout: table.readout(), context: { notice, milestones } };
+    const next: AnnounceFrame = { readout: table.readout(), context: { notice, milestones, muted: false } };
     said.push(...announcementsFor(record.frame, next));
     record.frame = next;
   };
@@ -360,7 +360,7 @@ describe('G4 armour: what a frame is worth announcing', () => {
     const table = tableOn(['8', '9', '8', '9']);
     const first: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, milestones: [] },
+      context: { notice: null, milestones: [], muted: false },
     };
     expect(announcementsFor(null, first)).toEqual([]);
   });
@@ -369,7 +369,7 @@ describe('G4 armour: what a frame is worth announcing', () => {
     const table = tableOn(['8', '9', '8', '9']);
     const frame: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, milestones: [] },
+      context: { notice: null, milestones: [], muted: false },
     };
     expect(announcementsFor(frame, frame)).toEqual([]);
   });
@@ -469,9 +469,13 @@ describe('G4 armour: what a frame is worth announcing', () => {
 
   it('announces a refusal once, and again only when a different one arrives', () => {
     const table = tableOn(['8', '9', '8', '9']);
-    const base = { readout: table.readout(), context: { notice: null, milestones: [] } } as const;
+    const quiet = { notice: null, milestones: [] as readonly MilestoneId[], muted: false };
+    const base = { readout: table.readout(), context: quiet } as const;
     const refused: Notice = { intent: 'deal', layer: 'wallet', reason: 'no-wager' };
-    const withNotice: AnnounceFrame = { readout: table.readout(), context: { notice: refused, milestones: [] } };
+    const withNotice: AnnounceFrame = {
+      readout: table.readout(),
+      context: { notice: refused, milestones: [], muted: false },
+    };
     const said = announcementsFor(base, withNotice);
     expect(said.map((entry) => entry.text)).toEqual(['Place a wager before dealing.']);
     // The same notice object on the next frame is the same refusal, not a new
@@ -483,15 +487,34 @@ describe('G4 armour: what a frame is worth announcing', () => {
     const table = tableOn(['8', '9', '8', '9']);
     const before: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, milestones: [] },
+      context: { notice: null, milestones: [], muted: false },
     };
     const after: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, milestones: ['firstNatural'] },
+      context: { notice: null, milestones: ['firstNatural'], muted: false },
     };
     expect(announcementsFor(before, after)).toEqual([
       { priority: 'polite', text: 'Milestone: First natural.' },
     ]);
+  });
+
+  it('announces a mute change in words, once per change', () => {
+    // `BJ-19`, item `K3`. The control carries `aria-pressed` for the standing
+    // state; this is the event half, through the one queue, in words rather
+    // than in a colour or an underline. Same state on the next frame says
+    // nothing, like every other announcement here.
+    const table = tableOn(['8', '9', '8', '9']);
+    const frameOf = (muted: boolean): AnnounceFrame => ({
+      readout: table.readout(),
+      context: { notice: null, milestones: [], muted },
+    });
+    expect(announcementsFor(frameOf(false), frameOf(true))).toEqual([
+      { priority: 'polite', text: 'Sound muted.' },
+    ]);
+    expect(announcementsFor(frameOf(true), frameOf(false))).toEqual([
+      { priority: 'polite', text: 'Sound on.' },
+    ]);
+    expect(announcementsFor(frameOf(true), frameOf(true))).toEqual([]);
   });
 
   it('announces the bust-out assertively, which is the session outcome', () => {

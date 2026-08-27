@@ -181,6 +181,15 @@ export interface AnnounceContext {
   readonly notice: Notice | null;
   /** SPEC 9's awarded milestones, in award order. */
   readonly milestones: readonly MilestoneId[];
+  /**
+   * SPEC 14's mute, as this frame resolved it. `BJ-19`, item `K3`.
+   *
+   * The announcement queue is how a mute press reaches a player who was not
+   * looking at the control: the `aria-pressed` state is the standing half and
+   * this sentence is the event half, which is the same division every other
+   * state in this file takes.
+   */
+  readonly muted: boolean;
 }
 
 /** Everything the previous frame said, so this frame can say what moved. */
@@ -352,6 +361,13 @@ export function announcementsFor(
     for (const id of next.context.milestones.slice(prior.context.milestones.length)) {
       said.push({ priority: 'polite', text: `Milestone: ${milestoneText(id)}.` });
     }
+  }
+
+  // SPEC 14's mute, as an event. `BJ-19`: the control carries `aria-pressed`
+  // for the standing state and this is the half that reaches a player who was
+  // not looking at it, in words rather than in a colour or an underline.
+  if (next.context.muted !== prior.context.muted) {
+    said.push({ priority: 'polite', text: next.context.muted ? 'Sound muted.' : 'Sound on.' });
   }
 
   return said;

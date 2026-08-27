@@ -32,6 +32,7 @@ import { createNotice } from './components/notice';
 import { createOverlays } from './components/overlays';
 import { createReadouts } from './components/readouts';
 import { createRoundResult } from './components/round-result';
+import { createSound } from './components/sound';
 import {
   createBustOutScreen,
   createInsuranceScreen,
@@ -94,8 +95,11 @@ export function createChrome(actions: ChromeActions): Chrome {
   // 1.3.1 and 4.1.3 it answers for.
   const mirror = createMirror();
   const announcer = createAnnouncer();
+  // `BJ-19`'s one: the play screen's mute. Beside the panel openers rather
+  // than inside anything, for the single-action reason its own header gives.
+  const sound = createSound(actions);
 
-  shell.top.append(readouts.root, overlays.controls);
+  shell.top.append(readouts.root, overlays.controls, sound.root);
   // The mirror goes in the `main` landmark beside the canvas it mirrors, and
   // before the overlay host, so a screen reader user reaching `main` meets the
   // play state before anything layered over it.
@@ -123,6 +127,9 @@ export function createChrome(actions: ChromeActions): Chrome {
     result,
     bustOutScreen,
     mirror,
+    // `BJ-19`. The mute control is a pure function of the frame's state like
+    // everything else in this list.
+    sound,
     // The announcer is last in this list as well as last in the shell: it reads
     // the frame's state and nothing else reads it, so running it after every
     // writer keeps "what was announced" and "what is on screen" one frame.

@@ -30,6 +30,13 @@ import { expect, type Page } from '@playwright/test';
  * bankroll rather than a boot option. `D2` does drive it, because SPEC 10 puts
  * two intents there and nowhere else, so it is listed and
  * `tests/browser/breakpoints.spec.ts` skips the entry it does not use.
+ *
+ * **The mute control is on every screen, `BJ-19`.** It lives in the top bar
+ * beside the panel openers rather than on any phase's own screen, because item
+ * `K3` asks for it "in a single action from the play screen" unscoped by
+ * breakpoint or phase, and the top bar is the one row no phase takes away and
+ * the responsive disclosure never swallows. It is listed under every phase for
+ * the same reason the three panel openers are.
  */
 export const SCREEN_CONTROLS: Readonly<Record<string, readonly string[]>> = Object.freeze({
   start: [
@@ -40,6 +47,7 @@ export const SCREEN_CONTROLS: Readonly<Record<string, readonly string[]>> = Obje
     'data-open-overlay=settings',
     'data-open-overlay=howToPlay',
     'data-open-overlay=statistics',
+    'data-control=mute',
   ],
   betting: [
     'data-chip=10',
@@ -54,6 +62,7 @@ export const SCREEN_CONTROLS: Readonly<Record<string, readonly string[]>> = Obje
     'data-open-overlay=settings',
     'data-open-overlay=howToPlay',
     'data-open-overlay=statistics',
+    'data-control=mute',
   ],
   playerTurn: [
     'data-action=hit',
@@ -64,6 +73,7 @@ export const SCREEN_CONTROLS: Readonly<Record<string, readonly string[]>> = Obje
     'data-open-overlay=settings',
     'data-open-overlay=howToPlay',
     'data-open-overlay=statistics',
+    'data-control=mute',
   ],
   insurance: [
     'data-control=take-insurance',
@@ -71,18 +81,21 @@ export const SCREEN_CONTROLS: Readonly<Record<string, readonly string[]>> = Obje
     'data-open-overlay=settings',
     'data-open-overlay=howToPlay',
     'data-open-overlay=statistics',
+    'data-control=mute',
   ],
   roundResult: [
     'data-control=next-hand',
     'data-open-overlay=settings',
     'data-open-overlay=howToPlay',
     'data-open-overlay=statistics',
+    'data-control=mute',
   ],
   bustOut: [
     'data-control=reset-bankroll',
     'data-open-overlay=settings',
     'data-open-overlay=howToPlay',
     'data-open-overlay=statistics',
+    'data-control=mute',
   ],
 });
 
