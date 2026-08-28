@@ -50,6 +50,7 @@ import {
   DESIGNED_SCROLLERS,
   atShippedBetting,
   control,
+  injectStyle,
   intersects,
   layoutReport,
   openShippedPage,
@@ -463,11 +464,12 @@ test.describe('G5: the page really resizes with the root font size', () => {
     // The control for the check above: a page whose text is pinned in `px` does
     // not follow the root size, and the assertion has to be able to see that.
     await atShippedBetting(page);
-    await page.evaluate(() => {
-      const style = document.createElement('style');
-      style.textContent = '.bj-readout__value { font-size: 13px; }';
-      document.head.append(style);
-    });
+    // Served from the page's own origin rather than written inline, because
+    // the shipped page's Content Security Policy carries `style-src 'self'`
+    // and blocks an inline `<style>`. `BJ-21` found this control passing for
+    // that reason, which is a control that had stopped controlling anything;
+    // `injectStyle` is the one route a test-time rule reaches a page by now.
+    await injectStyle(page, '.bj-readout__value { font-size: 13px; }');
     const before = await layoutReport(page);
     await resizeText(page, SCALE);
     await settle(page);

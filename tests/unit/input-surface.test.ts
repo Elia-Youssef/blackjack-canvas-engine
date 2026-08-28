@@ -145,7 +145,7 @@ describe('D1: input is one handler path', () => {
       }
     }
 
-    // Ten listeners in the whole product, and each one is somewhere its
+    // Twelve listeners in the whole product, and each one is somewhere its
     // criterion can be read against: the activation, the keyboard, and the media
     // query that carries the reduced-motion preference are `D1`'s three. The
     // three `BJ-19` added are the audio engine's, and none is an activation
@@ -162,18 +162,36 @@ describe('D1: input is one handler path', () => {
     // continuous control reporting its own movement under the player's hand,
     // moving the gain live and uncommitted, and the slider's `change` is the
     // gesture's end, the one moment the document is written, so a drag is one
-    // localStorage write rather than one per step. The activation stays
-    // `click` and stays alone below, which is the half of this test `D1` is.
+    // localStorage write rather than one per step. `BJ-21` added the error
+    // boundary's pair, and neither is an activation either: `error` and
+    // `unhandledrejection` are the page telling the game that something it did
+    // not do has already failed, which is the opposite end of an input from a
+    // player, and QUALITY-BAR section 12 names both as the routes item `M4`
+    // has to answer. They are also the only two listeners in the product that
+    // **outlive the element they were bound to and are still never removed**,
+    // and that is deliberate rather than an oversight: `src/ui/recovery.ts`
+    // belongs to the page rather than to a game, and the moment a failure
+    // disposes the running game is exactly the moment its listeners must still
+    // be attached. Three others have no `removeEventListener` beside them
+    // either, `dom.ts`'s one `click` and the volume slider's `input` and
+    // `change`, and they need none: each is bound to an element the chrome owns
+    // and dies with the node when `dispose` takes the shell off the page. What
+    // the boundary's pair have that those three do not is a target that outlives
+    // every game, which is why they are the pair worth naming. The activation
+    // stays `click` and stays alone below, which is the half of this test `D1`
+    // is.
     const flattened = [...bound.values()].flat().sort();
     expect(flattened, `listeners found in ${[...bound.keys()].join(', ')}`).toEqual([
       'change',
       'change',
       'click',
+      'error',
       'input',
       'keydown',
       'keydown',
       'pagehide',
       'pointerdown',
+      'unhandledrejection',
       'visibilitychange',
       'visibilitychange',
     ]);

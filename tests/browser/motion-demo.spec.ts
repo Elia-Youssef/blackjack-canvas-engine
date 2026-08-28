@@ -46,6 +46,7 @@ import {
   PHASE_TIMEOUT,
   bundleSupport,
   control,
+  injectScript,
   phaseSeconds,
   phaseTimings,
   pressOn,
@@ -121,7 +122,7 @@ const MEASURE_ATTEMPTS = 6;
 /** Load the shipped page and inject the demonstration hook, alone. */
 async function openDemo(page: Page): Promise<void> {
   await page.goto('/');
-  await page.addScriptTag({ content: await bundleSupport('motion-demo.ts') });
+  await injectScript(page, await bundleSupport('motion-demo.ts'));
   await page.waitForFunction(() => window.__bjMotionDemo !== undefined, undefined, {
     timeout: PHASE_TIMEOUT,
   });

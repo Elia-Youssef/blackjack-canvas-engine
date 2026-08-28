@@ -9,8 +9,31 @@
  * `E3`, `E4` and `E5` at BJ-13, `M1`, `C5`, `C8` and `B15` at BJ-15, `E6`,
  * `E7` and `E9` at BJ-14, `F1` to `F7` at BJ-16, `D1`, `D2`, `D4`, `D5`
  * and `D6` at BJ-17, `G1`, `G3`, `G4`, `G5`, `G6`, `G8`, `G9` and `G10`
- * at BJ-18, `K1`, `K2`, `K3` and `K5` at BJ-19, and `C1`, `C3`, `C4`, `C6`,
- * `C7`, `E2`, `I4`, `I5`, `J4` and `J7` at BJ-20.
+ * at BJ-18, `K1`, `K2`, `K3` and `K5` at BJ-19, `C1`, `C3`, `C4`, `C6`,
+ * `C7`, `E2`, `I4`, `I5`, `J4` and `J7` at BJ-20, and `M2`, `M4`, `A5`, `L1`,
+ * `L2`, `L3` and `L5` at BJ-21.
+ *
+ * The `BJ-21` block breaks the resilience, locale and compliance layer. Its
+ * edits hand the frame to the loop unwrapped and take each of the boundary's
+ * two page-level routes away in turn, then break the two halves of what a
+ * failure does, the clean stop and the mounted panel, separately; they let the
+ * panel be rebuilt under the hand reaching for it and make its reload action do
+ * nothing. They make the feature test answer yes on a platform with no drawing
+ * context and stop it asking whether a media query can be listened to, boot an
+ * unsupported platform anyway, and drop the `nomodule` fallback the tier
+ * without modules depends on. They move the Content Security Policy out of the
+ * first position in `<head>`, where it governs nothing that was already
+ * fetched, and widen each of the two directives the positive demonstration
+ * exercises. They build a formatter with no locale so it reads the host
+ * default, take the fallback off the end of the locale list, and stop the
+ * coach's accuracy being divided by a hundred; and they collapse the chooser's
+ * split refusal back to one sentence, at the derivation and again at the
+ * screen. Its six additions are the absences the part's scans rest on, on the
+ * `I3` and `D1` precedent: a bare catch, an assembled sentence, a currency
+ * symbol, a network call, an analytics name and a side bet SPEC 19 rules out,
+ * each dropped into the real `src/ui/`. `L1`, `L3`, `L4` and `L5` are
+ * Inspection items graded by the checklists under `docs/review-checklists/`,
+ * and their entries break the automated half those checklists cite.
  *
  * The `BJ-20` block breaks the round flow and the chrome that carries it. Its
  * edits skip the insurance screen on an Ace up card, jump the reveal straight
@@ -312,6 +335,16 @@ const COACH = browserGate('coach.spec.ts');
 const ONBOARDING = browserGate('onboarding.spec.ts');
 const PERSISTENCE = browserGate('persistence.spec.ts');
 const DATA_RESET = browserGate('data-reset.spec.ts');
+
+// BJ-21's three. All three items with an automated gate are graded in the
+// browser, because each is a property of the shipped page rather than of a
+// function: an error boundary that mounts a panel, a feature test that runs
+// before the boot, and a policy the platform enforces. The locale sweep, the
+// concatenation census and the compliance scans are source-level and take
+// their entries to `UNIT`.
+const ERROR_BOUNDARY = browserGate('error-boundary.spec.ts');
+const UNSUPPORTED = browserGate('unsupported.spec.ts');
+const NO_THIRD_PARTY = browserGate('no-third-party.spec.ts');
 
 /**
  * Mutations that edit an existing file.
@@ -6020,6 +6053,248 @@ const EDITS = [
     replace: "  const sound = el('div', { className: 'bj-setting', children: [volumeText] });",
     detectedBy: INPUT_PARITY,
   },
+
+  // ------------------------------------------------------------------
+  // BJ-21: the error boundary, the unsupported notice, the policy, the locale
+  // sweep and the two approved riders.
+  //
+  // `M4`'s three routes are three entries rather than one, because they are
+  // three separate listeners into one handler and a boundary that answered two
+  // of them would look exactly like a boundary that answered three. The stop
+  // and the panel are broken separately from the routes for the same reason:
+  // "stops the loop cleanly and shows a panel" fails differently at each half.
+  //
+  // `A5`'s entries break the feature test in the two directions that matter,
+  // the probe that answers wrongly and the notice that never arrives, plus the
+  // `nomodule` fallback the tier without modules depends on.
+  //
+  // `L2`'s break the policy where each break is invisible to the other checks:
+  // the element's position, which governs nothing if it is second, and each of
+  // the two directives the positive demonstration actually exercises.
+  //
+  // `M2`'s break the explicit locale list, the fallback at the end of it and
+  // the one division in the formatter set. The census's own entries are
+  // additions below, on the `I3` precedent, because what they claim is an
+  // absence: a scanner that finds nothing is indistinguishable from one that
+  // cannot see.
+  // ------------------------------------------------------------------
+  {
+    item: 'M4',
+    name: 'the frame is handed to the loop unwrapped, so a throw stops at nothing',
+    file: 'src/main.ts',
+    find:
+      '    onFrame: (dt: number): void => {\n' +
+      '      boundary.run(() => {\n' +
+      '        frame(dt);\n' +
+      '      });\n' +
+      '    },',
+    replace: '    onFrame: frame,',
+    detectedBy: ERROR_BOUNDARY,
+  },
+  {
+    item: 'M4',
+    name: 'the page-level error route is not listened for',
+    file: 'src/ui/recovery.ts',
+    find: "  pageTarget?.addEventListener('error', onError);",
+    replace: '  void onError;',
+    detectedBy: ERROR_BOUNDARY,
+  },
+  {
+    item: 'M4',
+    name: 'the unhandled rejection route is not listened for',
+    file: 'src/ui/recovery.ts',
+    find: "  pageTarget?.addEventListener('unhandledrejection', onRejection);",
+    replace: '  void onRejection;',
+    detectedBy: ERROR_BOUNDARY,
+  },
+  {
+    // The half that is not the panel. A boundary that mounted the panel and
+    // left the game running would leave a loop drawing into a canvas nobody
+    // can see, which is the frozen-canvas defect QUALITY-BAR section 12 names.
+    item: 'M4',
+    name: 'the boundary shows the panel without stopping the game',
+    file: 'src/ui/recovery.ts',
+    find: '      options.stop();',
+    replace: '      void options.stop;',
+    detectedBy: ERROR_BOUNDARY,
+  },
+  {
+    // And the half that is not the stop.
+    item: 'M4',
+    name: 'the boundary stops the game and mounts nothing',
+    file: 'src/ui/recovery.ts',
+    find: '    host.replaceChildren(node);',
+    replace: '    void node;',
+    detectedBy: ERROR_BOUNDARY,
+  },
+  {
+    item: 'M4',
+    name: 'the panel is rebuilt on every later failure, under the hand reaching for it',
+    file: 'src/ui/recovery.ts',
+    find: '    if (stopped) {\n      return;\n    }',
+    replace: '    void stopped;',
+    detectedBy: ERROR_BOUNDARY,
+  },
+  {
+    item: 'M4',
+    name: 'the recovery panel reload action does nothing',
+    file: 'src/ui/recovery.ts',
+    find: '      location.reload();',
+    replace: '      void location;',
+    detectedBy: ERROR_BOUNDARY,
+  },
+  {
+    item: 'A5',
+    name: 'the canvas probe answers yes on a platform with no context',
+    file: 'src/ui/capability.ts',
+    find: "    return document.createElement('canvas').getContext('2d') !== null;",
+    replace: "    return document.createElement('canvas') !== null;",
+    detectedBy: UNSUPPORTED,
+  },
+  {
+    item: 'A5',
+    name: 'the media-query probe stops asking whether the query can be listened to',
+    file: 'src/ui/capability.ts',
+    find: "    return typeof matchMedia('(min-width: 0px)').addEventListener === 'function';",
+    replace: "    return typeof matchMedia === 'function';",
+    detectedBy: UNSUPPORTED,
+  },
+  {
+    item: 'A5',
+    name: 'an unsupported platform is booted anyway, with the notice never shown',
+    file: 'src/main.ts',
+    find: '  if (showUnsupportedNotice(missingCapabilities())) {\n    return;\n  }',
+    replace: '  void showUnsupportedNotice(missingCapabilities());',
+    detectedBy: UNSUPPORTED,
+  },
+  {
+    item: 'A5',
+    name: 'the nomodule fallback is no longer emitted beside the page',
+    file: 'vite.config.ts',
+    find: "      this.emitFile({ type: 'asset', fileName: NOMODULE_FILE, source: NOMODULE_SOURCE });",
+    replace: '      void NOMODULE_SOURCE;',
+    detectedBy: UNSUPPORTED,
+  },
+  {
+    item: 'L2',
+    name: 'the policy is injected into head but no longer first in it',
+    file: 'vite.config.ts',
+    find: "            injectTo: 'head-prepend',",
+    replace: "            injectTo: 'head',",
+    detectedBy: NO_THIRD_PARTY,
+  },
+  {
+    item: 'L2',
+    name: 'connect-src is widened, so a third-party fetch is no longer refused',
+    file: 'vite.config.ts',
+    find: '  "connect-src \'none\'",',
+    replace: '  "connect-src *",',
+    detectedBy: NO_THIRD_PARTY,
+  },
+  {
+    item: 'L2',
+    name: 'script-src is widened, so an off-origin script is no longer refused',
+    file: 'vite.config.ts',
+    find: '  "script-src \'self\'",',
+    replace: '  "script-src *",',
+    detectedBy: NO_THIRD_PARTY,
+  },
+  {
+    item: 'M2',
+    name: 'a formatter is built with no locale, so it reads the host default',
+    file: 'src/ui/format.ts',
+    find: '  const whole = new Intl.NumberFormat(locales, { maximumFractionDigits: 0 });',
+    replace: '  const whole = new Intl.NumberFormat(undefined, { maximumFractionDigits: 0 });',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M2',
+    name: 'the locale list loses the fallback at the end of it',
+    file: 'src/ui/format.ts',
+    find: "  return [...(preferred ?? []), 'en-US'];",
+    replace: '  return [...(preferred ?? [])];',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M2',
+    name: 'the coach accuracy stops being divided by a hundred',
+    file: 'src/ui/format.ts',
+    find: '    percentOfHundred: (value: number) => share.format(value / PERCENT_SCALE),',
+    replace: '    percentOfHundred: (value: number) => share.format(value),',
+    detectedBy: UNIT,
+  },
+  {
+    // The B1 and B3 precedent: break the test's own reading rather than the
+    // game's code. A census that cannot see the shape it hunts for would pass
+    // over a sentence assembled from three fragments and a number.
+    item: 'M2',
+    name: 'the concatenation census stops seeing a literal joined to an expression',
+    file: 'tests/unit/locale.test.ts',
+    find: '  for (const match of source.matchAll(/[\'"`]\\s*\\+\\s*(?![\\s\'"`])/g)) {',
+    replace: '  for (const match of [] as RegExpExecArray[]) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'B15',
+    name: 'the chooser stops splitting its refusal by cause',
+    file: 'src/ui/availability.ts',
+    find: "  return isUnlocked(id, bestBalance) ? 'table-unaffordable' : 'table-not-unlocked';",
+    replace: "  return 'table-not-unlocked';",
+    detectedBy: UNIT,
+  },
+  {
+    // The same split, one layer up: the sentence that reaches the greyed
+    // control's accessible name. `BJ-20` recorded the wording gap this rider
+    // closed, and this is what keeps it closed.
+    item: 'B15',
+    name: 'the start screen goes back to one sentence for both entry conditions',
+    file: 'src/ui/components/screens.ts',
+    find: '        const refusal = tableRefusal(id, bestBalance, chips);',
+    replace: "        const refusal = canEnter(id, bestBalance, chips) ? null : 'table-locked';",
+    detectedBy: BUST_OUT,
+  },
+
+  // ------------------------------------------------------------------
+  // BJ-21's fix round. Three of the review's four Majors were gates that
+  // could not fail, and each one leaves an entry behind.
+  //
+  // `A5`'s "styled" clause had no evidence at all: the reviewer renamed every
+  // selector the notice uses and the spec stayed green, because text on a bare
+  // page is still text. The entry below takes the notice out of the one rule
+  // that gives it a box.
+  //
+  // `M2`'s two are the census arms the review added. The concatenation scan
+  // knew only about `+`, so a sentence accumulated with `+=` walked past it;
+  // the drawn-quantity scan did not exist, so the two printed numbers SPEC 16
+  // makes artwork were a park nobody could see. Both entries break the reading
+  // rather than the code, which is the `B1` and `B3` pattern, and the
+  // additions below plant the real shapes in the real `src/`.
+  // ------------------------------------------------------------------
+  {
+    item: 'A5',
+    name: 'the unsupported notice loses the rule that gives it a box',
+    file: 'src/ui/chrome.css',
+    find: '.bj-unsupported,\n.bj-recovery {',
+    replace: '.bj-recovery {',
+    detectedBy: UNSUPPORTED,
+  },
+  {
+    item: 'M2',
+    name: 'the concatenation census stops seeing a sentence accumulated with +=',
+    file: 'tests/unit/locale.test.ts',
+    find: "  for (const match of source.matchAll(/\\+=\\s*['\"`]/g)) {",
+    replace: '  for (const match of [] as RegExpExecArray[]) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M2',
+    name: 'the census stops seeing a list joined into a sentence',
+    file: 'tests/unit/locale.test.ts',
+    find:
+      '  for (const match of source.matchAll(/\\.(?:join|concat)\\(\\s*([\'"`])([^\'"`]*)\\1\\s*\\)/g)) {',
+    replace: '  for (const match of [] as RegExpMatchArray[]) {',
+    detectedBy: UNIT,
+  },
 ];
 
 /**
@@ -6192,6 +6467,114 @@ const ADDITIONS = [
     name: 'a focus indicator is removed in a component stylesheet',
     file: 'src/ui/__mutation__.css',
     content: '.panel:focus-visible {\n  outline: none;\n}\n',
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // BJ-21: the six absences its scans rest on.
+  //
+  // Every one of these is an addition rather than an edit, for the reason the
+  // `I3` and `D1` blocks above give: the claims are absences, and a scanner
+  // that finds nothing is indistinguishable from a scanner that cannot see. So
+  // a file carrying each is dropped into the real `src/ui/` and the unit suite
+  // has to go red.
+  //
+  // `M4`'s is QUALITY-BAR section 12's "no bare catch anywhere", which item
+  // `M4` grades as its last clause and which `tests/unit/storage-write-failure
+  // .test.ts` scans over the whole of `src/` rather than over `src/storage/`
+  // alone. The `I3` entry above drops one into `src/storage/`; this one proves
+  // the same scan reaches the directory this part wrote its handler in.
+  // ------------------------------------------------------------------
+  {
+    item: 'M4',
+    name: 'a bare catch is added to the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content:
+      'export function read(text: string): unknown {\n' +
+      '  try {\n' +
+      '    return JSON.parse(text);\n' +
+      '  } catch {\n' +
+      '    return null;\n' +
+      '  }\n' +
+      '}\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M2',
+    name: 'a sentence is assembled from a literal and an expression in the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content:
+      'export function owed(count: number): string {\n' +
+      "  return 'You have ' + String(count) + ' chips left.';\n" +
+      '}\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'L1',
+    name: 'a currency symbol is added to the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content: "export const stake = '$5 a hand';\n",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'L1',
+    name: 'a network call is added to the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content:
+      'export function send(body: string): Promise<Response> {\n' +
+      "  return fetch('https://example.test/collect', { method: 'POST', body });\n" +
+      '}\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'L3',
+    name: 'an analytics name is added to the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content: "export const channel = 'analytics';\n",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'L5',
+    name: 'a side bet SPEC 19 rules out is added to the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content: "export const SIDE_WAGER = 'Perfect Pairs';\n",
+    detectedBy: UNIT,
+  },
+
+  // The three shapes the review planted by hand, kept. Each is an absence the
+  // census now claims, and an absence is worth exactly the mutation that shows
+  // the scanner can see it in the real tree rather than in its own control.
+  {
+    item: 'M2',
+    name: 'a sentence is accumulated with += in the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content:
+      'export function owed(count: number): string {\n' +
+      "  let text = 'You have ';\n" +
+      '  text += String(count);\n' +
+      "  text += ' chips left.';\n" +
+      '  return text;\n' +
+      '}\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M2',
+    name: 'a fifth list is joined into a sentence in the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content:
+      'export function listed(parts: readonly string[]): string {\n' +
+      "  return parts.join(', and then ');\n" +
+      '}\n',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M2',
+    name: 'a third drawn quantity is added to the real src/render/',
+    file: 'src/render/__mutation__.ts',
+    content:
+      'export function drawTotal(ctx: CanvasRenderingContext2D, total: number): void {\n' +
+      '  ctx.fillText(String(total), 0, 0);\n' +
+      '}\n',
     detectedBy: UNIT,
   },
 ];

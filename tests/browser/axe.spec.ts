@@ -51,6 +51,7 @@ import {
   bootGame,
   chooseInSettings,
   control,
+  injectScript,
   openShippedPage,
   pressOn,
   settle,
@@ -139,7 +140,7 @@ interface ScanResult {
 async function injectAxe(page: Page): Promise<void> {
   const present = await page.evaluate(() => 'axe' in window);
   if (!present) {
-    await page.addScriptTag({ content: AXE });
+    await injectScript(page, AXE);
   }
 }
 
@@ -541,5 +542,55 @@ test.describe('G1: no violations at the narrow breakpoints', () => {
     await atShippedBetting(page);
     await expect(page.locator('.bj-shell')).toHaveAttribute('data-breakpoint', 'compact');
     await expectClean(page, 'compact');
+  });
+});
+
+/**
+ * `BJ-21`'s two pages that are not the game. Items `A5` and `M4`.
+ *
+ * Both replace the shell rather than sitting inside it, so neither is reached
+ * by any scan above: the unsupported notice is cloned before the composition
+ * root builds anything, and the recovery panel is mounted after the shell has
+ * been taken off the page. They are scanned here, beside the overlay scans, for
+ * the reason this file gives at the top: one page, one axe injection, one
+ * configuration, and the same four exclusions rather than a second set nobody
+ * would find.
+ *
+ * The behaviour of each is graded in its own spec, `unsupported.spec.ts` and
+ * `error-boundary.spec.ts`. What is graded here is the half those two cannot
+ * see: that the page a player is left with passes the same scan every screen
+ * of the game passes.
+ */
+test.describe('G1: no violations on the pages that replace the game', () => {
+  test('scans the unsupported-browser notice', async ({ page }) => {
+    await page.addInitScript(() => {
+      // The platform this game cannot run on, as item `A5` defines one: no 2D
+      // drawing context. Nothing else about the page is touched.
+      HTMLCanvasElement.prototype.getContext = (): null => null;
+    });
+    await page.goto('/');
+    await expect(page.locator('[data-notice="unsupported"]')).toBeVisible();
+    await expect(page.locator('.bj-shell')).toHaveCount(0);
+    await expectClean(page, 'the unsupported-browser notice');
+  });
+
+  test('scans the recovery panel', async ({ page }) => {
+    await atShippedBetting(page);
+    await page.evaluate(() => {
+      CanvasRenderingContext2D.prototype.clearRect = (): void => {
+        throw new Error('the play surface refused a frame');
+      };
+    });
+    // A settled scene is not redrawn, so the break is followed by a press that
+    // dirties it. `error-boundary.spec.ts` carries the reasoning in full.
+    await page.evaluate(() => {
+      const chip = document.querySelector('[data-chip="10"]');
+      if (chip instanceof HTMLElement) {
+        chip.click();
+      }
+    });
+    await expect(page.locator('[data-recovery="panel"]')).toBeVisible();
+    await expect(page.locator('.bj-shell')).toHaveCount(0);
+    await expectClean(page, 'the recovery panel');
   });
 });

@@ -756,6 +756,71 @@ body {
 }
 
 /* ---------------------------------------------------------------------------
+ * The two panels that appear instead of the game. `BJ-21`, items `A5` and `M4`.
+ *
+ * **Neither is `.bj-notice`, and that is a scar rather than a preference.** The
+ * refusal line in the controls row already owns that class, and the first
+ * version of this block reused it: the line grew a border, a max width and
+ * `--space-5` of padding, the controls row went from 184 px to 276 px on a
+ * 390 px viewport, and `barsStick` stopped answering yes under an injected
+ * safe-area inset. `tests/browser/safe-area.spec.ts`'s own negative control
+ * caught it on all three engines. A page-level panel and a one-line refusal
+ * are different objects and now have different names.
+ *
+ * One block for both, because they are the same object: a page with no game on
+ * it, carrying a heading, a sentence and at most one control. The unsupported
+ * notice is cloned from the `<template>` in `index.html` before the composition
+ * root builds anything; the recovery panel is mounted by `src/ui/recovery.ts`
+ * after the shell has been taken off the page. Neither is ever on screen beside
+ * the shell, which is why neither has a place in the shell's grid.
+ *
+ * Everything here resolves through the token layer, and that is what makes both
+ * legible under forced colors without a rule of their own: `tokens.css`
+ * re-points `--bj-ground`, `--bj-elevated`, `--bj-text` and `--bj-accent` at the
+ * system palette inside its forced-colors block, where the background and the
+ * ground collapse to one colour and the border below is what carries the
+ * panel's edge.
+ *
+ * The type is `rem` throughout and no box here has a fixed height, so at 200
+ * percent text the panel grows with the words rather than clipping them.
+ * ------------------------------------------------------------------------- */
+
+.bj-unsupported,
+.bj-recovery {
+  box-sizing: border-box;
+  max-width: calc(var(--space-8) * 10);
+  margin: var(--space-6) auto;
+  padding: var(--space-5);
+  border: var(--border-thin) solid var(--bj-accent);
+  border-radius: var(--radius-lg);
+  background: var(--bj-elevated);
+  color: var(--bj-text);
+}
+
+.bj-unsupported > * + *,
+.bj-recovery > * + * {
+  margin-top: var(--space-4);
+}
+
+.bj-unsupported__title,
+.bj-recovery__title {
+  margin: 0;
+  font-size: var(--type-xl);
+  line-height: var(--leading-tight);
+}
+
+.bj-unsupported__message,
+.bj-recovery__message {
+  margin: 0;
+}
+
+.bj-unsupported:focus-visible,
+.bj-recovery:focus-visible {
+  outline: var(--focus-ring-width) var(--focus-ring-style) var(--focus-ring-color);
+  outline-offset: var(--focus-ring-offset);
+}
+
+/* ---------------------------------------------------------------------------
  * Motion. Item `E7`, Critical, and `BJ-14`.
  *
  *   "prefers-reduced-motion removes every animation entirely, including panel

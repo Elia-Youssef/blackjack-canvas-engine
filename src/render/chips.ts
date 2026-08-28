@@ -181,5 +181,12 @@ export function drawChipStackText(ctx: CanvasRenderingContext2D, spec: ChipStack
   ctx.font = font(CHIP_GEOMETRY.glyphFont * spec.radius, SANS_FAMILY, 'bold');
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
+  // **Plain digits, and item `M2`'s second adjudicated park.** SPEC 16 gives the
+  // chips a value glyph, which is what makes a 100 chip a 100 chip rather than
+  // just a black one; it is object identity, the carve-out QUALITY-BAR section 4
+  // already makes for a card's rank, and a chip that read differently from the
+  // chip beside it under a different locale would stop being the same object.
+  // The felt's printed limits are the other park and `src/render/felt.ts`
+  // carries the ruling in full; `tests/unit/locale.test.ts` pins both by path.
   ctx.fillText(String(top.denomination), top.x, top.y);
 }
