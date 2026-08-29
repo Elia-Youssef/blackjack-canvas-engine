@@ -138,7 +138,7 @@ describe('E3: the centre pip layout table', () => {
 describe('E3: rank and suit indices in both opposing corners', () => {
   it('prints the rank twice, the far corner under a half-turn rotation', () => {
     const recording = createRecordingContext();
-    drawCardText(recording.ctx, spec());
+    drawCardText(recording.ctx, spec(), SURFACE);
 
     const texts = recording.calls('fillText');
     expect(texts).toHaveLength(2);
@@ -162,7 +162,7 @@ describe('E3: rank and suit indices in both opposing corners', () => {
 
   it('draws the small suit pip at both corners in the shape pass', () => {
     const recording = createRecordingContext();
-    drawCardShapes(recording.ctx, spec({ rank: 'A', suit: 'clubs' }));
+    drawCardShapes(recording.ctx, spec({ rank: 'A', suit: 'clubs' }), SURFACE);
 
     const cornerX = 100 + CARD_GEOMETRY.indexX * 50;
     const cornerY = 50 + CARD_GEOMETRY.indexPipDrop * 50;
@@ -176,9 +176,9 @@ describe('E3: rank and suit indices in both opposing corners', () => {
 
   it('sizes the two-glyph 10 narrower than a one-glyph rank', () => {
     const nine = createRecordingContext();
-    drawCardText(nine.ctx, spec({ rank: '9' }));
+    drawCardText(nine.ctx, spec({ rank: '9' }), SURFACE);
     const ten = createRecordingContext();
-    drawCardText(ten.ctx, spec({ rank: '10' }));
+    drawCardText(ten.ctx, spec({ rank: '10' }), SURFACE);
 
     expect(ten.calls('fillText').map((call) => call.args[0])).toEqual(['10', '10']);
 
@@ -199,7 +199,7 @@ describe('E3: the face draws its layout and its inks', () => {
       spades: SURFACE.rankBlack,
     };
     for (const suit of SUITS) {
-      expect(suitColour(suit), suit).toBe(expected[suit]);
+      expect(suitColour(suit, SURFACE), suit).toBe(expected[suit]);
     }
   });
 
@@ -207,7 +207,7 @@ describe('E3: the face draws its layout and its inks', () => {
     for (const rank of ['7', '10'] as const) {
       const recording = createRecordingContext();
       const card = spec({ rank, suit: 'spades' });
-      drawCardShapes(recording.ctx, card);
+      drawCardShapes(recording.ctx, card, SURFACE);
 
       const height = cardHeight(card.width);
       const fieldX = card.x + CARD_GEOMETRY.fieldX * card.width;
@@ -227,7 +227,7 @@ describe('E3: the face draws its layout and its inks', () => {
 
   it('paints the face under the suit ink it belongs to', () => {
     const recording = createRecordingContext();
-    drawCardShapes(recording.ctx, spec({ rank: '5', suit: 'diamonds' }));
+    drawCardShapes(recording.ctx, spec({ rank: '5', suit: 'diamonds' }), SURFACE);
     const fillStyles = recording.sets('fillStyle').map((set) => set.value);
     expect(fillStyles).toContain(SURFACE.rankRed);
     expect(fillStyles).not.toContain(SURFACE.rankBlack);
@@ -238,7 +238,7 @@ describe('E3: the face draws its layout and its inks', () => {
     // card paints, face up or down, is the light base the felt is separated by.
     for (const faceUp of [true, false]) {
       const recording = createRecordingContext();
-      drawCardShapes(recording.ctx, spec({ faceUp }));
+      drawCardShapes(recording.ctx, spec({ faceUp }), SURFACE);
       const firstFill = recording.indexOfCall('fill');
       expect(firstFill).toBeGreaterThan(-1);
       expect(recording.valueBefore(firstFill, 'fillStyle')).toBe(SURFACE.cardMargin);
@@ -247,11 +247,11 @@ describe('E3: the face draws its layout and its inks', () => {
 
   it('frames a court card instead of pipping it, with its centre letter', () => {
     const recording = createRecordingContext();
-    drawCardShapes(recording.ctx, spec({ rank: 'K', suit: 'spades' }));
+    drawCardShapes(recording.ctx, spec({ rank: 'K', suit: 'spades' }), SURFACE);
     expect(recording.calls('strokeRect')).toHaveLength(1);
 
     const text = createRecordingContext();
-    drawCardText(text.ctx, spec({ rank: 'K', suit: 'spades' }));
+    drawCardText(text.ctx, spec({ rank: 'K', suit: 'spades' }), SURFACE);
     const glyphs = text.calls('fillText');
     expect(glyphs).toHaveLength(3);
     const centre = glyphs[2];
@@ -269,8 +269,8 @@ describe('E3: a face-down card conceals everything it knows', () => {
     // have seen them.
     const down = createRecordingContext();
     const card = spec({ rank: 'A', suit: 'hearts', faceUp: false });
-    drawCardShapes(down.ctx, card);
-    drawCardText(down.ctx, card);
+    drawCardShapes(down.ctx, card, SURFACE);
+    drawCardText(down.ctx, card, SURFACE);
 
     expect(down.calls('fillText')).toHaveLength(0);
     expect(down.calls('translate')).toHaveLength(0);
@@ -286,8 +286,8 @@ describe('E3: a face-down card conceals everything it knows', () => {
     expect(down.valueBefore(frame, 'strokeStyle')).toBe(SURFACE.cardMargin);
 
     const up = createRecordingContext();
-    drawCardShapes(up.ctx, { ...card, faceUp: true });
-    drawCardText(up.ctx, { ...card, faceUp: true });
+    drawCardShapes(up.ctx, { ...card, faceUp: true }, SURFACE);
+    drawCardText(up.ctx, { ...card, faceUp: true }, SURFACE);
     expect(up.calls('fillText').length).toBeGreaterThan(0);
     expect(up.calls('translate').length).toBeGreaterThan(0);
   });

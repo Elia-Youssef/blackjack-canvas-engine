@@ -35,9 +35,19 @@ import {
   type ChipPlacement,
   type ChipStackSpec,
 } from '../../../src/render/chips';
-import { bakeFelt, type FeltSpec } from '../../../src/render/felt';
+import {
+  bakeFelt,
+  bakeGrainTiles,
+  type FeltSpec,
+  type GrainTiles,
+} from '../../../src/render/felt';
 import { createSurface, renderFrame, type ScenePasses } from '../../../src/render/surface';
-import type { FeltName } from '../../../src/render/tokens';
+import {
+  feltColour,
+  STANDARD_PALETTE,
+  type FeltName,
+  type SelectedPalette,
+} from '../../../src/render/tokens';
 
 const SCENE_WIDTH = 640;
 const SCENE_HEIGHT = 400;
@@ -66,21 +76,40 @@ function mountCanvas(id: string): HTMLCanvasElement {
   return canvas;
 }
 
-function feltLayerFor(felt: FeltName, table: TableId, dpr: number): ScenePasses {
+function feltLayerFor(
+  felt: FeltName,
+  table: TableId,
+  dpr: number,
+  palette: SelectedPalette,
+): ScenePasses {
   const spec: FeltSpec = {
     felt,
     limits: tableLimits(table),
     width: SCENE_WIDTH,
     height: SCENE_HEIGHT,
     dpr,
+    palette,
   };
-  return bakeFelt(document.createElement('canvas'), spec);
+  return bakeFelt(document.createElement('canvas'), spec, demoGrain(felt, dpr, palette));
 }
 
-function mountScene(id: string, layers: readonly ScenePasses[], dpr: number): MountedScene {
+/** The grain pair a demo bake needs, made the way the composition root does. */
+function demoGrain(felt: FeltName, dpr: number, palette: SelectedPalette): GrainTiles {
+  return bakeGrainTiles(() => document.createElement('canvas'), {
+    felt: feltColour(palette.surface, felt),
+    dpr,
+  });
+}
+
+function mountScene(
+  id: string,
+  layers: readonly ScenePasses[],
+  dpr: number,
+  palette: SelectedPalette,
+): MountedScene {
   const canvas = mountCanvas(id);
   const surface = createSurface(canvas, { width: SCENE_WIDTH, height: SCENE_HEIGHT, dpr });
-  renderFrame(surface, layers);
+  renderFrame(surface, layers, palette.surface);
   return { canvasId: id, width: SCENE_WIDTH, height: SCENE_HEIGHT, dpr };
 }
 
@@ -88,8 +117,17 @@ function mountScene(id: string, layers: readonly ScenePasses[], dpr: number): Mo
  * `demo/felt-print`: the whole felt for one table, its own colour, its own
  * limits. The session captures one per table.
  */
-export function mountFeltPrint(table: TableId, dpr = 1): MountedScene {
-  return mountScene(`demo-felt-${table}`, [feltLayerFor(table, table, dpr)], dpr);
+export function mountFeltPrint(
+  table: TableId,
+  dpr = 1,
+  palette: SelectedPalette = STANDARD_PALETTE,
+): MountedScene {
+  return mountScene(
+    `demo-felt-${table}`,
+    [feltLayerFor(table, table, dpr, palette)],
+    dpr,
+    palette,
+  );
 }
 
 /**
@@ -97,7 +135,11 @@ export function mountFeltPrint(table: TableId, dpr = 1): MountedScene {
  * an Ace, a court card and both pip densities, plus the face-down hole card,
  * so one capture shows the corners, the layouts, the back and the margin.
  */
-export function mountCards(felt: FeltName, dpr = 1): CardsScene {
+export function mountCards(
+  felt: FeltName,
+  dpr = 1,
+  palette: SelectedPalette = STANDARD_PALETTE,
+): CardsScene {
   const width = 96;
   const gap = 24;
   const y = (SCENE_HEIGHT - cardHeight(width)) / 2;
@@ -120,17 +162,22 @@ export function mountCards(felt: FeltName, dpr = 1): CardsScene {
   const cardsLayer: ScenePasses = {
     drawShapes(ctx): void {
       for (const card of cards) {
-        drawCardShapes(ctx, card);
+        drawCardShapes(ctx, card, palette.surface);
       }
     },
     drawText(ctx): void {
       for (const card of cards) {
-        drawCardText(ctx, card);
+        drawCardText(ctx, card, palette.surface);
       }
     },
   };
 
-  const scene = mountScene(`demo-cards-${felt}`, [feltLayerFor(felt, felt, dpr), cardsLayer], dpr);
+  const scene = mountScene(
+    `demo-cards-${felt}`,
+    [feltLayerFor(felt, felt, dpr, palette), cardsLayer],
+    dpr,
+    palette,
+  );
   return { ...scene, cards };
 }
 
@@ -138,7 +185,11 @@ export function mountCards(felt: FeltName, dpr = 1): CardsScene {
  * `demo/chips`: the section 4 wager, 680 by default, as one stack. 680 is the
  * smallest kind of stack that shows all four denominational colours at once.
  */
-export function mountChips(wager = 680, dpr = 1): ChipsScene {
+export function mountChips(
+  wager = 680,
+  dpr = 1,
+  palette: SelectedPalette = STANDARD_PALETTE,
+): ChipsScene {
   const radius = 36;
   const stack: ChipStackSpec = {
     x: SCENE_WIDTH / 2,
@@ -148,14 +199,19 @@ export function mountChips(wager = 680, dpr = 1): ChipsScene {
   };
   const chipsLayer: ScenePasses = {
     drawShapes(ctx): void {
-      drawChipStackShapes(ctx, stack);
+      drawChipStackShapes(ctx, stack, palette.chipRing);
     },
     drawText(ctx): void {
       drawChipStackText(ctx, stack);
     },
   };
 
-  const scene = mountScene('demo-chips', [feltLayerFor('bronze', 'bronze', dpr), chipsLayer], dpr);
+  const scene = mountScene(
+    'demo-chips',
+    [feltLayerFor('bronze', 'bronze', dpr, palette), chipsLayer],
+    dpr,
+    palette,
+  );
   return { ...scene, radius, placements: chipStackLayout(stack) };
 }
 
@@ -176,13 +232,18 @@ export function mountAll(): void {
 export function bakeDeterminism(dpr = 1): { same: boolean; otherFeltIdentical: boolean } {
   const encode = (felt: FeltName): string => {
     const canvas = document.createElement('canvas');
-    bakeFelt(canvas, {
-      felt,
-      limits: tableLimits('bronze'),
-      width: SCENE_WIDTH,
-      height: SCENE_HEIGHT,
-      dpr,
-    });
+    bakeFelt(
+      canvas,
+      {
+        felt,
+        limits: tableLimits('bronze'),
+        width: SCENE_WIDTH,
+        height: SCENE_HEIGHT,
+        dpr,
+        palette: STANDARD_PALETTE,
+      },
+      demoGrain(felt, dpr, STANDARD_PALETTE),
+    );
     return canvas.toDataURL();
   };
   const first = encode('bronze');

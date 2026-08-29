@@ -56,12 +56,18 @@ import {
   slide,
   toward,
   winPulse,
-  WIN_PULSE_INK,
+  winPulseInk,
   type Motion,
   type PacingName,
   type Point,
 } from './animate';
-import { drawCardShapes, drawCardText, cardHeight, type CardSpec } from './card';
+import {
+  drawCardShapes,
+  drawCardText,
+  cardHeight,
+  CARD_GEOMETRY,
+  type CardSpec,
+} from './card';
 import {
   CHIP_GEOMETRY,
   drawChipStackShapes,
@@ -69,7 +75,16 @@ import {
   wagerToChips,
   type ChipStackSpec,
 } from './chips';
-import { bakeFelt, type FeltLayer, type FeltLimits, type FeltSpec } from './felt';
+import {
+  bakeFelt,
+  bakeGrainTiles,
+  sameGrain,
+  type FeltLayer,
+  type FeltLimits,
+  type FeltSpec,
+  type GrainSpec,
+  type GrainTiles,
+} from './felt';
 import {
   createSurface,
   renderFrame,
@@ -79,7 +94,8 @@ import {
   type SurfaceCanvas,
   type SurfaceSizing,
 } from './surface';
-import type { ChipDenomination, FeltName } from './tokens';
+import { feltColour } from './tokens';
+import type { ChipDenomination, FeltName, Hex, SelectedPalette, SurfaceTokens } from './tokens';
 
 /**
  * Every proportion of the arrangement. Fractions named `...X` are of the
@@ -120,6 +136,202 @@ export const SCENE_GEOMETRY = Object.freeze({
   pulseRadius: 0.16,
   pulseStroke: 0.07,
 } as const);
+
+// ---------------------------------------------------------------------------
+// The card-legibility fan floor. DESIGN section 4, and item `E8`'s appended
+// clause, built at `BJ-22`.
+// ---------------------------------------------------------------------------
+
+/**
+ * The narrowest a card is ever drawn, in CSS pixels. Item `E8`:
+ *
+ *   "At every breakpoint, no card renders narrower than 60 CSS px and no fan
+ *    pitch narrower than the corner-index column of the card beneath it; under
+ *    pressure the fan compresses to its pitch floor before any card shrinks,
+ *    cards then shrink to the width floor, and past both floors the hand band
+ *    overflows into the pannable stage rather than breaking either. At 60 px
+ *    the ten's corner index, the smallest glyph on any card, renders at 8.0 px
+ *    bold."
+ *
+ * **This is a legibility number, not a proportion**, which is why it is the one
+ * absolute length in the arrangement. `SCENE_GEOMETRY.cardX` makes a card 7.8
+ * percent of the surface, and 7.8 percent of the surface a 390 x 844 phone gives
+ * this game is 15.7 CSS pixels: the ten's corner index would render at 2.1 px,
+ * which is not a card, it is a coloured rectangle. The floor is what DESIGN
+ * section 4 calls the card-legibility fan floor and it was unbuilt until here.
+ *
+ * The companion number in the criterion's last sentence is arithmetic on
+ * `CARD_GEOMETRY`, not a second constant: `indexFont` 0.17 times `indexTenScale`
+ * 0.78 times 60 is 7.956, which the criterion states as 8.0 px bold.
+ * `tests/unit/fan-floor.test.ts` computes it rather than repeating it.
+ */
+export const CARD_WIDTH_FLOOR = 60;
+
+/**
+ * The narrowest pitch, as a fraction of the card width it separates.
+ *
+ * The criterion names it rather than numbering it: "no fan pitch narrower than
+ * the corner-index column of the card beneath it". `CARD_GEOMETRY.indexX` is the
+ * **centre** of that column measured from the near edge, so the column itself is
+ * twice it, and a pitch equal to the column is the tightest overlap that still
+ * leaves the whole of the covered card's index visible. Derived here rather than
+ * written down, so moving the index moves the floor with it.
+ */
+export const FAN_PITCH_FLOOR = 2 * CARD_GEOMETRY.indexX;
+
+/**
+ * How far a band may exceed its room and still be said to fit, in CSS pixels.
+ *
+ * A millionth of a pixel: the residual of `room / k` multiplied back by `k` in
+ * double precision, and nothing a screen could show. See `fanFor`.
+ */
+const OVERFLOW_TOLERANCE = 1e-6;
+
+/** One band of cards asking for room: how many cards, and how much room. */
+export interface FanBand {
+  readonly count: number;
+  /** The horizontal room this band has, in CSS pixels. */
+  readonly room: number;
+}
+
+/**
+ * Which of the criterion's four states a band resolved to. The order of the
+ * first three is the order the criterion states; `overflow` is what happens
+ * past both floors.
+ */
+export type FanRegime = 'natural' | 'pitch-compressed' | 'width-shrunk' | 'overflow';
+
+/** What one band draws at, once the floors have been applied. */
+export interface Fan {
+  readonly cardWidth: number;
+  /** Distance between the left edges of two neighbouring cards, in CSS px. */
+  readonly pitch: number;
+  /** `pitch / cardWidth`. Never below `FAN_PITCH_FLOOR`. */
+  readonly pitchRatio: number;
+  /** The width the whole band occupies. */
+  readonly laid: number;
+  /** How far the band exceeds its room. Zero unless the regime is `overflow`. */
+  readonly overflow: number;
+  readonly regime: FanRegime;
+}
+
+/**
+ * The card width a frame would draw at with no pressure on it at all.
+ *
+ * The proportion, floored. Above the floor this is exactly what every frame
+ * before `BJ-22` drew; at and below it, the floor is what the criterion's first
+ * clause asks for and what the rest of the resolution shrinks **towards** rather
+ * than through.
+ */
+export function naturalCardWidth(surfaceWidth: number): number {
+  return Math.max(CARD_WIDTH_FLOOR, surfaceWidth * SCENE_GEOMETRY.cardX);
+}
+
+/**
+ * What one frame resolved for the fan. Item `E8`, and the play surface's own
+ * publication of it.
+ *
+ * Nothing in the game reads it. It is `MotionProbe`'s pattern for the same kind
+ * of claim: the criterion is about a card's rendered width and a fan's rendered
+ * pitch, and neither is a DOM box, so the page has no other way to publish
+ * them. The browser spec measures the composited canvas first and cross-checks
+ * this second, exactly as every other probe in this project is used.
+ */
+export interface FanReading {
+  readonly cardWidth: number;
+  readonly naturalCardWidth: number;
+  /** The first player hand's pitch, in CSS pixels. */
+  readonly pitch: number;
+  readonly pitchRatio: number;
+  /** The regime of each band, the dealer's first and then the hands in order. */
+  readonly regimes: readonly FanRegime[];
+  /** Where the dealer's row starts, in CSS pixels down the surface. */
+  readonly dealerTop: number;
+  /**
+   * Where the player's row starts, after the clearance clamp.
+   *
+   * Published because the clamp is the vertical half of item `E8`'s floor and
+   * nothing else can be asked for it: a floored card is 1.4 times 60 px tall
+   * whatever the surface is, and on a short one the dealer's row would grow down
+   * into the player's. The browser spec recomputes the same rule from the
+   * geometry and the measured surface and requires the two to agree, and
+   * separately requires the property the rule exists for, which is that this is
+   * never above `dealerTop` plus a card's height.
+   */
+  readonly handTop: number;
+  /** The widest overflow among the bands, in CSS pixels. Zero when all fit. */
+  readonly overflow: number;
+}
+
+/**
+ * The width every card in a frame is drawn at, given every band on the felt.
+ *
+ * **One width for the whole frame, and that is a decision rather than a
+ * shortcut.** A split deals four hands onto one table and a table does not deal
+ * one player a bigger card than the player beside them; a per-band width would
+ * also make a hand's cards change size as it drew, which is the one thing the
+ * hand re-centre exists to avoid. So the tightest band decides, and every band
+ * then compresses its own pitch inside the width it was given.
+ *
+ * The tightest band is the one whose cards, laid at the pitch floor, need the
+ * most width per card. Nothing here goes below `CARD_WIDTH_FLOOR` or above the
+ * natural width: shrinking is the second lever, and it stops at the floor.
+ */
+export function fanCardWidth(bands: readonly FanBand[], natural: number): number {
+  let width = natural;
+  for (const band of bands) {
+    if (band.count <= 0) {
+      continue;
+    }
+    width = Math.min(width, band.room / (1 + (band.count - 1) * FAN_PITCH_FLOOR));
+  }
+  return Math.max(CARD_WIDTH_FLOOR, Math.min(natural, width));
+}
+
+/**
+ * One band's fan, at the width the frame resolved.
+ *
+ * The criterion's order, taken literally and in this sequence:
+ *
+ *   1. the natural pitch, while the band fits;
+ *   2. the pitch compresses, down to the corner-index column and no further,
+ *      while the card width holds;
+ *   3. the card width shrinks, with the pitch pinned at its floor, down to 60
+ *      CSS px and no further (`fanCardWidth` above is where that happens, once
+ *      per frame);
+ *   4. past both floors the band overflows, and `overflow` says by how much.
+ *
+ * `natural` is the unpressured width, and it is passed in rather than recomputed
+ * so that a band can tell "the frame shrank every card" from "this band's own
+ * pitch is tight", which is what makes the regime a reading rather than a guess.
+ */
+export function fanFor(count: number, room: number, cardWidth: number, natural: number): Fan {
+  const span = Math.max(0, count - 1);
+  let pitchRatio: number = SCENE_GEOMETRY.cardStep;
+  if (span > 0 && cardWidth + span * cardWidth * pitchRatio > room) {
+    pitchRatio = Math.max(FAN_PITCH_FLOOR, (room - cardWidth) / (span * cardWidth));
+  }
+  const laid = laidWidth(Math.max(0, count), cardWidth, cardWidth * pitchRatio);
+  // A band that shrank to fit lands on its room to within the last bit of a
+  // double, and `room / (1 + span * floor)` multiplied back out is exactly that
+  // case. Without the tolerance a band that fits reports a millionth of a pixel
+  // of overflow, and the regime it reports is the one past both floors: the
+  // ordered sweep in `tests/unit/fan-floor.test.ts` caught it at ten cards,
+  // reporting `overflow` for a band that fitted and `width-shrunk` for the
+  // wider band after it, which is the order inverted. A tolerance of a
+  // millionth of a CSS pixel is arithmetic noise and nothing else.
+  const excess = laid - room;
+  const overflow = excess > OVERFLOW_TOLERANCE ? excess : 0;
+  const regime: FanRegime =
+    overflow > 0
+      ? 'overflow'
+      : cardWidth < natural
+        ? 'width-shrunk'
+        : pitchRatio < SCENE_GEOMETRY.cardStep
+          ? 'pitch-compressed'
+          : 'natural';
+  return { cardWidth, pitch: cardWidth * pitchRatio, pitchRatio, laid, overflow, regime };
+}
 
 /**
  * The rank and suit a face-down card is drawn with.
@@ -169,6 +381,15 @@ export interface SceneState {
   readonly pendingWager: number;
   /** The resolved motion policy for this frame. `animate.ts` owns what it does. */
   readonly motion: Motion;
+  /**
+   * The play-surface set this frame draws in. Item `G9`, `BJ-22`.
+   *
+   * Resolved once per frame by the composition root, beside the motion policy
+   * and from the same single platform read the chrome's stylesheet answers, so
+   * the canvas and the chrome cannot disagree about whether the page is in
+   * forced colors. Nothing under `src/render/` asks the platform anything.
+   */
+  readonly palette: SelectedPalette;
 }
 
 /** Whether two immutable scene snapshots describe the same visible picture. */
@@ -198,6 +419,10 @@ function sameScene(left: SceneState, right: SceneState): boolean {
     left.pendingWager === right.pendingWager &&
     left.motion.reducedMotion === right.motion.reducedMotion &&
     left.motion.speed === right.motion.speed &&
+    // Identity, and `tokens.ts` is what makes that sound: `surfacePalette`
+    // returns one of two frozen constants, so a frame that selected the same
+    // set holds the same object and a frame that switched holds the other.
+    left.palette === right.palette &&
     sameCards(left.dealer, right.dealer) &&
     left.hands.length === right.hands.length &&
     left.hands.every((hand, index) => {
@@ -216,9 +441,13 @@ function sameScene(left: SceneState, right: SceneState): boolean {
  * Whether a baked felt still matches what a frame wants.
  *
  * Exported because it is the whole of the caching rule and because the
- * composition root has to be able to ask it. Four fields decide: the table's
- * colour, its printed limits, the logical size and the backing-store scale. A
- * change in any of them means the baked pixels are wrong for this frame.
+ * composition root has to be able to ask it. Five fields decide: the table's
+ * colour, its printed limits, the logical size, the backing-store scale and the
+ * play-surface set. A change in any of them means the baked pixels are wrong for
+ * this frame. The palette entered the list at `BJ-22`: a forced-colors frame
+ * that kept the standard bake would draw high-contrast cards onto a textured
+ * standard felt, which is the one way the selection could be honoured and still
+ * be invisible.
  */
 export function needsRebake(current: FeltSpec, next: FeltSpec): boolean {
   return (
@@ -227,7 +456,8 @@ export function needsRebake(current: FeltSpec, next: FeltSpec): boolean {
     current.height !== next.height ||
     current.dpr !== next.dpr ||
     current.limits.minimum !== next.limits.minimum ||
-    current.limits.maximum !== next.limits.maximum
+    current.limits.maximum !== next.limits.maximum ||
+    current.palette !== next.palette
   );
 }
 
@@ -245,25 +475,30 @@ export function handLayout(
   cards: readonly { readonly rank: Rank; readonly suit: Suit }[],
   centreX: number,
   topY: number,
-  cardWidth: number,
+  fan: Fan,
   faceUpCount: number,
-  total: number = laidWidth(cards.length, cardWidth),
+  total: number = laidWidth(cards.length, fan.cardWidth, fan.pitch),
 ): readonly CardSpec[] {
-  const step = cardWidth * SCENE_GEOMETRY.cardStep;
   const left = centreX - total / 2;
   return cards.map((card, index) => ({
     rank: card.rank,
     suit: card.suit,
     faceUp: index < faceUpCount,
-    x: left + index * step,
+    x: left + index * fan.pitch,
     y: topY,
-    width: cardWidth,
+    width: fan.cardWidth,
   }));
 }
 
-/** The width `count` overlapping cards occupy. Zero cards occupy nothing. */
-export function laidWidth(count: number, cardWidth: number): number {
-  return count === 0 ? 0 : cardWidth + (count - 1) * cardWidth * SCENE_GEOMETRY.cardStep;
+/**
+ * The width `count` cards occupy at a given pitch. Zero cards occupy nothing.
+ *
+ * The pitch is a length rather than the old fixed fraction of the card width,
+ * which is the whole of item `E8`'s "the fan compresses to its pitch floor
+ * before any card shrinks": there is now a pitch to compress.
+ */
+export function laidWidth(count: number, cardWidth: number, pitch: number): number {
+  return count === 0 ? 0 : cardWidth + (count - 1) * pitch;
 }
 
 /** The horizontal centre of hand `index` of `count`, in logical units. */
@@ -500,16 +735,20 @@ function withFlip(
 }
 
 /** A layer that draws one list of cards in both passes. */
-function cardLayer(cards: readonly DrawnCard[]): ScenePasses {
+function cardLayer(cards: readonly DrawnCard[], tokens: SurfaceTokens): ScenePasses {
   return {
     drawShapes(ctx: CanvasRenderingContext2D): void {
       for (const card of cards) {
-        withFlip(ctx, card, drawCardShapes);
+        withFlip(ctx, card, (target, spec) => {
+          drawCardShapes(target, spec, tokens);
+        });
       }
     },
     drawText(ctx: CanvasRenderingContext2D): void {
       for (const card of cards) {
-        withFlip(ctx, card, drawCardText);
+        withFlip(ctx, card, (target, spec) => {
+          drawCardText(target, spec, tokens);
+        });
       }
     },
   };
@@ -544,12 +783,12 @@ interface FlyingChip {
  * showing a second numeral throughout the flight. A chip in the air is a chip,
  * not a label, and the value of a stack is read off the chip on top of it.
  */
-function withTurn(ctx: CanvasRenderingContext2D, chip: FlyingChip): void {
+function withTurn(ctx: CanvasRenderingContext2D, chip: FlyingChip, ring: Hex): void {
   ctx.save();
   ctx.translate(chip.spec.x, chip.spec.y);
   ctx.rotate(chip.angle);
   ctx.translate(-chip.spec.x, -chip.spec.y);
-  drawChipStackShapes(ctx, chip.spec);
+  drawChipStackShapes(ctx, chip.spec, ring);
   ctx.restore();
 }
 
@@ -562,14 +801,18 @@ function withTurn(ctx: CanvasRenderingContext2D, chip: FlyingChip): void {
  * `E4`'s "a 300 wager looks like three chips rather than a number" is about the
  * stack, and the stack is what carries the number.
  */
-function chipLayer(stacks: readonly ChipStackSpec[], flying: readonly FlyingChip[]): ScenePasses {
+function chipLayer(
+  stacks: readonly ChipStackSpec[],
+  flying: readonly FlyingChip[],
+  ring: Hex,
+): ScenePasses {
   return {
     drawShapes(ctx: CanvasRenderingContext2D): void {
       for (const stack of stacks) {
-        drawChipStackShapes(ctx, stack);
+        drawChipStackShapes(ctx, stack, ring);
       }
       for (const chip of flying) {
-        withTurn(ctx, chip);
+        withTurn(ctx, chip, ring);
       }
     },
     drawText(ctx: CanvasRenderingContext2D): void {
@@ -601,7 +844,7 @@ interface PulseRing {
  * WCAG's saturated-red threshold, and its alpha is the pulse envelope, which is
  * zero under reduced motion on every frame.
  */
-function pulseLayer(rings: readonly PulseRing[]): ScenePasses {
+function pulseLayer(rings: readonly PulseRing[], tokens: SurfaceTokens): ScenePasses {
   return {
     drawShapes(ctx: CanvasRenderingContext2D): void {
       for (const ring of rings) {
@@ -610,7 +853,7 @@ function pulseLayer(rings: readonly PulseRing[]): ScenePasses {
         }
         ctx.save();
         ctx.globalAlpha = ring.alpha;
-        ctx.strokeStyle = WIN_PULSE_INK;
+        ctx.strokeStyle = winPulseInk(tokens);
         ctx.lineWidth = ring.stroke;
         roundedRectPath(ctx, ring.x, ring.y, ring.width, ring.height, ring.radius);
         ctx.stroke();
@@ -643,6 +886,8 @@ export interface PlaySurface {
    * the picture and the simulation cannot disagree about how much time passed.
    */
   render(state: SceneState, dt: number): void;
+  /** What the last frame resolved for item `E8`'s fan. Nothing in the game reads it. */
+  fan(): FanReading;
   /**
    * Whether anything is mid-tween right now. Nothing in the game reads it.
    *
@@ -661,33 +906,151 @@ export interface PlaySurfaceOptions {
   /** The canvas the game is drawn on. */
   readonly canvas: SurfaceCanvas;
   /**
-   * A fresh offscreen canvas for the felt bake.
+   * A **fresh** offscreen canvas, every call.
    *
-   * A factory rather than a canvas, because a rebake at a new size needs a new
-   * one and because this module must not reach for `document` to make it: every
-   * module under `src/render/` runs headless under Vitest, which is what let
-   * `BJ-13` assert an instruction stream rather than a screenshot.
+   * A factory rather than a canvas, because this module must not reach for
+   * `document` to make one: every module under `src/render/` runs headless
+   * under Vitest, which is what let `BJ-13` assert an instruction stream rather
+   * than a screenshot.
+   *
+   * **Freshness is load-bearing from `BJ-22`'s fix round on.** The caches below
+   * keep a baked felt and a baked grain pair alive across frames, and a factory
+   * that answered with the same canvas twice would have the second bake paint
+   * over the first one's pixels while both cache entries still claimed to hold
+   * them. The composition root passed the shipped felt canvas here until that
+   * round; it now passes `feltLayer` for that.
    */
   readonly offscreen: () => SurfaceCanvas;
   readonly sizing: SurfaceSizing;
   /**
-   * Keep the baked felt on the supplied offscreen canvas instead of blitting
-   * it into the animated surface. The browser shell stacks that static canvas
-   * behind the transparent scene so motion never recopies a full-size table.
+   * The shipped static felt layer, when the shell has one.
+   *
+   * Given, each bake gets a canvas of its own from the layer and the layer is
+   * told which one to show; the felt never enters the animated surface's layer
+   * list, because the shell stacks the static canvas behind the transparent
+   * scene so motion never recopies a full-size table. Absent, the felt is drawn
+   * as the animated surface's first layer, which is what the headless unit
+   * armour reads.
    */
-  readonly separateFelt?: boolean;
+  readonly feltLayer?: FeltLayerHost;
 }
+
+/**
+ * Where a baked felt goes when the shell has a static layer for it.
+ *
+ * **A canvas per bake, shown and hidden, rather than one canvas copied into.**
+ * That shape is a measurement, taken on the shipped page under QUALITY-BAR
+ * section 2's 4x throttle during `BJ-22`'s fix round, of the three ways the
+ * pixels could reach the page:
+ *
+ * | Operation, at 1121 x 631 | Cost |
+ * | --- | --- |
+ * | Bake straight onto a canvas the page is showing | 1.0 to 2.0 ms |
+ * | Bake into a fresh offscreen canvas | 3.0 to 3.8 ms |
+ * | **First** copy of that offscreen onto the shown canvas | 21.6 to 32.3 ms |
+ * | Every later copy of the same offscreen | 0.0 ms |
+ *
+ * A caveat on the third row, from the review that checked this table: the
+ * first-copy figure depends on the instrument. A wall-clock bracket around
+ * `drawImage` measures only the queueing and reads 2.5 to 4.9 ms; the figure
+ * above came from attributing the deferred raster and upload to the call, and
+ * the review could not reproduce it that large. What both instruments agree
+ * on is the DIRECTION: baking onto a canvas of its own never costs more than
+ * an offscreen bake plus its first copy, and later hits are free either way.
+ * That ordering, not the margin, is what this design rests on: the copy is
+ * out of the design and a cache hit is a swap rather than a draw. What that did **not** change is the one long task item `H4` can
+ * still miss: it was 52 ms with the copy in the design and 52 ms without it,
+ * and `scripts/report/perf.mjs` carries the trace that says why.
+ *
+ * Nothing here knows what a DOM element is: `src/ui/layout.ts` implements this
+ * over the shell's felt stack, and the headless armour implements it over
+ * canvas stubs.
+ */
+export interface FeltLayerHost {
+  /** A canvas of the layer's own, not yet the one being shown. */
+  acquire: () => SurfaceCanvas;
+  /** Show this one, and stop showing whichever was being shown. */
+  show: (canvas: SurfaceCanvas) => void;
+  /** Take one the cache has evicted out of the layer for good. */
+  release: (canvas: SurfaceCanvas) => void;
+}
+
+/**
+ * How many baked felts are kept alive at once. `BJ-22`'s fix round, item `H4`.
+ *
+ * **Bounded because it is a cache of backing stores and not of numbers.** Each
+ * entry holds a canvas the size of the play surface, so an unbounded map would
+ * be a leak item `H5` measures for. Four, because the shipped phase cycle
+ * visits exactly three surface sizes, measured over three rounds on the built
+ * page (1029 x 579 at betting and the player turn, 1121 x 631 at dealing and
+ * the reveal, 407 x 229 at the round result), and the fourth slot absorbs one
+ * drift, a viewport resize or a forced-colors flip, without evicting the set in
+ * play. Past that a bake is what the renderer did on every size change before
+ * this cache existed, so the worst case is the old behaviour rather than a new
+ * failure.
+ */
+export const FELT_CACHE_LIMIT = 4;
+
+/**
+ * How many baked grain pairs are kept. Three felts on one set, plus one.
+ *
+ * A pair is two `noiseTileCells` squares rather than two full surfaces, so this
+ * bound costs far less than the one above; it exists for the same reason.
+ */
+export const GRAIN_CACHE_LIMIT = 4;
 
 /** Build the play surface. The felt bakes on the first frame, not here. */
 export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
   const surface = createSurface(options.canvas, options.sizing);
-  const separateFelt = options.separateFelt ?? false;
-  let felt: FeltLayer | null = null;
+  const feltLayer = options.feltLayer ?? null;
+  // Most recently used first, so an eviction takes the tail. A short array
+  // scanned with `needsRebake` rather than a map keyed on a string, because
+  // `needsRebake` is the whole of the caching rule and a second encoding of it
+  // beside the first is a rule that can drift out from under its own test.
+  const felts: FeltLayer[] = [];
+  const grains: GrainTiles[] = [];
+  /** The bake being shown, so the layer is only told when the answer changes. */
+  let active: FeltLayer | null = null;
   const memory: SceneMemory = newMemory();
   let inFlight = 0;
   let rendered: SceneState | null = null;
   let resized = false;
+  let fanReading: FanReading = {
+    cardWidth: 0,
+    naturalCardWidth: 0,
+    pitch: 0,
+    pitchRatio: 0,
+    regimes: [],
+    overflow: 0,
+    dealerTop: 0,
+    handTop: 0,
+  };
 
+  /** The grain pair for one colour and scale, baked at most once for each. */
+  function grainFor(wanted: GrainSpec): GrainTiles {
+    const found = grains.find((entry) => sameGrain(entry.spec, wanted));
+    if (found !== undefined) {
+      grains.splice(grains.indexOf(found), 1);
+      grains.unshift(found);
+      return found;
+    }
+    const baked = bakeGrainTiles(options.offscreen, wanted);
+    grains.unshift(baked);
+    grains.length = Math.min(grains.length, GRAIN_CACHE_LIMIT);
+    return baked;
+  }
+
+  /**
+   * The baked felt this frame wants, from the cache when one holds it.
+   *
+   * **The cache is why the shipped page stopped rebaking on every screen.**
+   * SPEC 10 replaces the whole controls row at every phase, that row is an
+   * `auto` grid track, and the play-surface row above it therefore changes
+   * height at every screen: three rounds of measured play on the built page
+   * changed the backing store 27 times over three distinct sizes. Each of those
+   * changes rebaked the felt, and a bake is the one expensive thing this
+   * renderer does. Three bakes now serve all 27.
+   */
   function feltFor(state: SceneState): FeltLayer {
     const wanted: FeltSpec = {
       felt: state.felt,
@@ -695,11 +1058,24 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
       width: surface.width,
       height: surface.height,
       dpr: surface.dpr,
+      palette: state.palette,
     };
-    if (felt === null || needsRebake(felt.spec, wanted)) {
-      felt = bakeFelt(options.offscreen(), wanted);
+    const found = felts.find((entry) => !needsRebake(entry.spec, wanted));
+    if (found !== undefined) {
+      felts.splice(felts.indexOf(found), 1);
+      felts.unshift(found);
+      return found;
     }
-    return felt;
+    const baked = bakeFelt(
+      feltLayer === null ? options.offscreen() : feltLayer.acquire(),
+      wanted,
+      grainFor({ felt: feltColour(state.palette.surface, state.felt), dpr: surface.dpr }),
+    );
+    felts.unshift(baked);
+    for (const evicted of felts.splice(FELT_CACHE_LIMIT)) {
+      feltLayer?.release(evicted.canvas);
+    }
+    return baked;
   }
 
   /** SPEC 5's flip, started on the frame the machine stops concealing a card. */
@@ -750,25 +1126,66 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
     surface,
 
     feltSpec(): FeltSpec {
-      if (felt === null) {
+      if (active === null) {
         throw new Error('scene: the felt has not been baked; render a frame first');
       }
-      return felt.spec;
+      return active.spec;
     },
 
     resize(sizing: SurfaceSizing): void {
       surface.resize(sizing);
       // Resizing a canvas clears its backing store. Even an otherwise identical
-      // settled scene therefore owes one fresh draw at the new dimensions.
+      // settled scene therefore owes one fresh draw at the new dimensions. The
+      // felt layer needs nothing here: a size is part of the felt spec, so the
+      // next frame either finds a bake already at this size or makes one, and
+      // each bake sized its own canvas when it was made.
       resized = true;
     },
+
+    fan: () => fanReading,
 
     tweensInFlight: () => inFlight,
 
     render(state: SceneState, dt: number): void {
       const { width, height } = surface;
       const { motion } = state;
-      const cardWidth = width * SCENE_GEOMETRY.cardX;
+      const tokens = state.palette.surface;
+
+      // Item `E8`'s fan floor. Every band on the felt asks for room, one card
+      // width is resolved for the whole frame from the tightest of them, and
+      // each band then compresses its own pitch inside that width. The dealer's
+      // band has the whole surface; each player hand has its equal share of it,
+      // which is the room `handCentre` below already lays the hands out in.
+      const handCount = Math.max(1, state.hands.length);
+      const handRoom = width / handCount;
+      const natural = naturalCardWidth(width);
+      const bands: FanBand[] = [
+        { count: state.dealer.length + state.dealerConcealed, room: width },
+        ...state.hands.map((hand) => ({ count: hand.cards.length, room: handRoom })),
+      ];
+      const cardWidth = fanCardWidth(bands, natural);
+      const resolved = bands.map((band) => fanFor(band.count, band.room, cardWidth, natural));
+      const handFan = fanFor(
+        state.hands[0]?.cards.length ?? 0,
+        handRoom,
+        cardWidth,
+        natural,
+      );
+      const dealerRowTop = height * SCENE_GEOMETRY.dealerY;
+      const playerRowTop = Math.max(
+        height * SCENE_GEOMETRY.handY,
+        dealerRowTop + cardHeight(cardWidth),
+      );
+      fanReading = {
+        cardWidth,
+        naturalCardWidth: natural,
+        pitch: handFan.pitch,
+        pitchRatio: handFan.pitchRatio,
+        regimes: resolved.map((fan) => fan.regime),
+        overflow: resolved.reduce((worst, fan) => Math.max(worst, fan.overflow), 0),
+        dealerTop: dealerRowTop,
+        handTop: playerRowTop,
+      };
       const chipRadius = width * SCENE_GEOMETRY.chipX;
       const arcLift = height * SCENE_GEOMETRY.arcLiftY;
       const shoe: Point = {
@@ -791,21 +1208,16 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
         topY: number,
         faceUpCount: number,
         flip: Flip | null,
+        room: number,
       ): readonly DrawnCard[] {
+        const fan = fanFor(cards.length, room, cardWidth, natural);
         // SPEC 5's hand re-centre: the laid width eases to its new value, so the
         // cards already on the felt slide apart as one rather than jumping.
-        const laid = easeToward(
-          memory.widths,
-          key,
-          laidWidth(cards.length, cardWidth),
-          dt,
-          motion,
-          seenWidths,
-        );
+        const laid = easeToward(memory.widths, key, fan.laid, dt, motion, seenWidths);
         if (laid.moving) {
           moving += 1;
         }
-        const specs = handLayout(cards, centre, topY, cardWidth, faceUpCount, laid.value);
+        const specs = handLayout(cards, centre, topY, fan, faceUpCount, laid.value);
         return specs.map((spec, index) => {
           const progress = progressOf(
             memory.cards,
@@ -881,7 +1293,14 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
       }
 
       const bakedFelt = feltFor(state);
-      const layers: ScenePasses[] = separateFelt ? [] : [bakedFelt];
+      // Each bake owns its canvas, so a change of felt is a change of which one
+      // the layer shows and never a copy. See `FeltLayerHost` for the three
+      // measurements that made this a swap instead of a blit.
+      if (bakedFelt !== active) {
+        feltLayer?.show(bakedFelt.canvas);
+        active = bakedFelt;
+      }
+      const layers: ScenePasses[] = feltLayer === null ? [bakedFelt] : [];
       const flipAt = trackFlip(state, dt);
       const pulse = trackPulse(state, dt);
       if (pulse > 0) {
@@ -894,6 +1313,7 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
       for (let index = 0; index < state.dealerConcealed; index += 1) {
         dealerCards.push({ rank: CONCEALED_RANK, suit: CONCEALED_SUIT });
       }
+      const dealerTop = fanReading.dealerTop;
       if (dealerCards.length > 0) {
         layers.push(
           cardLayer(
@@ -901,13 +1321,30 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
               'd',
               dealerCards,
               width / 2,
-              height * SCENE_GEOMETRY.dealerY,
+              dealerTop,
               state.dealer.length,
               flipAt === null ? null : { index: HOLE_CARD, progress: flipAt },
+              width,
             ),
+            tokens,
           ),
         );
       }
+
+      // **The player's row never starts above the dealer's row ends**, and that
+      // clamp is the vertical half of item `E8`'s floor. The two rows are
+      // fractions of the surface height, which is right while the card is a
+      // fraction of the surface width: at 0.078 of the width a card is a fifth of
+      // the height and the rows clear each other everywhere. A **floored** card
+      // is not a fraction of anything, so on a short surface the dealer's cards
+      // grow down into the player's row: measured at a 341 x 192 surface, the
+      // one a 667 x 375 phone in landscape produces, the two rows overlapped by
+      // 3 px. The clamp pushes the player's row clear and lets the band run off
+      // the bottom instead, which is the criterion's own resolution: the band
+      // overflows rather than either floor breaking. Above the floor
+      // `Math.max` returns the fraction unchanged, so no viewport that was
+      // laid out correctly moves by a pixel.
+      const handTop = fanReading.handTop;
 
       // The player's hands, left to right, each with its own committed stack.
       const stacks: ChipStackSpec[] = [];
@@ -916,9 +1353,9 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
       state.hands.forEach((hand, index) => {
         const key = `h${String(index)}`;
         const centre = handCentre(index, state.hands.length, width);
-        const topY = height * SCENE_GEOMETRY.handY;
-        const drawn = travelled(key, hand.cards, centre, topY, hand.cards.length, null);
-        layers.push(cardLayer(drawn));
+        const topY = handTop;
+        const drawn = travelled(key, hand.cards, centre, topY, hand.cards.length, null, handRoom);
+        layers.push(cardLayer(drawn, tokens));
 
         stacked(
           key,
@@ -951,10 +1388,10 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
       stacked('pending', state.pendingWager, pendingSpot, rack, stacks, flying);
 
       if (stacks.length > 0 || flying.length > 0) {
-        layers.push(chipLayer(stacks, flying));
+        layers.push(chipLayer(stacks, flying, state.palette.chipRing));
       }
       if (rings.length > 0) {
-        layers.push(pulseLayer(rings));
+        layers.push(pulseLayer(rings, tokens));
       }
 
       prune(memory.cards, seenCards);
@@ -975,7 +1412,7 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
         wasInFlight > 0 ||
         inFlight > 0
       ) {
-        renderFrame(surface, layers);
+        renderFrame(surface, layers, tokens);
         rendered = state;
         resized = false;
       }

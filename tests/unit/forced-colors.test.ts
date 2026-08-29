@@ -12,15 +12,16 @@
  * where the chrome's adoption is actually written, and the renderer's palette
  * selection, which is arithmetic.
  *
- * **The third clause carries a park, and this file states it as an assertion.**
- * SPEC 16 defines no high-contrast play-surface palette: it carries one table of
- * eleven tokens, each with a measured ratio, and section 16 is the source of
- * truth for every colour in this game. So `HIGH_CONTRAST_SURFACE` is `null`, the
- * selector reports its fallback and the reason for it, and the assertion below
- * pins that state deliberately: the day the sheet gains the table, this test
- * fails and sends its author to `src/render/tokens.ts`, which is where the park
- * and its resolution are written down. A park nobody is reminded of is a park
- * that becomes a defect.
+ * **The third clause carried a park from `BJ-18` until `BJ-22`, and the park is
+ * spent.** SPEC 16 defined no high-contrast play-surface palette, so
+ * `HIGH_CONTRAST_SURFACE` was `null`, the selector reported a fallback, and the
+ * assertion below pinned that state deliberately so that the day the sheet
+ * gained the table this file would fail and send its author to
+ * `src/render/tokens.ts`. That is exactly what happened: SPEC 16 gained the
+ * forced-colors subsection at `BJ-22` under the user's carve-out, this test went
+ * red, and the wiring and the flip landed in the same change. What the block
+ * below asserts now is the resolved state: a real set, selected on the flag, and
+ * a fallback that no longer exists to be taken.
  *
  * @vitest-environment node
  */
@@ -32,6 +33,8 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import {
+  CHIP_RING,
+  HIGH_CONTRAST_CHIP_RING,
   HIGH_CONTRAST_SURFACE,
   SURFACE,
   surfacePalette,
@@ -208,34 +211,54 @@ describe('G9: the play surface selects its palette through the query', () => {
   it('selects the specified set when the platform is not in forced colors', () => {
     const selected = surfacePalette(false);
     expect(selected.name).toBe('standard');
-    expect(selected.reason).toBe('preference');
     expect(selected.surface).toBe(SURFACE);
+    expect(selected.chipRing).toBe(CHIP_RING);
+    expect(selected.flatFelt).toBe(false);
   });
 
-  it('selects a high-contrast set when one exists, which is the branch that will run', () => {
-    // A stand-in rather than an invented palette. What is under test is the
-    // selection, and it has to be exercised in the direction it will run the day
-    // SPEC 16 defines the table; a branch nothing has ever taken is not tested.
-    const standIn: SurfaceTokens = { ...SURFACE, rail: '#ffffff' };
-    const selected = surfacePalette(true, standIn);
-    expect(selected.name).toBe('high-contrast');
-    expect(selected.reason).toBe('preference');
-    expect(selected.surface).toBe(standIn);
-    // And the flag still decides: the same stand-in is not selected when the
-    // platform is not asking for it.
-    expect(surfacePalette(false, standIn).surface).toBe(SURFACE);
-  });
-
-  it('reports the park rather than hiding it, because SPEC 16 defines no such set', () => {
-    // This assertion is the park, pinned. `src/render/tokens.ts` carries it in
-    // full: QUALITY-BAR section 5 asks for a high-contrast play-surface palette,
-    // SPEC 16 owns every colour in this game and defines none, and no colour may
-    // be invented here. When the sheet gains one, this test fails and its author
-    // is sent to the resolution.
-    expect(HIGH_CONTRAST_SURFACE).toBeNull();
+  it('selects the high-contrast set when the platform is in forced colors', () => {
     const selected = surfacePalette(true);
-    expect(selected.name).toBe('standard-fallback');
-    expect(selected.reason).toBe('unspecified-high-contrast-set');
-    expect(selected.surface).toBe(SURFACE);
+    expect(selected.name).toBe('high-contrast');
+    expect(selected.surface).toBe(HIGH_CONTRAST_SURFACE);
+    expect(selected.chipRing).toBe(HIGH_CONTRAST_CHIP_RING);
+    // SPEC 16's forced-colors subsection: "the gradient and the grain are
+    // suppressed under this set". It travels with the colours rather than
+    // beside them, so a caller cannot take one without the other.
+    expect(selected.flatFelt).toBe(true);
+  });
+
+  it('answers with the same object each time, which the felt cache depends on', () => {
+    // `src/render/scene.ts` decides whether the baked felt is still valid by
+    // comparing specs, and the palette is one of the fields. A selector that
+    // built a fresh record per frame would make every comparison a miss and
+    // rebake the grain and the four printed lines sixty times a second, which
+    // QUALITY-BAR section 1 forbids in as many words.
+    expect(surfacePalette(true)).toBe(surfacePalette(true));
+    expect(surfacePalette(false)).toBe(surfacePalette(false));
+    expect(surfacePalette(true)).not.toBe(surfacePalette(false));
+  });
+
+  it('carries a real set rather than the park BJ-18 left, and every name of it', () => {
+    // The park, resolved. `HIGH_CONTRAST_SURFACE` was `null` from `BJ-18` until
+    // SPEC 16 gained the forced-colors table; this asserts that it is a complete
+    // set of the same ten names, so a token added to one set and forgotten in the
+    // other is a red suite rather than a colour that silently stops switching.
+    // `tests/unit/tokens.test.ts` is where the values themselves are pinned to
+    // the contract and every ratio re-derived.
+    const standard: SurfaceTokens = SURFACE;
+    const high: SurfaceTokens = HIGH_CONTRAST_SURFACE;
+    expect(Object.keys(high).sort()).toEqual(Object.keys(standard).sort());
+    for (const [name, value] of Object.entries(high)) {
+      expect(value, `${name} is not a hex`).toMatch(/^#[0-9a-f]{6}$/);
+    }
+    // And it is genuinely a different set: a high-contrast palette equal to the
+    // one it replaces would satisfy every structural assertion above.
+    const moved = Object.keys(standard).filter(
+      (name) =>
+        standard[name as keyof SurfaceTokens] !== high[name as keyof SurfaceTokens],
+    );
+    expect(moved.length, 'the high-contrast set repeats the standard one').toBe(
+      Object.keys(standard).length,
+    );
   });
 });

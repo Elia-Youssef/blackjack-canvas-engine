@@ -58,7 +58,7 @@ export const SURFACE = {
  * The shape of a play-surface palette: `SURFACE`'s keys, each holding a colour.
  *
  * Mapped rather than `typeof SURFACE`, and the difference is load bearing.
- * `SURFACE` is `as const`, so its type carries the eleven hexes themselves, and
+ * `SURFACE` is `as const`, so its type carries the ten hexes themselves, and
  * a second set of the same shape with different colours in it would not be
  * assignable to it: the type would say a high-contrast palette must be the
  * palette it is replacing. Widening each value to `Hex` keeps the keys, which is
@@ -67,77 +67,84 @@ export const SURFACE = {
 export type SurfaceTokens = { readonly [K in keyof typeof SURFACE]: Hex };
 
 /**
- * The high-contrast play-surface set, or `null` while none is specified.
+ * The high-contrast play-surface set. SPEC 16, "High-contrast play surface
+ * (forced colors)". Item `G9`'s third clause, closed at `BJ-22`.
  *
- * **It is `null`, and that is a finding rather than a placeholder.**
+ * **This was `null` from `BJ-18` until `BJ-22`, and the park is now spent.**
  * QUALITY-BAR section 5 says "Canvas pixels are unaffected by forced colors, so
  * a high-contrast play-surface palette is selected via the media query and
- * applied to the renderer's tokens", and item `G9` grades that sentence. But
- * **SPEC 16 defines no such palette**: it carries one play-surface table, of
- * eleven tokens, each with a measured ratio, and section 16 is the source of
- * truth for every colour in this game. `tests/unit/tokens.test.ts` enforces
- * that: it reads the contract, this file and the stylesheet and fails if any
- * two disagree, which is what stops a colour from being invented, adjusted or
- * improved here.
+ * applied to the renderer's tokens". `BJ-18` built the selection and left the
+ * values `null`, because SPEC 16 defined no such set and section 16 is the
+ * source of truth for every colour in this game: inventing one here would have
+ * been a colour nobody measured. SPEC 16 gained the table at `BJ-22` under the
+ * user's pre-approved carve-out, and these ten hexes are that table, transcribed
+ * and nothing more. `tests/unit/tokens.test.ts` reads the contract and this file
+ * and fails if the two disagree, and re-derives every ratio the table quotes
+ * from the hexes themselves.
  *
- * So the selection is built and the values are parked. `surfacePalette` below
- * selects on the flag, reports which set it selected and why, and falls back to
- * the specified set when the high-contrast one does not exist. The composition
- * root resolves the media query once per frame, calls this, and publishes the
- * answer on its accessibility probe.
- *
- * **What is deliberately not built, so the park's owner sees the whole cost.**
- * The selected record reaches the probe and stops there: nothing draws from it.
- * Every module under `render/` still imports `SURFACE` directly, so closing this
- * park is two pieces of work rather than one line. First, SPEC 16 gains a
- * forced-colors play-surface table, eleven tokens with measured ratios, which is
- * the sheet's to write and not this file's to invent. Second, the selected
- * record has to be threaded into the four modules that spend those colours:
- * `card.ts`, `chips.ts`, `felt.ts` and `surface.ts`, each of which takes the
- * palette from the import today. `BJ-18`'s report carries the park with a
- * sketched resolution and this list.
+ * The eleventh token of the table is `--chip-ring`, which lives beside the base
+ * `CHIP_RING` below for the reason that one does: a ring is not a surface.
  */
-export const HIGH_CONTRAST_SURFACE: SurfaceTokens | null = null;
+export const HIGH_CONTRAST_SURFACE = {
+  feltBronze: '#0b2c1f',
+  feltSilver: '#0b2434',
+  feltGold: '#2a0c16',
 
-/** Which set was selected, and why. */
-export type PaletteName = 'standard' | 'high-contrast' | 'standard-fallback';
+  /** 12.93:1 on the dark ground, 10.53:1 on the darkest felt. */
+  rail: '#ffd34d',
+  /** 15.06:1 on bronze, the darkest of the three felts. */
+  print: '#ffffff',
+
+  /** 15.06 / 15.96 / 18.06:1 on bronze / silver / gold. */
+  cardMargin: '#ffffff',
+  cardFace: '#ffffff',
+  /** 15.63:1 against its own card margin. */
+  cardBack: '#4a0a12',
+  /** 21.00:1 on the card face. */
+  rankBlack: '#000000',
+  /** 9.67:1 on the card face. */
+  rankRed: '#8f0009',
+} as const satisfies SurfaceTokens;
+
+/** Which set was selected. The platform's flag is the only input. */
+export type PaletteName = 'standard' | 'high-contrast';
+
+/**
+ * One complete play-surface set: the ten surface tokens, the chip ring that
+ * belongs with them, and how the felt is painted under them.
+ *
+ * `flatFelt` is a property of the **set**, not a second setting. SPEC 16's
+ * forced-colors subsection states it in as many words: the gradient and the
+ * grain are suppressed under that set, "because subtle texture is what high
+ * contrast exists to remove". Carrying it here rather than as a flag beside the
+ * palette is what stops a caller from selecting the high-contrast colours and
+ * painting them through the textured path.
+ */
+export interface PlaySurfaceSet {
+  readonly surface: SurfaceTokens;
+  readonly chipRing: Hex;
+  readonly flatFelt: boolean;
+}
 
 /** The answer `surfacePalette` gives, for the frame that asked. */
-export interface SelectedPalette {
+export interface SelectedPalette extends PlaySurfaceSet {
   readonly name: PaletteName;
-  /**
-   * Why that set. `preference` is the flag being honoured either way;
-   * `unspecified-high-contrast-set` is the park above, reported rather than
-   * hidden, so a probe reading this can tell a working fallback from a
-   * forced-colors flag that never arrived.
-   */
-  readonly reason: 'preference' | 'unspecified-high-contrast-set';
-  readonly surface: SurfaceTokens;
 }
 
 /**
- * Which play-surface set a frame should draw from, given the platform's flag.
+ * The felt colour of each table. SPEC 16: each table has its own.
  *
- * The high-contrast set is a parameter with a default rather than a closed-over
- * constant, so that the selection can be exercised in both directions by a unit
- * test that supplies a stand-in set: the logic that will run the day SPEC 16
- * defines the palette is the logic under test today, rather than a branch
- * nothing has ever taken.
+ * **Nothing under `src/` reads this map's values any more, and it stays for two
+ * reasons that are not habit.** `FeltName` below is `keyof typeof FELT`, so the
+ * union every module names is derived from this record rather than written
+ * twice; and it is the base set's map, which is what `tokens.test.ts` pins
+ * against SPEC 16 colour by colour, what `render-felt.test.ts` compares a bake's
+ * ground against, and what `render-surface.spec.ts` samples rendered pixels for.
+ * Since `BJ-22` threaded the selected palette through the renderer, the drawing
+ * path asks `feltColour` for whichever set the frame chose; this is still the
+ * set the tests are entitled to name, because a test that read the colour back
+ * out of the code it is checking would agree with it forever.
  */
-export function surfacePalette(
-  forcedColors: boolean,
-  highContrast: SurfaceTokens | null = HIGH_CONTRAST_SURFACE,
-): SelectedPalette {
-  if (!forcedColors) {
-    return { name: 'standard', reason: 'preference', surface: SURFACE };
-  }
-  if (highContrast === null) {
-    return { name: 'standard-fallback', reason: 'unspecified-high-contrast-set', surface: SURFACE };
-  }
-  return { name: 'high-contrast', reason: 'preference', surface: highContrast };
-}
-
-/** The felt colour of each table. SPEC 16: each table has its own. */
 export const FELT = {
   bronze: SURFACE.feltBronze,
   silver: SURFACE.feltSilver,
@@ -145,6 +152,23 @@ export const FELT = {
 } as const satisfies Record<string, Hex>;
 
 export type FeltName = keyof typeof FELT;
+
+/**
+ * One table's felt colour out of an arbitrary set.
+ *
+ * `FELT` above is the base set's map and is what the chrome and the tests name;
+ * this is the same lookup for whichever set a frame selected, so the renderer
+ * has one way to ask and there is no second place a felt name is resolved.
+ */
+export function feltColour(surface: SurfaceTokens, name: FeltName): Hex {
+  if (name === 'silver') {
+    return surface.feltSilver;
+  }
+  if (name === 'gold') {
+    return surface.feltGold;
+  }
+  return surface.feltBronze;
+}
 
 /**
  * Chip denominations. 10 / 50 / 100 / 500, and no others: every wager in the
@@ -158,6 +182,17 @@ export type FeltName = keyof typeof FELT;
 export const CHIP_RING: Hex = '#f0ede4';
 export const CHIP_GLYPH: Hex = '#ffffff';
 
+/**
+ * The chip ring of the high-contrast set. SPEC 16's eleventh forced-colors row.
+ *
+ * White, which measures 15.06 / 15.96 / 18.06:1 against the three high-contrast
+ * felts and 5.47 / 5.33 / 15.04 / 6.35:1 against the four chip fills, each at or
+ * above its base-set counterpart. The fills themselves are unchanged: they carry
+ * identity only, and identity is the one thing a high-contrast set must not
+ * flatten. `CHIP_GLYPH` is already white and is the same in both sets.
+ */
+export const HIGH_CONTRAST_CHIP_RING: Hex = '#ffffff';
+
 export const CHIP_FILL = {
   10: '#2e6da4',
   50: '#1f7a49',
@@ -169,6 +204,38 @@ export type ChipDenomination = keyof typeof CHIP_FILL;
 
 /** The denominations in ascending order, for anything that lays out a rack. */
 export const CHIP_DENOMINATIONS = [10, 50, 100, 500] as const;
+
+/** SPEC 16's play-surface set: the felt is a gradient with grain and a rail. */
+export const STANDARD_PALETTE: SelectedPalette = Object.freeze({
+  name: 'standard',
+  surface: SURFACE,
+  chipRing: CHIP_RING,
+  flatFelt: false,
+});
+
+/** SPEC 16's forced-colors set: the same eleven names, and a flat felt. */
+export const HIGH_CONTRAST_PALETTE: SelectedPalette = Object.freeze({
+  name: 'high-contrast',
+  surface: HIGH_CONTRAST_SURFACE,
+  chipRing: HIGH_CONTRAST_CHIP_RING,
+  flatFelt: true,
+});
+
+/**
+ * Which play-surface set a frame should draw from, given the platform's flag.
+ *
+ * **Two frozen constants and no construction, which is load bearing rather than
+ * tidy.** `src/render/scene.ts` decides whether the baked felt is still valid by
+ * comparing the spec it was baked from against the one this frame wants, and the
+ * palette is part of that spec. A function that built a fresh record per frame
+ * would make every comparison a miss and rebake the whole felt, its grain and
+ * its four printed lines sixty times a second, which QUALITY-BAR section 1
+ * forbids in as many words. Returning the same object for the same answer makes
+ * the comparison an identity test that is right by construction.
+ */
+export function surfacePalette(forcedColors: boolean): SelectedPalette {
+  return forcedColors ? HIGH_CONTRAST_PALETTE : STANDARD_PALETTE;
+}
 
 /**
  * The numeric scales from QUALITY-BAR section 15, in the units a canvas works

@@ -22,11 +22,26 @@
 import { describe, expect, it } from 'vitest';
 
 import { TABLES, tableLimits } from '../../src/core/wallet';
-import { bakeFelt, feltPrint, FELT_GEOMETRY, type FeltSpec } from '../../src/render/felt';
-import { BORDER, FELT, SURFACE } from '../../src/render/tokens';
+import {
+  bakeFelt,
+  bakeGrainTiles,
+  feltPrint,
+  FELT_GEOMETRY,
+  sameGrain,
+  type FeltSpec,
+  type GrainTiles,
+} from '../../src/render/felt';
+import {
+  BORDER,
+  feltColour,
+  FELT,
+  STANDARD_PALETTE,
+  SURFACE,
+  type FeltName,
+} from '../../src/render/tokens';
 import { createRecordingContext, createStyleFreeCanvas } from './support/recording-context';
 
-/** Small enough to keep the grain loop cheap, large enough to be a felt. */
+/** Small enough to keep the bake cheap, large enough to be a felt. */
 function spec(overrides: Partial<FeltSpec> = {}): FeltSpec {
   return {
     felt: 'bronze',
@@ -34,8 +49,17 @@ function spec(overrides: Partial<FeltSpec> = {}): FeltSpec {
     width: 64,
     height: 40,
     dpr: 1,
+    palette: STANDARD_PALETTE,
     ...overrides,
   };
+}
+
+/** The grain pair a bake needs, in the felt colour the spec names. */
+function tiles(felt: FeltName = 'bronze', dpr = 1): GrainTiles {
+  return bakeGrainTiles(() => createStyleFreeCanvas().canvas, {
+    felt: feltColour(STANDARD_PALETTE.surface, felt),
+    dpr,
+  });
 }
 
 describe('E5: the printed lines', () => {
@@ -63,7 +87,7 @@ describe('E5: the printed lines', () => {
 
   it('bakes all four lines onto the felt in the print ink', () => {
     const { canvas, recording } = createStyleFreeCanvas();
-    bakeFelt(canvas, spec());
+    bakeFelt(canvas, spec(), tiles());
 
     const texts = recording.calls('fillText');
     expect(texts.map((call) => call.args[0])).toEqual([
@@ -94,7 +118,7 @@ describe('E5: the table itself', () => {
   it('grounds the felt in the named table\'s own colour', () => {
     for (const felt of ['bronze', 'silver', 'gold'] as const) {
       const { canvas, recording } = createStyleFreeCanvas();
-      bakeFelt(canvas, spec({ felt }));
+      bakeFelt(canvas, spec({ felt }), tiles(felt));
       const firstFill = recording.indexOfCall('fill');
       expect(firstFill).toBeGreaterThan(-1);
       expect(recording.valueBefore(firstFill, 'fillStyle'), felt).toBe(FELT[felt]);
@@ -107,7 +131,7 @@ describe('E5: the table itself', () => {
     // would be under a logical pixel, so the floor is what keeps the
     // boundary real.
     const { canvas, recording } = createStyleFreeCanvas();
-    bakeFelt(canvas, spec());
+    bakeFelt(canvas, spec(), tiles());
 
     const railStrokes = recording.calls('stroke').filter((call) => {
       const index = recording.entries.indexOf(call);
@@ -123,7 +147,7 @@ describe('E5: the table itself', () => {
 
   it('rules the insurance band with two divider lines in the print ink', () => {
     const { canvas, recording } = createStyleFreeCanvas();
-    bakeFelt(canvas, spec());
+    bakeFelt(canvas, spec(), tiles());
 
     const bandStrokes = recording.calls('stroke').filter((call) => {
       const index = recording.entries.indexOf(call);
@@ -141,7 +165,7 @@ describe('E5: the table itself', () => {
     // composited over itself, so the vignette's every stop and the grain's
     // fill are the one committed colour.
     const { canvas, recording } = createStyleFreeCanvas();
-    bakeFelt(canvas, spec());
+    bakeFelt(canvas, spec(), tiles());
 
     const gradients = recording.calls('createRadialGradient');
     expect(gradients).toHaveLength(1);
@@ -159,43 +183,130 @@ describe('E5: the table itself', () => {
       ],
     });
 
-    // The grain: one cell per SPACE[1] square, clipped to the table, half
-    // lifting and half sinking, never past the alpha ceiling. Cells sharing a
-    // direction and subtle strength band are one path, so a large felt does not
-    // issue tens of thousands of separate raster operations.
+    // The grain reaches the felt as tiles, clipped to the table, half lifting
+    // and half sinking. **No cell is drawn into the felt at all**, which is the
+    // whole of `BJ-22`'s fix round for item `H4`: the segments are the cost, so
+    // they are paid once into a square and blitted from there.
     expect(recording.calls('clip')).toHaveLength(1);
-    const cells = recording.calls('rect');
-    expect(cells).toHaveLength(Math.ceil(64 / 4) * Math.ceil(40 / 4));
+    expect(recording.calls('rect'), 'a cell was drawn into the felt').toHaveLength(0);
+
+    const side = FELT_GEOMETRY.noiseTileCells * FELT_GEOMETRY.noiseCell;
+    const blits = recording.calls('drawImage');
+    expect(blits).toHaveLength(2 * Math.ceil(64 / side) * Math.ceil(40 / side));
 
     const operations = new Set<unknown>();
-    for (const cell of cells) {
-      const index = recording.entries.indexOf(cell);
+    for (const blit of blits) {
+      const index = recording.entries.indexOf(blit);
       operations.add(recording.valueBefore(index, 'globalCompositeOperation'));
-      const alpha = recording.valueBefore(index, 'globalAlpha');
-      expect(typeof alpha).toBe('number');
-      expect(alpha as number).toBeGreaterThanOrEqual(0);
-      expect(alpha as number).toBeLessThanOrEqual(FELT_GEOMETRY.noiseAlpha);
+      // The alpha is in the baked pixels, so the blit runs at full opacity: a
+      // blit that also dimmed would apply the strength twice.
+      expect(recording.valueBefore(index, 'globalAlpha')).toBe(1);
+      expect(blit.args.slice(3)).toEqual([side, side]);
     }
     expect(operations).toEqual(new Set(['multiply', 'screen']));
   });
 
-  it('bakes the same instructions twice from the same spec', () => {
-    // The determinism the BJ-22 visual baselines will diff for pixels,
-    // asserted here at the instruction level. The length guard is the
-    // negative control: two empty recordings are also equal.
-    const first = createStyleFreeCanvas();
-    bakeFelt(first.canvas, spec());
-    const second = createStyleFreeCanvas();
-    bakeFelt(second.canvas, spec());
+  it('bakes every grain cell into the pair, in the felt colour, under the ceiling', () => {
+    // The colour claim the test above used to carry for the cells themselves:
+    // both effects are the felt hex composited over itself, so no colour exists
+    // here beyond the SPEC 16 palette. It moved with the cells.
+    const canvases: ReturnType<typeof createStyleFreeCanvas>[] = [];
+    const pair = bakeGrainTiles(
+      () => {
+        const made = createStyleFreeCanvas();
+        canvases.push(made);
+        return made.canvas;
+      },
+      { felt: FELT.bronze, dpr: 1 },
+    );
+    expect(canvases).toHaveLength(2);
+    expect(pair.side).toBe(FELT_GEOMETRY.noiseTileCells * FELT_GEOMETRY.noiseCell);
 
-    expect(first.recording.entries.length).toBeGreaterThan(200);
+    let cells = 0;
+    for (const { recording } of canvases) {
+      const drawn = recording.calls('rect');
+      // Neither square is empty, or "half lifting and half sinking" would be
+      // true of a pair with everything in one of them.
+      expect(drawn.length).toBeGreaterThan(0);
+      cells += drawn.length;
+      for (const cell of drawn) {
+        const index = recording.entries.indexOf(cell);
+        expect(recording.valueBefore(index, 'fillStyle')).toBe(FELT.bronze);
+        const alpha = recording.valueBefore(index, 'globalAlpha');
+        expect(typeof alpha).toBe('number');
+        expect(alpha as number).toBeGreaterThan(0);
+        expect(alpha as number).toBeLessThanOrEqual(FELT_GEOMETRY.noiseAlpha);
+        expect(cell.args.slice(2)).toEqual([FELT_GEOMETRY.noiseCell, FELT_GEOMETRY.noiseCell]);
+      }
+    }
+    // Every cell of the square, in exactly one of the two: a hash that answered
+    // one direction for everything would fail the emptiness check above, and a
+    // cell counted twice would fail this.
+    expect(cells).toBe(FELT_GEOMETRY.noiseTileCells ** 2);
+  });
+
+  it('refuses a pair baked for another colour or another backing-store scale', () => {
+    // A cache in front of a bake invites exactly one failure, serving the pair
+    // that was made for something else. It is an error rather than a silently
+    // wrong texture.
+    const { canvas } = createStyleFreeCanvas();
+    expect(() => bakeFelt(canvas, spec(), tiles('gold'))).toThrow(/another colour/);
+    expect(() => bakeFelt(canvas, spec(), tiles('bronze', 2))).toThrow(/backing-store scale/);
+    expect(sameGrain({ felt: FELT.bronze, dpr: 1 }, { felt: FELT.bronze, dpr: 1 })).toBe(true);
+    expect(sameGrain({ felt: FELT.bronze, dpr: 1 }, { felt: FELT.gold, dpr: 1 })).toBe(false);
+    expect(sameGrain({ felt: FELT.bronze, dpr: 1 }, { felt: FELT.bronze, dpr: 2 })).toBe(false);
+  });
+
+  it('bakes the same instructions twice from the same spec', () => {
+    // The determinism the BJ-22 visual baselines diff for pixels, asserted
+    // here at the instruction level. The length guard is the negative control:
+    // two empty recordings are also equal. One grain pair across both bakes,
+    // because a blit records the square it copied and two squares baked from
+    // one spec are equal in pixels without being the same object; the squares'
+    // own determinism is the test below.
+    const pair = tiles();
+    const first = createStyleFreeCanvas();
+    bakeFelt(first.canvas, spec(), pair);
+    const second = createStyleFreeCanvas();
+    bakeFelt(second.canvas, spec(), pair);
+
+    expect(first.recording.entries.length).toBeGreaterThan(50);
     expect(first.recording.entries).toEqual(second.recording.entries);
 
     // And a different table bakes different instructions, so the equality
     // above is not an artefact of a recorder that sees nothing.
     const gold = createStyleFreeCanvas();
-    bakeFelt(gold.canvas, spec({ felt: 'gold' }));
+    bakeFelt(gold.canvas, spec({ felt: 'gold' }), tiles('gold'));
     expect(gold.recording.entries).not.toEqual(second.recording.entries);
+  });
+
+  it('bakes the same grain squares twice from the same grain spec', () => {
+    // **The determinism the visual baselines diff, at the level it now lives
+    // at.** The cells moved out of the felt bake and into the squares at
+    // `BJ-22`'s fix round, and the claim moved with them: a seeded hash bakes
+    // the same texture on every run, and a random source cannot.
+    const streams = (felt: FeltName): unknown[][] => {
+      const made: ReturnType<typeof createStyleFreeCanvas>[] = [];
+      bakeGrainTiles(
+        () => {
+          const one = createStyleFreeCanvas();
+          made.push(one);
+          return one.canvas;
+        },
+        { felt: feltColour(STANDARD_PALETTE.surface, felt), dpr: 1 },
+      );
+      return made.map((one) => [...one.recording.entries]);
+    };
+
+    const first = streams('bronze');
+    const second = streams('bronze');
+    expect(first[0]?.length ?? 0).toBeGreaterThan(1_000);
+    expect(first).toEqual(second);
+
+    // The control: a different felt colour bakes the same *shape* in a
+    // different ink, so the equality above is a finding rather than a recorder
+    // that saw nothing.
+    expect(streams('gold')).not.toEqual(second);
   });
 });
 
@@ -204,7 +315,7 @@ describe('E5: the frame path is a blit', () => {
     // QUALITY-BAR 1: the felt, its grain and its printed rules render once
     // into an offscreen canvas; nothing procedural is regenerated per frame.
     const { canvas } = createStyleFreeCanvas();
-    const layer = bakeFelt(canvas, spec());
+    const layer = bakeFelt(canvas, spec(), tiles());
 
     const frame = createRecordingContext();
     layer.drawShapes(frame.ctx);

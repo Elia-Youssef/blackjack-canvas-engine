@@ -37,6 +37,8 @@ import {
   DURATION,
   EASE,
   FELT,
+  HIGH_CONTRAST_CHIP_RING,
+  HIGH_CONTRAST_SURFACE,
   RADIUS,
   SPACE,
   SURFACE,
@@ -57,6 +59,27 @@ function section(markdown: string, heading: string): string {
 
 const SPEC_16 = section(CONTRACT, '16. Visual direction');
 const QB_15 = section(CONTRACT, '15. Design tokens');
+
+/**
+ * The text of one `###` subsection of an already-sliced section.
+ *
+ * **Scoping is load bearing from `BJ-22`, not tidiness.** Section 16 now holds
+ * two play-surface tables of the same shape, the base set and the forced-colors
+ * set, and a whole-section scan reads the second one over the first: every
+ * `--felt-*` and `--card-*` name appears in both, so the base palette silently
+ * became the high-contrast palette and three assertions failed with the right
+ * numbers on the wrong table. Each parser below is pointed at the subsection
+ * that owns the values it is reading.
+ */
+function subsection(text: string, heading: string): string {
+  const start = text.indexOf(`### ${heading}`);
+  expect(start, `subsection "${heading}" not found`).toBeGreaterThan(-1);
+  const after = text.indexOf('\n### ', start + 1);
+  return text.slice(start, after === -1 ? text.length : after);
+}
+
+const PLAY_SURFACE = subsection(SPEC_16, 'Play surface palette');
+const HIGH_CONTRAST = subsection(SPEC_16, 'High-contrast play surface (forced colors)');
 
 /**
  * Every `--token: value;` declaration in the **base** `:root` block.
@@ -131,11 +154,11 @@ function chromePalette(): Map<string, { dark: string; light: string }> {
   return found;
 }
 
-/** `| \`--token\` | \`#HEX\` | ... |` from the play-surface table. */
-function surfacePalette(): Map<string, string> {
+/** `| \`--token\` | \`#HEX\` | ... |` from one play-surface table. */
+function surfacePalette(text: string): Map<string, string> {
   const found = new Map<string, string>();
   const row = /\|\s*`(--[a-z-]+)`\s*\|\s*`(#[0-9A-Fa-f]{6})`\s*\|/g;
-  for (const match of SPEC_16.matchAll(row)) {
+  for (const match of text.matchAll(row)) {
     const [, name, hex] = match;
     if (name !== undefined && hex !== undefined && !name.startsWith('--bj-')) {
       found.set(name, hex.toLowerCase());
@@ -148,7 +171,7 @@ function surfacePalette(): Map<string, string> {
 function chipPalette(): Map<number, { fill: string; ring: number; glyph: number }> {
   const found = new Map<number, { fill: string; ring: number; glyph: number }>();
   const row = /\|\s*(\d+)\s*\|\s*`(#[0-9A-Fa-f]{6})`\s*\|\s*\*\*([\d.]+):1\*\*\s*\|\s*\*\*([\d.]+):1\*\*\s*\|/g;
-  for (const match of SPEC_16.matchAll(row)) {
+  for (const match of PLAY_SURFACE.matchAll(row)) {
     const [, denom, fill, ring, glyph] = match;
     if (denom !== undefined && fill !== undefined && ring !== undefined && glyph !== undefined) {
       found.set(Number(denom), {
@@ -162,7 +185,8 @@ function chipPalette(): Map<number, { fill: string; ring: number; glyph: number 
 }
 
 const CHROME = chromePalette();
-const PLAY = surfacePalette();
+const PLAY = surfacePalette(PLAY_SURFACE);
+const FORCED = surfacePalette(HIGH_CONTRAST);
 const CHIPS = chipPalette();
 
 describe('E1: the spec is the only source of colour', () => {
@@ -178,6 +202,20 @@ describe('E1: the spec is the only source of colour', () => {
     ]);
     expect(PLAY.size).toBe(11);
     expect([...CHIPS.keys()]).toEqual([10, 50, 100, 500]);
+    // The forced-colors set is the same eleven names, `BJ-22`. Asserting the
+    // names rather than only the count is what makes the scoping above provable:
+    // a parser that had read the wrong table would report identical keys with
+    // different values, and the value assertions below would then be the ones
+    // that fail, which is exactly what happened before the scoping landed.
+    expect([...FORCED.keys()].sort()).toEqual([...PLAY.keys()].sort());
+  });
+
+  it('reads the two play-surface tables apart', () => {
+    // The scoping, shown to work in the direction it has to: the base bronze and
+    // the forced-colors bronze are different hexes and each parser found its own.
+    expect(PLAY.get('--felt-bronze')).not.toBe(FORCED.get('--felt-bronze'));
+    expect(PLAY_SURFACE).not.toContain('forced-colors');
+    expect(HIGH_CONTRAST).toContain('forced colors');
   });
 
   it('declares both chrome themes exactly as the spec measured them', () => {
@@ -311,6 +349,102 @@ describe('E1: every committed ratio re-derives from the committed hexes', () => 
         expect(contrast(CHIP_RING, felt), 'the ring must separate a chip from the felt').toBeGreaterThan(3);
       }
     }
+  });
+});
+
+describe('G9: the forced-colors set is the spec table and nothing else', () => {
+  const round = (n: number): number => Math.round(n * 100) / 100;
+
+  it('carries the spec table in the renderer record, hex for hex', () => {
+    expect(HIGH_CONTRAST_SURFACE.feltBronze).toBe(FORCED.get('--felt-bronze'));
+    expect(HIGH_CONTRAST_SURFACE.feltSilver).toBe(FORCED.get('--felt-silver'));
+    expect(HIGH_CONTRAST_SURFACE.feltGold).toBe(FORCED.get('--felt-gold'));
+    expect(HIGH_CONTRAST_SURFACE.rail).toBe(FORCED.get('--felt-rail'));
+    expect(HIGH_CONTRAST_SURFACE.print).toBe(FORCED.get('--felt-print'));
+    expect(HIGH_CONTRAST_SURFACE.cardMargin).toBe(FORCED.get('--card-margin'));
+    expect(HIGH_CONTRAST_SURFACE.cardFace).toBe(FORCED.get('--card-face'));
+    expect(HIGH_CONTRAST_SURFACE.cardBack).toBe(FORCED.get('--card-back'));
+    expect(HIGH_CONTRAST_SURFACE.rankBlack).toBe(FORCED.get('--rank-black'));
+    expect(HIGH_CONTRAST_SURFACE.rankRed).toBe(FORCED.get('--rank-red'));
+    expect(HIGH_CONTRAST_CHIP_RING).toBe(FORCED.get('--chip-ring'));
+  });
+
+  it('reproduces every ratio the forced-colors table quotes', () => {
+    const bronze = FORCED.get('--felt-bronze') ?? '';
+    const silver = FORCED.get('--felt-silver') ?? '';
+    const gold = FORCED.get('--felt-gold') ?? '';
+    const face = FORCED.get('--card-face') ?? '';
+    const margin = FORCED.get('--card-margin') ?? '';
+    const ring = FORCED.get('--chip-ring') ?? '';
+    const rail = FORCED.get('--felt-rail') ?? '';
+    const darkGround = CHROME.get('--bj-ground')?.dark ?? '';
+
+    expect(round(contrast(rail, darkGround))).toBe(12.93);
+    expect(round(contrast(rail, bronze))).toBe(10.53);
+    expect(round(contrast(margin, bronze))).toBe(15.06);
+    expect(round(contrast(margin, silver))).toBe(15.96);
+    expect(round(contrast(margin, gold))).toBe(18.06);
+    expect(round(contrast(FORCED.get('--card-back') ?? '', margin))).toBe(15.63);
+    expect(round(contrast(FORCED.get('--rank-black') ?? '', face))).toBe(21);
+    expect(round(contrast(FORCED.get('--rank-red') ?? '', face))).toBe(9.67);
+    expect(round(contrast(FORCED.get('--felt-print') ?? '', bronze))).toBe(15.06);
+    expect(round(contrast(ring, bronze))).toBe(15.06);
+    expect(round(contrast(ring, silver))).toBe(15.96);
+    expect(round(contrast(ring, gold))).toBe(18.06);
+
+    // The derivation the subsection gives for why the boundary tokens still
+    // carry the contrast under this set: the three felts stay below 3:1 on
+    // purpose, exactly as they do in the base set.
+    expect(round(contrast(bronze, darkGround))).toBe(1.23);
+    expect(round(contrast(silver, darkGround))).toBe(1.16);
+    expect(round(contrast(gold, darkGround))).toBe(1.02);
+
+    // And the white ring and glyph against the four unchanged chip fills.
+    const chipRatios = [...CHIPS.values()].map(({ fill }) => round(contrast(ring, fill)));
+    expect(chipRatios).toEqual([5.47, 5.33, 15.04, 6.35]);
+    expect([...CHIPS.values()].map(({ glyph }) => glyph)).toEqual(chipRatios);
+  });
+
+  it('meets or exceeds its base counterpart on every measured pair', () => {
+    // The subsection's closing claim, computed rather than trusted: "Every value
+    // in this set meets or exceeds its base-palette counterpart's measured
+    // ratio". A high-contrast set that made one pair worse would be a set that
+    // failed the one thing it exists for, and it would pass every other
+    // assertion in this file.
+    const darkGround = CHROME.get('--bj-ground')?.dark ?? '';
+    const pairs: readonly (readonly [string, string])[] = [
+      ['--felt-rail', '--ground'],
+      ['--card-margin', '--felt-bronze'],
+      ['--card-margin', '--felt-silver'],
+      ['--card-margin', '--felt-gold'],
+      ['--card-back', '--card-margin'],
+      ['--rank-black', '--card-face'],
+      ['--rank-red', '--card-face'],
+      ['--felt-print', '--felt-bronze'],
+      ['--chip-ring', '--felt-bronze'],
+      ['--chip-ring', '--felt-silver'],
+      ['--chip-ring', '--felt-gold'],
+    ];
+    for (const [ink, ground] of pairs) {
+      const base = contrast(
+        PLAY.get(ink) ?? '',
+        ground === '--ground' ? darkGround : (PLAY.get(ground) ?? ''),
+      );
+      const forced = contrast(
+        FORCED.get(ink) ?? '',
+        ground === '--ground' ? darkGround : (FORCED.get(ground) ?? ''),
+      );
+      expect(forced, `${ink} on ${ground}`).toBeGreaterThanOrEqual(base);
+    }
+  });
+
+  it('leaves the chip fills alone, because identity is what they carry', () => {
+    // SPEC 16's forced-colors subsection: "Chip fills keep their base identity
+    // values". The ring is what moves. A set that recoloured the fills would
+    // make a 100 chip stop looking like a 100 chip, which QUALITY-BAR section 4
+    // calls object identity and carves out for exactly this reason.
+    expect(FORCED.has('--chip-10-fill')).toBe(false);
+    expect(HIGH_CONTRAST).toContain('Chip fills keep their base identity values');
   });
 });
 

@@ -55,7 +55,7 @@ import {
   type Speed,
 } from '../core/table';
 
-import { DURATION, EASE, SURFACE, type Hex } from './tokens';
+import { DURATION, EASE, type Hex, type SurfaceTokens } from './tokens';
 
 /** Milliseconds per second. The duration tokens are in one and pacing is in the other. */
 const MS_PER_SECOND = 1000;
@@ -115,10 +115,17 @@ export const WIN_PULSE_CYCLES = 2;
  *
  * QUALITY-BAR section 4: "saturated red is not used in any flashing or pulsing
  * effect". WCAG's red flash threshold defines saturated red as a red fraction of
- * `R / (R + G + B)` at or above 0.8; this token measures 0.41, and the unit
- * suite computes that fraction from the hex rather than trusting the sentence.
+ * `R / (R + G + B)` at or above 0.8; the base rail measures 0.41 and the
+ * high-contrast rail 0.47, and the unit suite computes both fractions from the
+ * hexes rather than trusting this sentence.
+ *
+ * A function of the frame's selected set rather than a constant, because
+ * `BJ-22` gave the play surface a second set and a pulse drawn in the other
+ * set's gold would be the one ink on the felt that ignored the selection.
  */
-export const WIN_PULSE_INK: Hex = SURFACE.rail;
+export function winPulseInk(tokens: SurfaceTokens): Hex {
+  return tokens.rail;
+}
 
 // ---------------------------------------------------------------------------
 // SPEC 5: all tunable constants in one place, consumed from that place

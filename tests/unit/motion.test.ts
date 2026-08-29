@@ -65,7 +65,7 @@ import {
   SATURATED_RED_FRACTION,
   WIN_PULSE_CYCLES,
   WIN_PULSE_HEADROOM,
-  WIN_PULSE_INK,
+  winPulseInk,
   WIN_PULSE_PERIOD,
   arcTravel,
   countUp,
@@ -88,7 +88,12 @@ import {
   type PlaySurface,
   type SceneState,
 } from '../../src/render/scene';
-import { EASE } from '../../src/render/tokens';
+import {
+  EASE,
+  HIGH_CONTRAST_SURFACE,
+  STANDARD_PALETTE,
+  SURFACE,
+} from '../../src/render/tokens';
 import {
   REDUCED_MOTION_QUERY,
   createMotionPreference,
@@ -803,6 +808,7 @@ function scene(overrides: Partial<SceneState>): SceneState {
     hands: [],
     pendingWager: 0,
     motion: motionOf(false),
+    palette: STANDARD_PALETTE,
     ...overrides,
   };
 }
@@ -814,16 +820,42 @@ describe('settled play-surface rendering', () => {
   it('keeps a separated baked felt off the animated canvas', () => {
     const foreground = createStyleFreeCanvas();
     const background = createStyleFreeCanvas();
+    // The contract from `BJ-22`'s fix round: `offscreen` makes the grain
+    // squares, the felt layer hands out a canvas per bake, and the layer is
+    // told which one to show. Nothing is ever copied onto a shared canvas.
+    const offscreens: ReturnType<typeof createStyleFreeCanvas>[] = [];
+    let shown: unknown = null;
     const surface = createPlaySurface({
       canvas: foreground.canvas,
-      offscreen: () => background.canvas,
+      offscreen: () => {
+        const made = createStyleFreeCanvas();
+        offscreens.push(made);
+        return made.canvas;
+      },
+      feltLayer: {
+        acquire: () => background.canvas,
+        show: (canvas) => {
+          shown = canvas;
+        },
+        release: () => undefined,
+      },
       sizing: { width: 800, height: 450, dpr: 1 },
-      separateFelt: true,
     });
 
     surface.render(scene({ pendingWager: FLIGHT_WAGER }), 0);
 
-    expect(background.recording.calls('fill').length, 'the felt was not baked').toBeGreaterThan(0);
+    // The felt was baked straight onto the layer's canvas, print and all.
+    expect(background.recording.calls('fillText').length, 'the felt was not baked').toBe(4);
+    expect(background.recording.calls('fill').length).toBeGreaterThan(0);
+    expect(shown, 'the layer was never told which canvas to show').toBe(background.canvas);
+
+    // The offscreens are the two grain squares and nothing else: no felt was
+    // baked into one, so nothing had to be copied out of one.
+    expect(offscreens).toHaveLength(2);
+    for (const made of offscreens) {
+      expect(made.recording.calls('fillText')).toHaveLength(0);
+    }
+
     expect(foreground.recording.calls('drawImage')).toHaveLength(0);
     expect(foreground.recording.calls('clearRect')).toHaveLength(1);
     expect(foreground.recording.calls('fill').length, 'the moving scene did not draw').toBeGreaterThan(0);
@@ -1195,7 +1227,9 @@ describe('E6 armour: the win pulse stays under the flash ceiling', () => {
     // QUALITY-BAR section 4: saturated red is not used in any flashing or
     // pulsing effect. WCAG's own definition of saturated red is a red fraction
     // at or above 0.8, so the sentence is a measurement rather than a promise.
-    expect(redFraction(WIN_PULSE_INK)).toBeLessThan(SATURATED_RED_FRACTION);
+    for (const set of [SURFACE, HIGH_CONTRAST_SURFACE]) {
+      expect(redFraction(winPulseInk(set))).toBeLessThan(SATURATED_RED_FRACTION);
+    }
     expect(redFraction('#ff0000')).toBeGreaterThanOrEqual(SATURATED_RED_FRACTION);
     expect(redFraction('#000000')).toBe(0);
   });
