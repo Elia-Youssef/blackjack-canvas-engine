@@ -23,7 +23,10 @@
  * the run fails if those differ. Otherwise "identical source tree" would be an
  * assumption rather than a finding.
  *
- * Writes artifacts/reports/build.md at the repository root. Exits 1 on any
+ * Writes artifacts/reports/build.md at the repository root, through the same
+ * writer every `report/*` script uses, so the workspace's mirror of the
+ * evidence directory carries this report at the same age as the other six
+ * rather than at whatever age it was last copied by hand. Exits 1 on any
  * mismatch, so it gates the merge.
  */
 
@@ -35,12 +38,12 @@ import {
   rmSync,
   statSync,
   utimesSync,
-  writeFileSync,
 } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { compare, fingerprint, hashTree } from './build-fingerprint.mjs';
+import { writeReport } from './report/support.mjs';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const REPORT = join(PROJECT_ROOT, 'artifacts', 'reports', 'build.md');
@@ -253,8 +256,7 @@ function report(result) {
   lines.push('```');
   lines.push('');
 
-  mkdirSync(dirname(REPORT), { recursive: true });
-  writeFileSync(REPORT, lines.join('\n'), { encoding: 'utf8' });
+  writeReport('build.md', lines);
 }
 
 function main() {

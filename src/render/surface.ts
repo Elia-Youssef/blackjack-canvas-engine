@@ -31,7 +31,7 @@
  * context. A real element satisfies the type without a cast.
  */
 
-import { BORDER, SPACE, SURFACE } from './tokens';
+import { BORDER, SPACE, type SurfaceTokens } from './tokens';
 
 /**
  * The part of a canvas element this module needs. `HTMLCanvasElement` and
@@ -212,7 +212,7 @@ export function createSurface(canvas: SurfaceCanvas, sizing: SurfaceSizing): Sur
  * and this baseline is what makes forgetting one a visible defect on this
  * frame rather than a dependency on the previous one.
  */
-export function beginShapePass(ctx: CanvasRenderingContext2D): void {
+export function beginShapePass(ctx: CanvasRenderingContext2D, tokens: SurfaceTokens): void {
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
@@ -220,19 +220,19 @@ export function beginShapePass(ctx: CanvasRenderingContext2D): void {
   ctx.lineWidth = BORDER.hair;
   ctx.lineJoin = 'round';
   ctx.lineCap = 'round';
-  ctx.fillStyle = SURFACE.rankBlack;
-  ctx.strokeStyle = SURFACE.rankBlack;
+  ctx.fillStyle = tokens.rankBlack;
+  ctx.strokeStyle = tokens.rankBlack;
 }
 
 /** The explicit state the text pass starts from. See `beginShapePass`. */
-export function beginTextPass(ctx: CanvasRenderingContext2D): void {
+export function beginTextPass(ctx: CanvasRenderingContext2D, tokens: SurfaceTokens): void {
   ctx.save();
   ctx.globalAlpha = 1;
   ctx.globalCompositeOperation = 'source-over';
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.font = font(SPACE[4], SANS_FAMILY);
-  ctx.fillStyle = SURFACE.print;
+  ctx.fillStyle = tokens.print;
 }
 
 /** Ends the pass `beginShapePass` or `beginTextPass` opened. */
@@ -245,17 +245,21 @@ export function endPass(ctx: CanvasRenderingContext2D): void {
  * order the layers were given. DESIGN 5's two ordered passes, each beginning
  * and ending exactly once. There is no other frame path.
  */
-export function renderFrame(surface: Surface, layers: readonly ScenePasses[]): void {
+export function renderFrame(
+  surface: Surface,
+  layers: readonly ScenePasses[],
+  tokens: SurfaceTokens,
+): void {
   const { ctx } = surface;
   surface.clear();
 
-  beginShapePass(ctx);
+  beginShapePass(ctx, tokens);
   for (const layer of layers) {
     layer.drawShapes(ctx);
   }
   endPass(ctx);
 
-  beginTextPass(ctx);
+  beginTextPass(ctx, tokens);
   for (const layer of layers) {
     layer.drawText(ctx);
   }

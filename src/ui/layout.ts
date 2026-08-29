@@ -47,6 +47,9 @@
  * in the document title, which item `G6` also grades.
  */
 
+import type { FeltLayerHost } from '../render/scene';
+import type { SurfaceCanvas } from '../render/surface';
+
 import { el } from './dom';
 
 /** The shell's regions, so the chrome can fill them without querying the DOM. */
@@ -138,4 +141,72 @@ export function createShell(): Shell {
   });
 
   return { root, heading, top, body, stage, feltCanvas, canvas, controls };
+}
+
+/**
+ * The shell's felt stack, as the renderer's `FeltLayerHost`. `BJ-22`'s fix
+ * round.
+ *
+ * **One canvas per baked felt, and the shown one is the one without `hidden`.**
+ * `src/render/scene.ts` caches its bakes so a phase cycle that changes the
+ * surface size 27 times bakes three felts rather than 27, and the measurement
+ * behind this shape is in `FeltLayerHost`'s own comment: copying a baked
+ * offscreen onto one shown canvas costs 21 to 32 ms the first time each source
+ * is copied, against 1 to 2 ms to bake straight onto a canvas the page is
+ * showing. So a cache hit here is a swap and never a draw.
+ *
+ * Every canvas carries the shell's own class and `aria-hidden`, sits absolutely
+ * inside the stack, and is inserted before the animated scene so source order
+ * keeps the felt behind it. Only one is ever without `hidden`, which is what
+ * `canvas.bj-surface-felt:not([hidden])` selects.
+ */
+export function createFeltLayer(shell: Shell): FeltLayerHost {
+  const stack = shell.canvas.parentElement;
+  if (stack === null) {
+    throw new Error('layout: the play surface has no stack to put a felt in');
+  }
+  // The shell's own felt canvas is the first one the layer hands out, so a
+  // session that never changes size ends with exactly the stack `createShell`
+  // built.
+  let spare: HTMLCanvasElement | null = shell.feltCanvas;
+  const showing = new Set<HTMLCanvasElement>();
+
+  const isCanvas = (canvas: SurfaceCanvas): HTMLCanvasElement => {
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error('layout: the felt layer was handed a canvas it did not make');
+    }
+    return canvas;
+  };
+
+  return {
+    acquire(): SurfaceCanvas {
+      if (spare !== null) {
+        const first = spare;
+        spare = null;
+        return first;
+      }
+      const made = el('canvas', {
+        className: 'bj-surface-felt',
+        attributes: { 'aria-hidden': 'true', hidden: '' },
+      });
+      stack.insertBefore(made, shell.canvas);
+      return made;
+    },
+    show(canvas: SurfaceCanvas): void {
+      const shown = isCanvas(canvas);
+      for (const other of showing) {
+        if (other !== shown) {
+          other.hidden = true;
+        }
+      }
+      showing.clear();
+      shown.hidden = false;
+      showing.add(shown);
+    },
+    release(canvas: SurfaceCanvas): void {
+      const gone = isCanvas(canvas);
+      showing.delete(gone);
+      gone.remove();
+    },
+  };
 }

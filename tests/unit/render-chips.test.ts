@@ -133,7 +133,7 @@ describe('E4: the drawing', () => {
 
   it('fills each chip in its own denominational colour, bottom up', () => {
     const recording = createRecordingContext();
-    drawChipStackShapes(recording.ctx, stack);
+    drawChipStackShapes(recording.ctx, stack, CHIP_RING);
     expect(recording.entries.length).toBeGreaterThan(0);
 
     const chipFills = recording.sets('fillStyle').map((set) => set.value);
@@ -142,7 +142,7 @@ describe('E4: the drawing', () => {
 
   it('rings every chip in the edge token, dashes included', () => {
     const recording = createRecordingContext();
-    drawChipStackShapes(recording.ctx, stack);
+    drawChipStackShapes(recording.ctx, stack, CHIP_RING);
 
     const strokes = recording.calls('stroke');
     // Per chip: one solid ring plus the edge dashes.
@@ -158,7 +158,7 @@ describe('E4: the drawing', () => {
 
   it('starts the second chip\'s dashes a turn later than the first', () => {
     const recording = createRecordingContext();
-    drawChipStackShapes(recording.ctx, stack);
+    drawChipStackShapes(recording.ctx, stack, CHIP_RING);
 
     // Dash arcs are the ones at the dash radius.
     const dashStarts = recording
@@ -188,7 +188,7 @@ describe('E4: the drawing', () => {
 
   it('draws nothing at all for an empty stack', () => {
     const shapes = createRecordingContext();
-    drawChipStackShapes(shapes.ctx, { ...stack, chips: [] });
+    drawChipStackShapes(shapes.ctx, { ...stack, chips: [] }, CHIP_RING);
     expect(shapes.entries).toHaveLength(0);
 
     const text = createRecordingContext();

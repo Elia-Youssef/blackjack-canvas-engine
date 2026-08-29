@@ -44,6 +44,12 @@ import {
   type LayoutProbe,
   type MotionProbe,
 } from '../../../src/main';
+import {
+  CHIP_DENOMINATIONS,
+  CHIP_FILL,
+  CHIP_GLYPH,
+  surfacePalette,
+} from '../../../src/render/tokens';
 
 /**
  * The options a spec may pass across the Playwright boundary.
@@ -132,6 +138,17 @@ export interface GameHarness {
    * nothing observable, so the counts are the offers. Read-only.
    */
   audio(): AudioProbe;
+  /**
+   * The play-surface set the renderer is drawing with, as hexes. `BJ-22`.
+   *
+   * Item `G2`'s audit measures rendered pixels against the colours the canvas
+   * was told to paint, and under forced colors it cannot ask the stylesheet:
+   * the chrome's custom properties are re-pointed at system colours, so
+   * `getComputedStyle` answers `Canvas` and `ButtonText` while the canvas is
+   * drawing SPEC 16's forced-colors table. This reports what the renderer
+   * selected, which is the only honest source for that question.
+   */
+  surfaceTokens(): SurfaceTokenReport;
   /** Begin sampling the wallet every frame, until SPEC 10's round result. */
   watch(): void;
   /** Everything `watch` has sampled, oldest first. */
@@ -142,6 +159,23 @@ export interface GameHarness {
   stopTrace(): void;
   /** Everything `trace` has sampled, oldest first. */
   motionTrace(): readonly MotionSample[];
+}
+
+/** Every colour the play surface paints as a flat fill, plus the felt set. */
+export interface SurfaceTokenReport {
+  readonly name: string;
+  readonly flatFelt: boolean;
+  readonly cardMargin: string;
+  readonly cardFace: string;
+  readonly cardBack: string;
+  readonly rankBlack: string;
+  readonly rankRed: string;
+  readonly rail: string;
+  readonly print: string;
+  readonly chipRing: string;
+  readonly chipGlyph: string;
+  readonly felts: readonly string[];
+  readonly chipFills: readonly string[];
 }
 
 let game: Game | null = null;
@@ -182,6 +216,29 @@ const harness: GameHarness = {
   layout: () => running().layout(),
   accessibility: () => running().accessibility(),
   audio: () => running().audio(),
+
+  surfaceTokens(): SurfaceTokenReport {
+    // The selection is asked for the same way the frame asks for it, so the
+    // report is the set the last frame drew with rather than a guess from the
+    // media query. `CHIP_FILL` and `CHIP_GLYPH` are the same in both sets by
+    // SPEC 16: identity is the one thing a high-contrast set must not flatten.
+    const selected = surfacePalette(running().accessibility().forcedColors);
+    return {
+      name: selected.name,
+      flatFelt: selected.flatFelt,
+      cardMargin: selected.surface.cardMargin,
+      cardFace: selected.surface.cardFace,
+      cardBack: selected.surface.cardBack,
+      rankBlack: selected.surface.rankBlack,
+      rankRed: selected.surface.rankRed,
+      rail: selected.surface.rail,
+      print: selected.surface.print,
+      chipRing: selected.chipRing,
+      chipGlyph: CHIP_GLYPH,
+      felts: [selected.surface.feltBronze, selected.surface.feltSilver, selected.surface.feltGold],
+      chipFills: CHIP_DENOMINATIONS.map((denomination) => CHIP_FILL[denomination]),
+    };
+  },
 
   trace(): void {
     traced.length = 0;

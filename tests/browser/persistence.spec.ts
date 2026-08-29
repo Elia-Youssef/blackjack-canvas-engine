@@ -54,8 +54,23 @@ const WAGER = 50;
  */
 const GOLD_WAGER = 100;
 
-/** What a surrendered `WAGER` leaves: the starting bankroll minus half of it. */
-const AFTER_SURRENDER = 975;
+/** What a surrendered `WAGER` costs: half of it, per SPEC 4.8. */
+const SURRENDER_COST = WAGER / 2;
+
+/**
+ * How many rounds the surrender search may play before giving up.
+ *
+ * **The shipped page seeds from the wall clock, so the round is not chosen.**
+ * A player natural settles the round before any decision is offered, and this
+ * file's own second test already says so: "The shipped boot seeds from the wall
+ * clock, so a natural can legitimately skip straight to the result." The first
+ * test did not carry the same guard and duly failed one full-suite run in
+ * `BJ-22` on WebKit, reading 1075 where it wanted 975: a natural, paid 3 to 2.
+ * A natural is about one deal in twenty, so six rounds leaves a failure rate
+ * near one in sixty million, and the round that is graded is still a round the
+ * shipped page dealt itself.
+ */
+const SURRENDER_ATTEMPTS = 6;
 
 /** The unlock mark the harness brings, which is Gold's and Silver's key. */
 const BEST_BALANCE = 10_000;
@@ -118,15 +133,54 @@ test.describe('I4: the chip balance is not persisted', () => {
   test('a fresh launch starts at 1000 with no wager and no hands, after a played round', async ({
     page,
   }) => {
+    // The search below plays whole rounds on the shipped page, and a paced round
+    // is seconds: six of them do not fit the default budget, and the budget is
+    // what would fail rather than the assertion.
+    test.slow();
     await atShippedBetting(page);
-    await chip(page, WAGER).click();
-    await control(page, 'deal').click();
-    await surrenderToResult(page);
+
+    // Play until one round is actually surrendered. A natural pays and ends the
+    // round with no decision offered, which is the deal's business and not this
+    // test's; every attempt is a real round on the shipped page.
+    let surrendered = false;
+    let before = 0;
+    let after = 0;
+    for (let attempt = 0; attempt < SURRENDER_ATTEMPTS && !surrendered; attempt += 1) {
+      before = await readoutNumber(page, 'chips');
+      await chip(page, WAGER).click();
+      await control(page, 'deal').click();
+      await surrenderToResult(page);
+      // **The balance readout counts up, so it has to be read still.** A single
+      // read at the round result catches the number part way there: instrumented
+      // over six rounds it returned 969, 973, 948, 900, 869 and 845 for
+      // balances that settle on multiples of five, and each neighbouring pair
+      // differs by three or four, which is a tween being sampled rather than a
+      // balance. The original form of this test polled for one exact number,
+      // which waited the tween out; this waits for the number to stop moving,
+      // because which number it stops on is what the loop is deciding.
+      after = before;
+      let stable = 0;
+      for (let tick = 0; tick < 40 && stable < 3; tick += 1) {
+        await settle(page);
+        const now = await readoutNumber(page, 'chips');
+        stable = now === after ? stable + 1 : 0;
+        after = now;
+        if (stable < 3) {
+          await page.waitForTimeout(DRIVE_PAUSE);
+        }
+      }
+      surrendered = after === before - SURRENDER_COST;
+      if (!surrendered) {
+        await control(page, 'next-hand').click();
+        await waitForPhase(page, 'betting');
+      }
+    }
 
     // The balance moved: the round really was played and really did cost half
     // a wager, which is what makes the number after the reload an assertion
     // about persistence rather than about a page that never changed.
-    await expect.poll(async () => readoutNumber(page, 'chips')).toBe(AFTER_SURRENDER);
+    expect(surrendered, 'no round in six was offered a surrender').toBe(true);
+    expect(after, 'the surrendered round did not cost half a wager').toBe(before - SURRENDER_COST);
 
     await page.reload();
     await expect(shell(page)).toBeVisible();

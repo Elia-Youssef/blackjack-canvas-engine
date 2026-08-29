@@ -16,7 +16,15 @@ import { INTENT_KINDS } from '../../src/core/table';
 import type { Rank, Suit } from '../../src/core/cards';
 import { STARTING_CHIPS, TABLES, canEnter, isUnlocked } from '../../src/core/wallet';
 import type { FeltSpec } from '../../src/render/felt';
-import { SCENE_GEOMETRY, handCentre, handLayout, needsRebake } from '../../src/render/scene';
+import {
+  SCENE_GEOMETRY,
+  fanFor,
+  handCentre,
+  handLayout,
+  needsRebake,
+  type Fan,
+} from '../../src/render/scene';
+import { HIGH_CONTRAST_PALETTE, STANDARD_PALETTE } from '../../src/render/tokens';
 import { tableRefusal } from '../../src/ui/availability';
 import { createFrameLoop } from '../../src/ui/loop';
 import { OVERLAY_IDS, OVERLAY_TITLES } from '../../src/ui/state';
@@ -205,20 +213,30 @@ const BASE: FeltSpec = {
   width: 800,
   height: 450,
   dpr: 1,
+  palette: STANDARD_PALETTE,
 };
+
+/** A fan at a given card width, at the natural pitch. `BJ-22`, item `E8`. */
+function naturalFan(cardWidth: number, count: number): Fan {
+  return fanFor(count, Number.POSITIVE_INFINITY, cardWidth, cardWidth);
+}
 
 describe('the felt is rebaked on drift and on nothing else', () => {
   it('does not rebake when nothing moved', () => {
     expect(needsRebake(BASE, { ...BASE })).toBe(false);
   });
 
-  it('rebakes when any of the six fields moves', () => {
+  it('rebakes when any of the seven fields moves', () => {
     expect(needsRebake(BASE, { ...BASE, felt: 'silver' })).toBe(true);
     expect(needsRebake(BASE, { ...BASE, width: 801 })).toBe(true);
     expect(needsRebake(BASE, { ...BASE, height: 451 })).toBe(true);
     expect(needsRebake(BASE, { ...BASE, dpr: 2 })).toBe(true);
     expect(needsRebake(BASE, { ...BASE, limits: { minimum: 50, maximum: 100 } })).toBe(true);
     expect(needsRebake(BASE, { ...BASE, limits: { minimum: 10, maximum: 500 } })).toBe(true);
+    // `BJ-22`, item `G9`: the play-surface set is part of the bake. A
+    // forced-colors frame that kept the standard bake would blit a textured
+    // standard felt under high-contrast cards.
+    expect(needsRebake(BASE, { ...BASE, palette: HIGH_CONTRAST_PALETTE })).toBe(true);
   });
 });
 
@@ -230,7 +248,7 @@ describe('a hand is laid out centred, and grows without moving off centre', () =
   it('centres a hand on the point it is given', () => {
     const width = 96;
     for (const cards of [two, four]) {
-      const laid = handLayout(cards, 400, 100, width, cards.length);
+      const laid = handLayout(cards, 400, 100, naturalFan(width, cards.length), cards.length);
       const first = laid[0];
       const last = laid[laid.length - 1];
       expect(first).toBeDefined();
@@ -242,7 +260,7 @@ describe('a hand is laid out centred, and grows without moving off centre', () =
   });
 
   it('overlaps the cards by the geometry step and no more', () => {
-    const laid = handLayout(four, 400, 100, 100, 4);
+    const laid = handLayout(four, 400, 100, naturalFan(100, 4), 4);
     const step = 100 * SCENE_GEOMETRY.cardStep;
     for (let index = 1; index < laid.length; index += 1) {
       expect((laid[index]?.x ?? 0) - (laid[index - 1]?.x ?? 0)).toBeCloseTo(step, 6);
@@ -252,7 +270,7 @@ describe('a hand is laid out centred, and grows without moving off centre', () =
   it('draws exactly the face-up cards face up, and the rest face down', () => {
     // SPEC 4.3: the dealer's hole card is the only face-down card in the game,
     // and the machine publishes a count rather than the card.
-    const laid = handLayout(two, 400, 100, 96, 1);
+    const laid = handLayout(two, 400, 100, naturalFan(96, 2), 1);
     expect(laid.map((spec) => spec.faceUp)).toEqual([true, false]);
   });
 

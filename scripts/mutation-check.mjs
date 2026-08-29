@@ -11,7 +11,8 @@
  * and `D6` at BJ-17, `G1`, `G3`, `G4`, `G5`, `G6`, `G8`, `G9` and `G10`
  * at BJ-18, `K1`, `K2`, `K3` and `K5` at BJ-19, `C1`, `C3`, `C4`, `C6`,
  * `C7`, `E2`, `I4`, `I5`, `J4` and `J7` at BJ-20, and `M2`, `M4`, `A5`, `L1`,
- * `L2`, `L3` and `L5` at BJ-21.
+ * `L2`, `L3` and `L5` at BJ-21, and `E8`, `G9`, `G2`, `D3`, `H1` to `H5` and
+ * `H7` at BJ-22.
  *
  * The `BJ-21` block breaks the resilience, locale and compliance layer. Its
  * edits hand the frame to the loop unwrapped and take each of the boundary's
@@ -345,6 +346,48 @@ const DATA_RESET = browserGate('data-reset.spec.ts');
 const ERROR_BOUNDARY = browserGate('error-boundary.spec.ts');
 const UNSUPPORTED = browserGate('unsupported.spec.ts');
 const NO_THIRD_PARTY = browserGate('no-third-party.spec.ts');
+
+// BJ-22's. The fan floor and the palette selection are properties of the shipped
+// page, so they take browser gates; the visual baselines are their own spec.
+const FAN_FLOOR = browserGate('fan-floor.spec.ts');
+const VISUAL = browserGate('visual.spec.ts');
+
+/**
+ * One measurement report, as a gate. `BJ-22`.
+ *
+ * A report script measures the **built** `dist/`, so `scripts/report/gate.mjs`
+ * builds before it runs: a mutation to `src/` that was measured against the
+ * previous build would be reported undetected, which is the stale-server defect
+ * `BJ-14` recorded wearing a different hat.
+ *
+ * **Only the reports whose runs are short and whose gates are green.** The
+ * harness refuses to read anything while a baseline is red, and this build's
+ * `report:perf` is red: `artifacts/reports/perf.md` carries the measurement, the
+ * diagnosis and the control. So `H1`, `H4` and `H7` take their entries to `UNIT`
+ * through `tests/unit/report-gates.test.ts`, and so does `H5`, whose gate is
+ * thirty minutes of play and would add an hour to the sweep per entry. That file
+ * pins every threshold to the design contract and every no-sample guard to its
+ * own words, so a loosened ceiling or a blinded sampler is still caught in
+ * milliseconds; what it cannot show is the script's own end to end behaviour,
+ * and the four entries below that do run end to end show that for the family.
+ */
+function reportGate(name) {
+  // `report:lighthouse` needs its tool present. The npm script installs it
+  // pinned and unrecorded, for the reason `scripts/report/lighthouse.mjs`
+  // gives; this harness runs the report directly, so a sweep on a checkout that
+  // has never run that script will report its two entries undetected rather
+  // than red. Run `npm run report:lighthouse` once before a sweep.
+  return {
+    label: `npm run report:${name}`,
+    bin: join(PROJECT_ROOT, 'scripts', 'report', 'gate.mjs'),
+    argv: [name],
+  };
+}
+
+const BUNDLE_SIZE = reportGate('bundle-size');
+const TOUCH_TARGETS = reportGate('touch-targets');
+const CONTRAST = reportGate('contrast');
+const LIGHTHOUSE = reportGate('lighthouse');
 
 /**
  * Mutations that edit an existing file.
@@ -4153,11 +4196,11 @@ const EDITS = [
     name: 'the far corner index is no longer printed',
     file: 'src/render/card.ts',
     find:
-      '  drawCornerRank(ctx, spec);\n' +
+      '  drawCornerRank(ctx, spec, tokens);\n' +
       '  rotatedAboutCentre(ctx, spec, () => {\n' +
-      '    drawCornerRank(ctx, spec);\n' +
+      '    drawCornerRank(ctx, spec, tokens);\n' +
       '  });',
-    replace: '  drawCornerRank(ctx, spec);',
+    replace: '  drawCornerRank(ctx, spec, tokens);',
     detectedBy: UNIT,
   },
   {
@@ -4174,8 +4217,8 @@ const EDITS = [
     item: 'E3',
     name: 'hearts and diamonds lose the red ink',
     file: 'src/render/card.ts',
-    find: "  return suit === 'hearts' || suit === 'diamonds' ? SURFACE.rankRed : SURFACE.rankBlack;",
-    replace: '  return SURFACE.rankBlack;',
+    find: "  return suit === 'hearts' || suit === 'diamonds' ? tokens.rankRed : tokens.rankBlack;",
+    replace: '  return tokens.rankBlack;',
     detectedBy: UNIT,
   },
   {
@@ -4187,8 +4230,8 @@ const EDITS = [
       '    return;\n' +
       '  }\n' +
       '\n' +
-      '  drawCornerRank(ctx, spec);',
-    replace: '  drawCornerRank(ctx, spec);',
+      '  drawCornerRank(ctx, spec, tokens);',
+    replace: '  drawCornerRank(ctx, spec, tokens);',
     detectedBy: UNIT,
   },
   {
@@ -4243,8 +4286,8 @@ const EDITS = [
     item: 'E5',
     name: 'the print ink swaps to the rail token',
     file: 'src/render/felt.ts',
-    find: '  ctx.fillStyle = SURFACE.print;',
-    replace: '  ctx.fillStyle = SURFACE.rail;',
+    find: '  ctx.fillStyle = spec.palette.surface.print;',
+    replace: '  ctx.fillStyle = spec.palette.surface.rail;',
     detectedBy: UNIT,
   },
   {
@@ -4294,25 +4337,25 @@ const EDITS = [
     name: 'the text pass runs before the shape pass',
     file: 'src/render/surface.ts',
     find:
-      '  beginShapePass(ctx);\n' +
+      '  beginShapePass(ctx, tokens);\n' +
       '  for (const layer of layers) {\n' +
       '    layer.drawShapes(ctx);\n' +
       '  }\n' +
       '  endPass(ctx);\n' +
       '\n' +
-      '  beginTextPass(ctx);\n' +
+      '  beginTextPass(ctx, tokens);\n' +
       '  for (const layer of layers) {\n' +
       '    layer.drawText(ctx);\n' +
       '  }\n' +
       '  endPass(ctx);',
     replace:
-      '  beginTextPass(ctx);\n' +
+      '  beginTextPass(ctx, tokens);\n' +
       '  for (const layer of layers) {\n' +
       '    layer.drawText(ctx);\n' +
       '  }\n' +
       '  endPass(ctx);\n' +
       '\n' +
-      '  beginShapePass(ctx);\n' +
+      '  beginShapePass(ctx, tokens);\n' +
       '  for (const layer of layers) {\n' +
       '    layer.drawShapes(ctx);\n' +
       '  }\n' +
@@ -4331,8 +4374,10 @@ const EDITS = [
     item: 'E5',
     name: 'the felt loses its vignette and bakes flat',
     file: 'src/render/felt.ts',
-    find: '  drawGround(ctx, frame, felt);\n  drawVignette(ctx, spec, frame, felt);',
-    replace: '  drawGround(ctx, frame, felt);',
+    // `BJ-22` put the vignette and the grain behind the flat-felt switch the
+    // high-contrast set carries, so the two lines moved in one indent level.
+    find: '    drawVignette(ctx, spec, frame, felt);\n    drawGrain(ctx, spec, frame, grain);',
+    replace: '    drawGrain(ctx, spec, frame, grain);',
     detectedBy: UNIT,
   },
   {
@@ -5625,8 +5670,11 @@ const EDITS = [
     item: 'G9',
     name: 'the renderer palette selection stops reading the flag at all',
     file: 'src/render/tokens.ts',
-    find: '  if (!forcedColors) {',
-    replace: '  if (!forcedColors || true) {',
+    // `BJ-22` gave SPEC 16 a forced-colors table and the selector became a
+    // ternary over two frozen constants, so this entry moved with it. It breaks
+    // the same thing it broke at `BJ-18`: the flag stops deciding.
+    find: '  return forcedColors ? HIGH_CONTRAST_PALETTE : STANDARD_PALETTE;',
+    replace: '  return STANDARD_PALETTE;',
     detectedBy: UNIT,
   },
   {
@@ -6294,6 +6342,309 @@ const EDITS = [
       '  for (const match of source.matchAll(/\\.(?:join|concat)\\(\\s*([\'"`])([^\'"`]*)\\1\\s*\\)/g)) {',
     replace: '  for (const match of [] as RegExpMatchArray[]) {',
     detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // BJ-22: the card-legibility fan floor, the high-contrast play surface, the
+  // visual baselines and the six measurement reports.
+  //
+  // The fan-floor edits take each of the criterion's own clauses away in turn:
+  // the width floor, the pitch floor, the order the two are applied in, and the
+  // overflow that is reported rather than absorbed. The palette edits stop the
+  // selection reaching the canvas at each of the three places it could be lost,
+  // the selector, the frame and the felt cache. The visual entry moves the
+  // dealer's row by a thousandth of the surface, which is a change no assertion
+  // in the suite reads and every baseline sees. The report entries flip a
+  // threshold and blind a sampler on each of the four gates that are short
+  // enough to run end to end, and `tests/unit/report-gates.test.ts` carries the
+  // same two shapes for the two that are not. The fix round added five more:
+  // three for the cure that made `H4`'s worst task a fifteenth of what the
+  // review measured, one for the guard that makes a perf sample about play, and
+  // one for the stacking rule the part's first visual capture found shipped.
+  // ------------------------------------------------------------------
+  {
+    item: 'E8',
+    name: 'the card width floor is removed, so a card is a fraction of the surface again',
+    file: 'src/render/scene.ts',
+    find: 'export const CARD_WIDTH_FLOOR = 60;',
+    replace: 'export const CARD_WIDTH_FLOOR = 0;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E8',
+    name: 'the same floor removed, read off the shipped page',
+    file: 'src/render/scene.ts',
+    find: '  return Math.max(CARD_WIDTH_FLOOR, surfaceWidth * SCENE_GEOMETRY.cardX);',
+    replace: '  return surfaceWidth * SCENE_GEOMETRY.cardX;',
+    detectedBy: FAN_FLOOR,
+  },
+  {
+    item: 'E8',
+    name: 'the pitch floor stops being the corner-index column and halves',
+    file: 'src/render/scene.ts',
+    find: 'export const FAN_PITCH_FLOOR = 2 * CARD_GEOMETRY.indexX;',
+    replace: 'export const FAN_PITCH_FLOOR = CARD_GEOMETRY.indexX;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E8',
+    name: 'the fan stops compressing, so a card shrinks before the pitch does',
+    file: 'src/render/scene.ts',
+    find: '    pitchRatio = Math.max(FAN_PITCH_FLOOR, (room - cardWidth) / (span * cardWidth));',
+    replace: '    pitchRatio = SCENE_GEOMETRY.cardStep;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E8',
+    name: 'the band is allowed through the width floor instead of overflowing',
+    file: 'src/render/scene.ts',
+    find: '  return Math.max(CARD_WIDTH_FLOOR, Math.min(natural, width));',
+    replace: '  return Math.min(natural, width);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E8',
+    name: 'the overflow past both floors is absorbed rather than reported',
+    file: 'src/render/scene.ts',
+    find: '  const overflow = excess > OVERFLOW_TOLERANCE ? excess : 0;',
+    replace: '  const overflow = 0;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E8',
+    name: "the player's row stops clearing the dealer's, so a floored card collides",
+    file: 'src/render/scene.ts',
+    find: '        dealerRowTop + cardHeight(cardWidth),',
+    replace: '        0,',
+    detectedBy: FAN_FLOOR,
+  },
+  {
+    item: 'E8',
+    name: "the dealer's row moves by a thousandth of the surface, which only a baseline sees",
+    file: 'src/render/scene.ts',
+    find: '  dealerY: 0.08,',
+    replace: '  dealerY: 0.081,',
+    detectedBy: VISUAL,
+  },
+  {
+    item: 'G9',
+    name: 'the frame hands the scene the standard set whatever it selected',
+    file: 'src/main.ts',
+    find: '    surface.render(sceneState(readout, motion, palette), dt);',
+    replace: '    surface.render(sceneState(readout, motion, surfacePalette(false)), dt);',
+    detectedBy: FORCED_COLORS,
+  },
+  {
+    item: 'G9',
+    name: 'the felt keeps its gradient and grain under the high-contrast set',
+    file: 'src/render/felt.ts',
+    find: '  if (!spec.palette.flatFelt) {',
+    replace: '  if (spec.palette.flatFelt || true) {',
+    detectedBy: FORCED_COLORS,
+  },
+  {
+    item: 'G9',
+    name: 'the baked felt stops rebaking when the play-surface set changes',
+    file: 'src/render/scene.ts',
+    find: '    current.palette !== next.palette',
+    replace: '    false',
+    detectedBy: FORCED_COLORS,
+  },
+  {
+    item: 'H2',
+    name: 'the JavaScript ceiling is dropped below the bundle',
+    file: 'scripts/report/bundle-size.mjs',
+    find: 'const JS_CEILING = 40 * KB;',
+    replace: 'const JS_CEILING = 1 * KB;',
+    detectedBy: BUNDLE_SIZE,
+  },
+  {
+    item: 'H2',
+    name: 'the file walk finds nothing, so the report measures an empty bundle',
+    file: 'scripts/report/bundle-size.mjs',
+    find: '  return into;',
+    replace: '  return into.length >= 0 ? [] : into;',
+    detectedBy: BUNDLE_SIZE,
+  },
+  {
+    item: 'D3',
+    name: 'the touch-target floor is dropped to a tenth of what QUALITY-BAR 3 states',
+    file: 'scripts/report/touch-targets.mjs',
+    find: 'const MIN_SIDE = 44;',
+    replace: 'const MIN_SIDE = 4;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'D3',
+    name: 'the volume slider goes back to the two-pixel box BJ-22 found it in',
+    file: 'src/ui/chrome.css',
+    // The declaration is added after the one that is right, where it wins on
+    // order, rather than replacing it.
+    find: '  flex: 1 1 calc(var(--space-8) * 2.5);',
+    replace: '  flex: 1 1 calc(var(--space-8) * 2.5);\n  min-height: var(--focus-ring-width);',
+    detectedBy: TOUCH_TARGETS,
+  },
+  {
+    item: 'D3',
+    name: 'the census stops measuring anything but the first control it finds',
+    file: 'scripts/report/touch-targets.mjs',
+    find: '      kept.push({',
+    replace: '      if (kept.length > 0) { continue; }\n      kept.push({',
+    detectedBy: TOUCH_TARGETS,
+  },
+  {
+    item: 'G2',
+    name: 'the ground stops being the table, so the audit measures an antialiased edge',
+    file: 'scripts/report/pixels.mjs',
+    find: '  const isFelt = (r, g, b) =>',
+    replace: '  const isFelt = (r, g, b) => Boolean(r + g + b) ||',
+    detectedBy: CONTRAST,
+  },
+  {
+    item: 'G2',
+    name: 'the non-text ratio is dropped below every boundary in the palette',
+    file: 'scripts/report/graphics.mjs',
+    find: 'export const NON_TEXT_RATIO = 3;',
+    replace: 'export const NON_TEXT_RATIO = 1.1;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'G2',
+    name: 'the graphics list loses the chip edge ring the criterion names',
+    file: 'scripts/report/graphics.mjs',
+    find: "    id: 'chip-edge-ring-on-felt',",
+    replace: "    id: 'chip-edge-ring-on-the-felt',",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'H3',
+    name: 'the Largest Contentful Paint ceiling is dropped below the measurement',
+    file: 'scripts/report/lighthouse.mjs',
+    find: 'const LCP_MS = 1500;',
+    replace: 'const LCP_MS = 1;',
+    detectedBy: LIGHTHOUSE,
+  },
+  {
+    item: 'H3',
+    name: 'the mobile preset stops being asserted, so a desktop throttle would pass',
+    file: 'scripts/report/lighthouse.mjs',
+    find: 'const EXPECTED_THROTTLE = { rttMs: 150, throughputKbps: 1638.4, cpuSlowdownMultiplier: 4 };',
+    replace: 'const EXPECTED_THROTTLE = { rttMs: 40, throughputKbps: 10240, cpuSlowdownMultiplier: 1 };',
+    detectedBy: LIGHTHOUSE,
+  },
+  {
+    item: 'H1',
+    name: 'the frame-time ceiling is raised past a dropped frame',
+    file: 'scripts/report/perf.mjs',
+    find: 'const FRAME_P95 = 16.7;',
+    replace: 'const FRAME_P95 = 1670;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'H4',
+    name: 'the long-task ceiling is raised past every hitch this game can produce',
+    file: 'scripts/report/perf.mjs',
+    find: 'const LONG_TASK = 50;',
+    replace: 'const LONG_TASK = 5000;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'H4',
+    name: 'the long-task observer stops being required to have attached',
+    file: 'scripts/report/perf.mjs',
+    find: "    breaches.push('the long-task observer never attached, so H4 measured nothing');",
+    replace: '    breaches.push(...[]);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'H7',
+    name: 'the app-work ceiling is raised past a whole frame of work',
+    file: 'scripts/report/perf.mjs',
+    find: 'const APP_P95 = 8;',
+    replace: 'const APP_P95 = 800;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'H5',
+    name: 'the retained-heap ceiling is raised past any leak a soak could find',
+    file: 'scripts/report/memory.mjs',
+    find: 'const GROWTH_CEILING = 2 * 1024 * 1024;',
+    replace: 'const GROWTH_CEILING = 2000 * 1024 * 1024;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'H5',
+    name: 'a shortened soak stops reporting itself as one',
+    file: 'scripts/report/memory.mjs',
+    find: '  if (shortened) {',
+    replace: '  if (shortened && false) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'H5',
+    name: 'the timer census stops being shown that it can count',
+    file: 'scripts/report/memory.mjs',
+    find: "    breaches.push('the timer census did not follow a timer it was shown, so it counts nothing');",
+    replace: '    breaches.push(...[]);',
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // BJ-22's fix round. The perf cure, the guard that makes the perf report
+  // about play, and the stacking rule the first visual capture found.
+  //
+  // The first two break the cache the cure is: one blinds the lookup so every
+  // frame bakes again, the other lets the felt be baked and never shown. The
+  // third moves the grain tile off the size its texture was measured at. The
+  // fourth takes away the guard that a perf sample was play at all, which is
+  // the failure the review produced by neutering the driver: four of five rows
+  // green with zero rounds dealt. The fifth is the shipped defect the part
+  // found and fixed, which had no entry until the review asked for one.
+  // ------------------------------------------------------------------
+  {
+    item: 'H4',
+    name: 'the felt cache is blinded, so every size change bakes again',
+    file: 'src/render/scene.ts',
+    find: '    const found = felts.find((entry) => !needsRebake(entry.spec, wanted));',
+    replace: '    const found = felts.find(() => false);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'H4',
+    name: 'the baked felt is never shown, so the layer keeps whatever it had',
+    file: 'src/render/scene.ts',
+    find: '        feltLayer?.show(bakedFelt.canvas);',
+    replace: '        void bakedFelt;',
+    detectedBy: VISUAL,
+  },
+  {
+    item: 'H4',
+    name: 'the grain tile halves, so the texture repeats at another period',
+    file: 'src/render/felt.ts',
+    find: '  noiseTileCells: 64,',
+    replace: '  noiseTileCells: 32,',
+    detectedBy: VISUAL,
+  },
+  {
+    item: 'H1',
+    name: 'the perf sample stops having to have played any rounds',
+    file: 'scripts/report/perf.mjs',
+    find: '    if (entry.rounds < MIN_ROUNDS) {',
+    replace: '    if (entry.rounds < MIN_ROUNDS && false) {',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E8',
+    name: 'the animated scene goes back to being unpositioned, and paints under the felt',
+    file: 'src/ui/chrome.css',
+    // The shipped defect `BJ-22`'s first visual capture found: a positioned
+    // felt paints after an in-flow scene whatever the source order, so every
+    // card, chip and pulse went into a canvas nobody could see. `getImageData`
+    // reports what the renderer drew, so only a capture of the composited page
+    // can catch it, which is why this entry is read by the baselines.
+    find: '.bj-surface {\n  position: relative;\n}',
+    replace: '.bj-surface {\n  position: static;\n}',
+    detectedBy: VISUAL,
   },
 ];
 

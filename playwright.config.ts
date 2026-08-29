@@ -39,6 +39,22 @@ const reuseServer = !isCI && process.env['BJ_REUSE_SERVER'] !== undefined;
 const TIMING_SPEC = /motion-demo\.spec\.ts/;
 
 /**
+ * The one spec whose assertion is a bitmap. `BJ-22`, item `E8`.
+ *
+ * **Chromium only, and the reason is in the pixels rather than in the budget.**
+ * Canvas text metrics, antialiasing and gradient dithering are engine and
+ * platform properties: three engines would mean three baseline sets grading one
+ * drawing, two of which would fail for reasons that belong to the browser. The
+ * criterion asks for baselines that match, not for a cross-engine pixel
+ * identity no browser offers, and the drawing itself is measured on all three
+ * engines by `render-surface.spec.ts` and `fan-floor.spec.ts`.
+ *
+ * Named once and read three times, exactly as `TIMING_SPEC` is, so the file
+ * cannot be running in a project that has no baselines for it.
+ */
+const VISUAL_SPEC = /visual\.spec\.ts/;
+
+/**
  * Browser gate.
  *
  * The server here is `vite preview` over the built `dist/`, never the dev
@@ -153,13 +169,13 @@ export default defineConfig({
     },
     {
       name: 'firefox',
-      testIgnore: TIMING_SPEC,
+      testIgnore: [TIMING_SPEC, VISUAL_SPEC],
       dependencies: ['timing-webkit'],
       use: { ...devices['Desktop Firefox'] },
     },
     {
       name: 'webkit',
-      testIgnore: TIMING_SPEC,
+      testIgnore: [TIMING_SPEC, VISUAL_SPEC],
       dependencies: ['timing-webkit'],
       // Keep unrelated WebKit assertions out of Retina backing-store throughput
       // while the dedicated surface cases exercise high density explicitly.

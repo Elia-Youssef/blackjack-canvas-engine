@@ -97,7 +97,12 @@ import {
 import type { Intent, IntentKind, SettledHand } from './core/types';
 import { createWallet, tableLimits, type TableId } from './core/wallet';
 import { PACING_NAMES, resolveMotion, type Motion } from './render/animate';
-import { createPlaySurface, type PlaySurface, type SceneState } from './render/scene';
+import {
+  createPlaySurface,
+  type FanReading,
+  type PlaySurface,
+  type SceneState,
+} from './render/scene';
 import type { SurfaceSize } from './render/surface';
 import { surfacePalette, type SelectedPalette } from './render/tokens';
 import {
@@ -122,7 +127,7 @@ import { createChrome } from './ui/chrome';
 import { resolvedLocale } from './ui/format';
 import { createForcedColorsPreference, type ForcedColorsPreference } from './ui/forced-colors';
 import { missingCapabilities, showUnsupportedNotice } from './ui/capability';
-import type { Shell } from './ui/layout';
+import { createFeltLayer, type Shell } from './ui/layout';
 import { createFrameLoop, type FrameLoop } from './ui/loop';
 import { createErrorBoundary, type ErrorBoundary } from './ui/recovery';
 import {
@@ -278,6 +283,15 @@ export interface LayoutProbe {
   readonly storeWidth: number;
   readonly storeHeight: number;
   readonly dpr: number;
+  /**
+   * What the last frame resolved for item `E8`'s card-legibility fan floor.
+   *
+   * The same rule as every other field here: the browser spec measures the
+   * composited canvas first, which is where a card's width is actually
+   * observable, and reads this second for the decomposition into a width, a
+   * pitch and a regime that no bitmap can be asked for.
+   */
+  readonly fan: FanReading;
 }
 
 /**
@@ -289,17 +303,17 @@ export interface LayoutProbe {
  * to anything. What it adds is the two things the page cannot publish as text.
  *
  * `palette` is item `G9`'s canvas half: which play-surface token set the frame
- * selected and why. It reports `standard-fallback` under forced colors today,
- * because SPEC 16 defines no high-contrast set for the play surface;
- * `src/render/tokens.ts` carries that park in full and `BJ-18`'s report carries
- * the sketched resolution.
+ * selected. It reported `standard-fallback` from `BJ-18` until `BJ-22`, while
+ * SPEC 16 defined no high-contrast set for the play surface; the sheet gained
+ * that table at `BJ-22`, the renderer draws from it, and the two names left are
+ * the two sets.
  *
  * `announced` and `queue` are item `G4`'s: what each live region was last
  * written with, and what the one queue is still holding.
  */
 export interface AccessibilityProbe {
   readonly forcedColors: boolean;
-  readonly palette: { readonly name: SelectedPalette['name']; readonly reason: SelectedPalette['reason'] };
+  readonly palette: { readonly name: SelectedPalette['name']; readonly flatFelt: boolean };
   readonly announced: { readonly polite: string | null; readonly assertive: string | null };
   readonly queue: QueueState;
 }
@@ -563,7 +577,11 @@ function isWin(outcome: SettledHand['outcome']): boolean {
  * and `BJ-15` relies on the same alignment for SPEC 12's per-hand result). Null
  * rather than false, because a hand mid-round has not lost either.
  */
-function sceneState(readout: TableReadout, motion: Motion): SceneState {
+function sceneState(
+  readout: TableReadout,
+  motion: Motion,
+  palette: SelectedPalette,
+): SceneState {
   const settled = readout.phase.kind === 'roundResult' ? readout.phase.result.hands : null;
   return {
     felt: readout.table,
@@ -580,6 +598,7 @@ function sceneState(readout: TableReadout, motion: Motion): SceneState {
     }),
     pendingWager: readout.wallet.wager,
     motion,
+    palette,
   };
 }
 
@@ -846,9 +865,14 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
   );
   const surface: PlaySurface = createPlaySurface({
     canvas: chrome.shell.canvas,
-    offscreen: () => chrome.shell.feltCanvas,
+    // A new canvas every call, which is what the scene's bake caches need. It
+    // makes the grain squares here; the felt bakes take theirs from the layer
+    // below, which is the shell's own stack. Handing the shipped canvas back
+    // here, as this root did until `BJ-22`'s fix round, would have every bake
+    // paint over the last one the cache still claimed to hold.
+    offscreen: () => document.createElement('canvas'),
+    feltLayer: createFeltLayer(chrome.shell),
     sizing: plan.sizing,
-    separateFelt: true,
   });
 
   /**
@@ -856,9 +880,10 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
    *
    * Resolved beside the motion policy and from the same one platform read the
    * chrome is given, so the stylesheet's forced-colors block and the renderer's
-   * token set are one decision rather than two answers to one question. It is
-   * held for the probe rather than passed into the draw calls, because there is
-   * currently one set to select: `src/render/tokens.ts` carries why.
+   * token set are one decision rather than two answers to one question. From
+   * `BJ-22` it is handed to the scene as well as held for the probe: SPEC 16
+   * defines the forced-colors set, so there is a second set to select and the
+   * canvas draws from whichever one this frame chose.
    */
   let palette: SelectedPalette = surfacePalette(false);
 
@@ -1080,7 +1105,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     const forced = forcedColors.active();
     palette = surfacePalette(forced);
 
-    surface.render(sceneState(readout, motion), dt);
+    surface.render(sceneState(readout, motion, palette), dt);
     chrome.sync(chromeState(readout, motion, forced), dt);
   }
 
@@ -1131,6 +1156,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       storeWidth: surface.surface.canvas.width,
       storeHeight: surface.surface.canvas.height,
       dpr: plan.sizing.dpr,
+      fan: surface.fan(),
     }),
     motion(): MotionProbe {
       const resolved = resolveMotion({
@@ -1150,7 +1176,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     },
     accessibility: (): AccessibilityProbe => ({
       forcedColors: forcedColors.active(),
-      palette: { name: palette.name, reason: palette.reason },
+      palette: { name: palette.name, flatFelt: palette.flatFelt },
       announced: chrome.announcer.spoken(),
       queue: chrome.announcer.queue(),
     }),
