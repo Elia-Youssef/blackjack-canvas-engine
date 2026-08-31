@@ -647,10 +647,13 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
      * **The floor is what those six guards could not say.** Every one of them
      * is satisfied by four fixtures as readily as by seventy-three: each loop in
      * this file iterates the list, so a deletion makes every assertion run
-     * fewer times and leaves the suite green. `BANK_FLOOR` is the number the
-     * part's record and `BJ-11`'s report both quote, written down once, as a
-     * floor so that adding a fixture still needs no edit and removing one is
-     * loud. It is deliberately not an equality: the bank is meant to grow.
+     * fewer times and leaves the suite green. `BANK_FLOOR` is written down once, as
+     * a floor so that adding a fixture still needs no edit and removing one is
+     * loud. It is deliberately not an equality: the bank is meant to grow, and
+     * it has. It was **73** when `BJ-11` wrote it, which is the figure that
+     * part's record and its report both quote; it is **77** now, raised by
+     * `AUDIT-1` for four salvage-branch fixtures. The floor moves with the bank
+     * on purpose, and the constant's own header states each raise.
      *
      * One line was dropped with it. `CORRUPT` is defined as
      * `[...UNREADABLE, ...STORED]`, so requiring its length to equal the sum of

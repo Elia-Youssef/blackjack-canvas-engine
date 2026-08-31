@@ -307,6 +307,22 @@ function unbindGestures(target: EventTarget, onGesture: () => void): void {
  * sending them to the default instead would change an answer that is right
  * today for no gain. Every other value, finite or infinite, reaches exactly the
  * expression it reached before.
+ *
+ * **`NaN` answers with the default and not with the volume already in force,
+ * deliberately, and `DEFAULT_VOLUME` is 1.** The review that asked about this
+ * is right that of the two defensible answers for an audio control, "unreadable
+ * input, therefore loudest" is the one that startles. It is still the right one
+ * here, for two reasons. The first is reachability: both shipped callers filter
+ * with `Number.isFinite` before this is reached and both of those guards are
+ * pinned, so a `NaN` arriving here is not a hostile player or a corrupt
+ * document, it is a future caller's defect. The loud default makes that defect
+ * audible at the moment it happens; holding the volume in force would swallow
+ * it, and a setting that silently ignores writes is the harder bug to find. The
+ * second is consistency: `storage/document.ts` sanitises every unreadable field
+ * to its default rather than to the value in force, and an audio module that
+ * answered the same question differently would be a second policy for one kind
+ * of question. Nothing muffles: a startled player has a mute control in the top
+ * bar at every width and a slider in Settings.
  */
 function clampVolume(value: number): number {
   return Number.isNaN(value) ? DEFAULT_VOLUME : Math.min(MAX_VOLUME, Math.max(MIN_VOLUME, value));

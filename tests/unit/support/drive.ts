@@ -14,6 +14,12 @@
  * number chosen for the wrong file. It is a parameter here so that each caller
  * still states its own, and the failure message is the same sentence the twelve
  * copies produced, so nothing a red run prints has changed.
+ *
+ * **This file has a control, and it is `tests/unit/drive.test.ts`.** Twelve
+ * private copies each had one caller; one shared copy has 47, so a broken guard
+ * here is silent rather than loud, and nothing in the suite is currently refused
+ * for a mutation entry to grade. The control drives both primitives directly
+ * against a constructed refusal and a constructed acceptance.
  */
 
 import type { IntentResult, Table } from '../../../src/core/table';

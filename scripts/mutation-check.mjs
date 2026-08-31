@@ -6405,6 +6405,11 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // Its detector is `tests/unit/chrome.test.ts`, the test named "stops on
+    // hidden, writes, and resumes with no gap penalty", which is what `UNIT`
+    // means here. Named because the file this mutates is a browser-shaped one:
+    // a scoped `persistence + visibility` chromium re-proof comes back green
+    // and would be misread as a survivor.
     item: 'C7',
     name: 'the hidden tab pauses without writing the document',
     file: 'src/ui/loop.ts',

@@ -579,11 +579,23 @@ function newMemory(): SceneMemory {
  * by the full constant, so every settled card, chip and hand width read back at
  * progress 0.6 and flew to its place a second time. The machine does not behave
  * that way (`table.setSpeed` leaves its accumulator alone), and neither does
- * this. The residual, stated because it is small rather than absent: between
+ * this.
+ *
+ * **The residual, measured rather than characterised.** Between
  * `0.6 x PACING[name]` and `PACING[name]` of wall clock a Fast tween has
- * finished while its age is still climbing, so a switch taken inside that window
- * still shows the tail of the movement, shrinking to nothing as the age tops
- * out. `tests/unit/motion.test.ts` drives the settled case, in both directions.
+ * finished while its age is still climbing, so a switch taken inside that
+ * window still moves the card. At the top of the window it moves it a long way:
+ * on `cardTravel` the window is exactly [0.168, 0.28) s, and a switch at
+ * 0.175 s puts a settled card back through about 0.4 of its arc, **measured at
+ * 102.73 px** on the 1029 x 579 reference sizing. The displacement then decays
+ * to zero across the window (94.68 px at 0.18 s, 39.86 at 0.24, 8.43 at 0.275,
+ * 0.76 at 0.281) and is **exactly zero from `PACING[name]` onward**. So what
+ * this cure bought is the duration, 112 ms and decaying instead of a permanent
+ * 0.6-progress reset, not a smaller peak: the peak is larger than the 27 to
+ * 85 px the uncured case measured. Option 2 in the finding, latching a `done`
+ * flag the first time `finished()` holds, removes the window entirely and is
+ * the user's call. `tests/unit/motion.test.ts` drives the settled case, in both
+ * directions.
  *
  * **The delta is guarded here, because only the simulation half of the frame is
  * clamped.** `table.update` runs QUALITY-BAR section 7's three clauses on its
