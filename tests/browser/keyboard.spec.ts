@@ -413,6 +413,46 @@ test.describe('D4: closing an overlay restores focus', () => {
       'data-open-overlay=howToPlay',
     );
   });
+
+  test('and a switch from one panel straight to another is an open, not neither', async ({
+    page,
+  }) => {
+    // The three openers sit in the top bar, outside the host, and nothing
+    // disables them while a panel is up: `pulls focus back when it is put on a
+    // control behind the panel` above proves a background control is pressable
+    // with a panel open, and these three are background controls. So two
+    // presses put a second panel behind the same host with no close in
+    // between, and the sync step has to treat that as an arrival: the panel
+    // takes focus, and Close goes back to the opener the player last pressed
+    // rather than to the one they left behind.
+    await atBettingScreen(page);
+    await page.locator('[data-open-overlay="settings"]').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('[data-overlay-host="true"]')).toBeVisible();
+    await settle(page);
+    expect((await focusedStop(page)).key, 'the first panel took focus').toBe(
+      'data-overlay-host=true',
+    );
+
+    // Straight to the second, with the first still open.
+    await page.locator('[data-open-overlay="howToPlay"]').focus();
+    await page.keyboard.press('Enter');
+    await settle(page);
+    await expect(page.locator('[data-overlay-host="true"]')).toHaveAttribute(
+      'data-open',
+      'howToPlay',
+    );
+    expect((await focusedStop(page)).key, 'the second panel never took focus').toBe(
+      'data-overlay-host=true',
+    );
+
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-overlay-host="true"]')).toBeHidden();
+    await settle(page);
+    expect((await focusedStop(page)).key, 'the close restored to the panel already left').toBe(
+      'data-open-overlay=howToPlay',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------

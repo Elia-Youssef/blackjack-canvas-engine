@@ -212,8 +212,9 @@ export interface SessionState {
   /**
    * SPEC 14's theme. `BJ-20`, item `E2`.
    *
-   * On the Speed precedent: the document was the first thing that had to name
-   * it, and this is the shape the save reads and the restore writes. The
+   * On the Speed precedent, in full: the document was the first thing that had
+   * to name it, this is the shape the save reads and the restore writes, and
+   * `BootOptions.theme` is the door an explicit option comes through. The
    * chrome resolves it to the one `data-theme` attribute the stylesheet's
    * selectors already answer to; the play surface never sees it, because SPEC
    * 16 fixes the felt's palette across both themes.
@@ -422,6 +423,17 @@ export interface BootOptions {
    * Clamped to `MIN_VOLUME` to `MAX_VOLUME` by the engine, whatever arrives.
    */
   readonly volume?: number;
+  /**
+   * SPEC 14's theme. `AUDIT-1`, on the same terms as the five above.
+   *
+   * The one persisted setting that had no boot door, while `SessionState.theme`
+   * cited the Speed precedent that includes one and the merge comment below
+   * claimed "every merge runs the option on the right". `Theme` is three-valued
+   * (`system` is a value, not an absence), so unlike `alwaysReduceMotion` there
+   * is no boolean shorthand that could stand in for it. Unset means the
+   * document decides, which is every existing caller and the shipped page.
+   */
+  readonly theme?: Theme;
 }
 
 /** The game this module last built, so a second boot can dispose the first. */
@@ -637,6 +649,11 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
   const persistence: Persistence = carriedPersistence ?? openPersistence();
   const restored = persistence.restored();
   const persisted: GameDocument = restored.document;
+  // QUALITY-BAR section 8's last clause needs an answer, not only a sentence:
+  // the store's probe has already run by here, and on a browser that refuses
+  // site data the session plays out of the memory fallback and carries nothing.
+  // Read once, because that is when the probe ran.
+  const durable = persistence.readout().durable;
 
   const wallet = createWallet(
     options.bestBalance === undefined
@@ -703,7 +720,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
   let verdicts: HandVerdict[] | null = coachMode === 'off' ? null : [];
   let notice: Notice | null = null;
   let surfaceSize: SurfaceSize = options.surfaceSize ?? persisted.settings.surfaceSize;
-  let theme: Theme = persisted.settings.theme;
+  let theme: Theme = options.theme ?? persisted.settings.theme;
   let howToPlaySeen: boolean = restored.howToPlaySeen;
   // SPEC 17: shown automatically on first launch, and only then. The dismissal
   // writes the flag below, so the second launch starts with no overlay.
@@ -927,6 +944,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       reducedMotion,
       stagedRules: settingsRules,
       hint: currentHint(readout),
+      durable,
     };
   }
 

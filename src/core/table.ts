@@ -87,7 +87,7 @@ import { houseRules } from './rules';
 import type { DealerHand, PlayerHand } from './settlement';
 import { settleInsurance as insuranceNet, settle } from './settlement';
 import type { Shoe, ShoeReadout } from './shoe';
-import { createShoe } from './shoe';
+import { assertDeckCount, createShoe } from './shoe';
 import type {
   DealStep,
   HandInPlay,
@@ -2005,8 +2005,33 @@ export function createTable(options: TableOptions = {}): Table {
     speed = next;
   }
 
+  /**
+   * Stage a rule record for the next deal. SPEC 14, never mid-round.
+   *
+   * **Normalised through `houseRules`, which copies and freezes.** The
+   * construction path has always done this (`createTable` runs
+   * `houseRules(options.rules)`), and the setter did not, so a caller who kept
+   * a reference to the record it staged could edit the rules in force after the
+   * deal had installed them: `applyStagedRules` assigns the staged object
+   * straight to `rules`, and `readout()` hands that same object back. SPEC 14
+   * forbids a rule change mid-round and `rules.ts`'s `readonly` fields are a
+   * compile-time claim only; this is the runtime half of it, and it is the one
+   * line that makes the two paths agree.
+   *
+   * **The deck count is refused here, loudly, before anything is staged.**
+   * `applyStagedRules` runs from the `deal` arm *after* `wallet.commitInitial`
+   * has spent the wager, and `createShoe` opens by asserting the deck count, so
+   * a record whose `decks` defeated the type threw out of `apply` with the money
+   * gone, no hand on the table and every later Deal throwing again. `houseRules`
+   * does not validate: it spreads the defaults and freezes, so an out-of-range
+   * `decks` survives it unchanged. The assertion is `shoe.ts`'s own, so the
+   * refusal a caller sees here and the one `createShoe` would have raised are
+   * one sentence. Validate first, then stage the frozen copy: a refused record
+   * leaves the stage exactly as it was.
+   */
   function setRules(next: HouseRules): void {
-    staged = next;
+    assertDeckCount(next.decks);
+    staged = houseRules(next);
   }
 
   return Object.freeze({

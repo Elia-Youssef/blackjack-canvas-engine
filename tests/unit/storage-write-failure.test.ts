@@ -244,6 +244,67 @@ describe('I3: a SecurityError on the property access falls back to memory', () =
   });
 });
 
+describe('I3: and the panel says so, in the one session where it matters', () => {
+  /**
+   * The consumer the degradation readout went without.
+   *
+   * `store.ts`'s own header says `durable` "exists so a settings panel can say
+   * plainly that progress will not carry, which is QUALITY-BAR section 8's last
+   * clause", and `persistence.readout()` had **no caller anywhere under
+   * `src/`**: the panel stated SPEC 14's "stored in this browser only" as a
+   * static string even in the session where the probe was refused and the whole
+   * game was running out of the memory fallback. The apparatus was built and
+   * tested at `BJ-11` and read by nothing.
+   *
+   * **Scanned rather than rendered, and the trade is stated.** This runner is a
+   * `node` environment with no `document`, so the panel cannot be built here;
+   * what a unit test can hold is that the composition root reads the answer, the
+   * frame carries it, and the panel's second line is conditional on it. The last
+   * hop, the line actually appearing on a browser that refuses site data, is not
+   * scriptable from this suite either: Playwright cannot make a real browser
+   * throw `SecurityError` on the `localStorage` property access. That half is
+   * noted rather than claimed.
+   *
+   * **The graded sentence is untouched.** Item `I5` grades SPEC 14's own
+   * wording and `scripts/mutation-check.mjs` anchors it character for character;
+   * this is a sibling line under it, shown only when `durable` is false, so the
+   * graded sentence reads identically in every ordinary session.
+   */
+  const MAIN = code(readFileSync(join(PROJECT_ROOT, 'src', 'main.ts'), 'utf8'));
+  const OVERLAYS = code(
+    readFileSync(join(PROJECT_ROOT, 'src', 'ui', 'components', 'overlays.ts'), 'utf8'),
+  );
+
+  it('reads the store answer once at boot and puts it on the frame', () => {
+    expect(MAIN, 'the composition root reads no degradation answer').toContain(
+      'const durable = persistence.readout().durable;',
+    );
+    expect(MAIN, 'the answer never reaches the chrome').toContain('      durable,');
+    // Once, not per frame: the probe ran at boot and the answer cannot move.
+    expect(MAIN.split('persistence.readout()').length - 1).toBe(1);
+  });
+
+  it('renders the note conditionally, and leaves the graded sentence alone', () => {
+    expect(OVERLAYS).toContain('setHidden(notDurableNote, state.durable);');
+    // The condition is the whole of it: an unconditional line would tell every
+    // ordinary session its progress is being thrown away.
+    expect(OVERLAYS, 'the note is shown unconditionally').not.toContain(
+      'setHidden(notDurableNote, false)',
+    );
+    // SPEC 14's own sentence, word for word, still written as a plain string.
+    expect(OVERLAYS).toContain(
+      "text: 'Progress is stored in this browser only and can be cleared by the browser itself.',",
+    );
+  });
+
+  it('states a different fact from the graded sentence, or it is not worth a line', () => {
+    // A note that paraphrased the sentence above would be a second copy of a
+    // wording clause rather than an answer to it.
+    expect(OVERLAYS).toContain('This browser is refusing to store anything');
+    expect(OVERLAYS).toContain("attributes: { 'data-field': 'storage-blocked' }");
+  });
+});
+
 describe('I3: without preventing the game from starting', () => {
   it('starts the game on a blocked browser, all the way to SPEC 10 betting', () => {
     const host = throwingHost(securityError());

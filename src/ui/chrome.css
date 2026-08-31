@@ -315,15 +315,27 @@ body {
  * deal. Under QUALITY-BAR section 2's 4x throttle that compositor commit was
  * the repeatable 71-74 ms task that breached H4, and the larger transient
  * surface lifted H7 app work above 8 ms. Keep the quiet phases at the height
- * the neighbouring betting and player-turn screens already use: one minimum
- * target plus the spacing-scale remainder, with no new dimension literal.
- * The row may still grow where a breakpoint or translated status needs it. */
+ * the neighbouring betting and player-turn screens already use, and name its
+ * three real constituents rather than a sum that happens to equal them: the
+ * notice's own `--space-5`, this row's `gap: var(--space-2)`, and a button's
+ * `--target-min`. The arithmetic is the same 76 px today, and it was first
+ * written as `--target-min + --space-6`, which is equal only because
+ * `--space-6` happens to be `--space-5 + --space-2` on the committed scale.
+ * QUALITY-BAR section 15 owns those steps independently, so that form would
+ * have stopped equalising the row silently the day either moved;
+ * `tests/unit/tokens.test.ts` now asserts the identity as well.
+ * The row may still grow where a breakpoint or translated status needs it, and
+ * at `compact` and `portrait` it does: five action buttons do not fit 320 px,
+ * the betting and player-turn rows wrap to two, and the equality this rule
+ * makes holds at `wide` alone. `tests/browser/surface-stability.spec.ts` states
+ * that in the spec that measures it, and asserts the wide case for all five
+ * phases; the narrow case is `F1`/`F7` design work and is not taken here. */
 .bj-shell[data-phase='dealing'] .bj-controls,
 .bj-shell[data-phase='peek'] .bj-controls,
 .bj-shell[data-phase='reveal'] .bj-controls,
 .bj-shell[data-phase='dealerTurn'] .bj-controls,
 .bj-shell[data-phase='settling'] .bj-controls {
-  min-height: calc(var(--target-min) + var(--space-6));
+  min-height: calc(var(--space-5) + var(--space-2) + var(--target-min));
 }
 
 /* The play surface takes a height of its own rather than a share, once the shell

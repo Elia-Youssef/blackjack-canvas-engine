@@ -124,6 +124,39 @@ test.describe('I5: Reset all data', () => {
     expect(document, 'the kept document still names the unlock mark').toContain('10000');
   });
 
+  test('is disarmed by closing the panel, so a re-opened Settings never inherits it', async ({
+    page,
+  }) => {
+    // The confirmation is a flow rather than a value, and a flow left armed in
+    // a panel nobody is looking at is a "Clear everything" button waiting for
+    // the next player who opens Settings for the Speed control. The panel
+    // cannot see itself close: it is only updated while it is the open
+    // overlay, so the disarm has to come from the one step that knows the
+    // overlay went away.
+    await bootGame(page, { seed: splitSeed() });
+    await waitForPhase(page, 'start');
+    await control(page, 'start').click();
+    await waitForPhase(page, 'betting');
+
+    await openSettings(page);
+    await control(page, 'reset-data').click();
+    await expect(control(page, 'confirm-reset')).toBeVisible();
+
+    // Closed with the question still on screen, then opened again.
+    await control(page, 'close-overlay').click();
+    await expect(page.locator('[data-overlay-host="true"]')).toBeHidden();
+    await openSettings(page);
+    await settle(page);
+
+    await expect(
+      control(page, 'confirm-reset'),
+      'the re-opened panel inherited an armed reset',
+    ).toBeHidden();
+    // And the control that arms it is still there, so the assertion above is
+    // the confirmation being disarmed rather than the whole group going away.
+    await expect(control(page, 'reset-data')).toBeVisible();
+  });
+
   test('clears every persisted value, and the page is a first launch again', async ({ page }) => {
     await bootGame(page, { seed: splitSeed(), bestBalance: BEST_BALANCE, table: 'gold' });
     await waitForPhase(page, 'start');

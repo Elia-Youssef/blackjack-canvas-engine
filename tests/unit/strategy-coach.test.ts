@@ -109,8 +109,16 @@ import {
   situationAt,
   strategyTable,
 } from '../../src/core/strategy';
+import {
+  ACCURACY_DECISIONS,
+  ACCURACY_PERCENT,
+  NO_STATISTICS,
+  statisticsReadout,
+} from '../../src/core/statistics';
 import type { Table, TableReadout } from '../../src/core/table';
 import { TIMINGS, createTable } from '../../src/core/table';
+import { NOTHING_YET, createFormatters } from '../../src/ui/format';
+import { accuracyText } from '../../src/ui/text';
 import type { HandInPlay, IntentKind } from '../../src/core/types';
 import type { ChipDenomination, Wallet } from '../../src/core/wallet';
 import { createWallet, tableLimits } from '../../src/core/wallet';
@@ -1261,3 +1269,146 @@ function splitRound(): Table {
   settleToPlayerTurn(table);
   return table;
 }
+
+/**
+ * The readout and the milestone read the same pair, and the readout is the one
+ * a player sees.
+ *
+ * `accurateEnough` clears the division on purpose (`matched * 100 >=
+ * ACCURACY_PERCENT * decisions`, an exact integer comparison), and the panel
+ * divided and handed the float to a percent formatter whose default rounding is
+ * half-expand. Between them, 2,435 distinct records in `decisions` 100 to 1,000
+ * printed `Accuracy 90%` directly above the 90-percent milestone shown as
+ * unawarded, the earliest of them at 94 of 105 decisions. The error was
+ * one-directional and always in the flattering direction, which is why nothing
+ * had noticed it.
+ *
+ * The threshold stays exactly as it is. What moved is the readout, which now
+ * truncates: a shown percentage never overstates the exact one, which is the
+ * same stance the rest of this game takes on arithmetic a player can act on
+ * (`Max` floors to the chip grid, a tap over the ceiling is rejected rather
+ * than clamped).
+ */
+describe('J3: the accuracy a player reads never overstates the one the milestone grades', () => {
+  /** SPEC 9's own inequality, re-derived here rather than imported. */
+  function accurateEnough(matched: number, decisions: number): boolean {
+    return decisions >= ACCURACY_DECISIONS && matched * 100 >= ACCURACY_PERCENT * decisions;
+  }
+
+  /** The percentage the shown string carries, in whole percent. */
+  function shownPercent(text: string): number {
+    return Number.parseInt(text.replace(/[^0-9]/g, ''), 10);
+  }
+
+  it('never shows more than the exact figure, over the whole 100 to 1000 grid', () => {
+    const formatters = createFormatters(['en-US']);
+    let overstated = 0;
+    let atThresholdUnawarded = 0;
+    let awardedShownLow = 0;
+    let checked = 0;
+    for (let decisions = ACCURACY_DECISIONS; decisions <= 1000; decisions += 1) {
+      for (let matched = 0; matched <= decisions; matched += 1) {
+        const exact = accuracy({ decisions, matched });
+        if (exact === null) {
+          continue;
+        }
+        checked += 1;
+        const shown = shownPercent(formatters.percentOfHundred(exact));
+        const awarded = accurateEnough(matched, decisions);
+        if (shown > exact) {
+          overstated += 1;
+        }
+        if (shown === ACCURACY_PERCENT && !awarded) {
+          atThresholdUnawarded += 1;
+        }
+        if (awarded && shown < ACCURACY_PERCENT) {
+          awardedShownLow += 1;
+        }
+      }
+    }
+    // The sweep really ran, or three zeros below are three zeros about nothing.
+    expect(checked).toBeGreaterThan(400_000);
+    expect(overstated, 'a shown percentage was higher than the exact one').toBe(0);
+    expect(
+      atThresholdUnawarded,
+      'the panel printed the milestone threshold while the milestone was unmet',
+    ).toBe(0);
+    // And the cure did not overshoot into the other direction: an awarded
+    // record never reads below the threshold it cleared.
+    expect(awardedShownLow, 'an awarded record printed below its own threshold').toBe(0);
+  });
+
+  it('shows the whole percent below, and the canonical examples the audit found', () => {
+    const formatters = createFormatters(['en-US']);
+    // The exact boundary: 179 of 200 is 89.5 percent, unawarded, and used to
+    // print the threshold itself.
+    expect(accurateEnough(179, 200)).toBe(false);
+    expect(formatters.percentOfHundred(accuracy({ decisions: 200, matched: 179 }) ?? 0)).toBe('89%');
+    // The smallest reachable example, roughly forty rounds of coached play.
+    expect(accurateEnough(94, 105)).toBe(false);
+    expect(formatters.percentOfHundred(accuracy({ decisions: 105, matched: 94 }) ?? 0)).toBe('89%');
+    // And the threshold met exactly still reads as the threshold.
+    expect(accurateEnough(90, 100)).toBe(true);
+    expect(formatters.percentOfHundred(accuracy({ decisions: 100, matched: 90 }) ?? 0)).toBe('90%');
+    expect(formatters.percentOfHundred(accuracy({ decisions: 100, matched: 100 }) ?? 0)).toBe(
+      '100%',
+    );
+  });
+
+  it('publishes the denominator the percentage is taken over, in both scopes', () => {
+    // SPEC 7 names three quantities, "decisions made, decisions matching basic
+    // strategy, and a running percentage", and the readout published one of
+    // them, so the panel had a bare percentage and no way to show a reader that
+    // 100 percent was one decision. Both counters now ride the scope.
+    let record = NO_DECISIONS;
+    for (let step = 0; step < 3; step += 1) {
+      record = recordDecision(record, step === 0);
+    }
+    const readout = statisticsReadout(NO_STATISTICS, createWallet().readout(), record);
+    expect(readout.session.decisions).toBe(3);
+    expect(readout.session.matched).toBe(1);
+    expect(readout.lifetime.decisions).toBe(3);
+    expect(readout.lifetime.matched).toBe(1);
+    // The published pair is the coach's own, not a second tally beside it.
+    expect(readout.session.decisions).toBe(record.session.decisions);
+    expect(readout.session.matched).toBe(record.session.matched);
+  });
+
+  it('reads the percentage out with its denominator, singular and plural', () => {
+    const one = accuracyText({
+      handsPlayed: 1,
+      wins: 1,
+      losses: 0,
+      pushes: 0,
+      blackjacks: 0,
+      accuracy: 100,
+      decisions: 1,
+      matched: 1,
+    });
+    expect(one, 'a single decision was read out as a plural').toBe('100% over 1 decision');
+    const many = accuracyText({
+      handsPlayed: 9,
+      wins: 4,
+      losses: 5,
+      pushes: 0,
+      blackjacks: 0,
+      accuracy: 89.5,
+      decisions: 200,
+      matched: 179,
+    });
+    expect(many).toBe('89% over 200 decisions');
+    // Before the first decision there is no percentage and no denominator.
+    expect(
+      accuracyText({
+        handsPlayed: 0,
+        wins: 0,
+        losses: 0,
+        pushes: 0,
+        blackjacks: 0,
+        accuracy: null,
+        decisions: 0,
+        matched: 0,
+      }),
+    ).toBe(NOTHING_YET);
+  });
+});

@@ -625,6 +625,53 @@ describe('E1: the numeric scales match QUALITY-BAR section 15', () => {
   });
 });
 
+describe('H4: the timed-phase pin names the row it stands in for', () => {
+  /**
+   * The identity the adopted `H4` cure rested on without asserting it.
+   *
+   * The five timed screens pin `.bj-controls` to the height of the action rows
+   * beside them, so the play-surface backing store stops being reallocated on
+   * the first deal. That height is three things: the notice's own
+   * `min-height: var(--space-5)`, the row's `gap: var(--space-2)`, and a
+   * button's `min-height: var(--target-min)`. It shipped written as
+   * `calc(var(--target-min) + var(--space-6))`, which is the same 76 px only
+   * because `--space-6` happens to equal `--space-5 + --space-2` on the
+   * committed scale. QUALITY-BAR section 15 owns those steps independently and
+   * nothing tied them together, so a move in either would have un-equalised the
+   * pin silently, in a rule whose entire purpose is an equality.
+   *
+   * The declaration now names its three constituents. This is the arithmetic
+   * beside it, kept so the two forms cannot drift apart unnoticed either.
+   */
+  it('adds up to the action-row height, out of the tokens that make that row', () => {
+    const space5 = Number.parseInt(declared('--space-5'), 10);
+    const space2 = Number.parseInt(declared('--space-2'), 10);
+    const space6 = Number.parseInt(declared('--space-6'), 10);
+    const target = Number.parseInt(declared('--target-min'), 10);
+    for (const value of [space5, space2, space6, target]) {
+      expect(Number.isFinite(value)).toBe(true);
+    }
+
+    // The row: notice, gap, one button.
+    expect(space5 + space2 + target).toBe(76);
+    // And the coincidence the old form leaned on, stated rather than relied on.
+    expect(space6, 'the two forms have drifted apart').toBe(space5 + space2);
+    expect(target + space6).toBe(space5 + space2 + target);
+  });
+
+  it('is declared out of those three tokens and no others', () => {
+    const chrome = readFileSync(join(PROJECT_ROOT, 'src', 'ui', 'chrome.css'), 'utf8');
+    const rule = chrome
+      .slice(chrome.indexOf("[data-phase='dealing'] .bj-controls"))
+      .slice(0, 400);
+    expect(rule).toContain('min-height: calc(var(--space-5) + var(--space-2) + var(--target-min));');
+    // The three tokens it stands in for are really the ones those rules use.
+    expect(chrome).toContain('  min-height: var(--space-5);');
+    expect(chrome).toContain('  gap: var(--space-2);');
+    expect(chrome).toContain('  min-height: var(--target-min);');
+  });
+});
+
 describe('E1: no literal value in component code', () => {
   /**
    * Every source file under src/, except the two that ARE the token layer.

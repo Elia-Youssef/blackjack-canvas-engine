@@ -201,7 +201,10 @@ export function screenAvailability(readout: TableReadout): readonly ControlAvail
       return CHIP_DENOMINATIONS.map((denomination) => ({
         key: `chip-${String(denomination)}`,
         label: chipLabel(denomination),
-        refusal: chipEnabled(denomination, limits, wallet.chips) ? null : 'above-ceiling',
+        // The display-only split, on `tableRefusal`'s precedent: this is the
+        // denomination against the table rather than a tap against the
+        // ceiling, and the two are different facts about the same word.
+        refusal: chipEnabled(denomination, limits, wallet.chips) ? null : 'chip-over-ceiling',
       }));
     }
 

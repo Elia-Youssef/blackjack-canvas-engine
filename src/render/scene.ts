@@ -50,6 +50,7 @@
 import type { Card, Rank, Suit } from '../core/cards';
 
 import {
+  PACING,
   arcTravel,
   flipScale,
   flipShowsFace,
@@ -567,7 +568,22 @@ function newMemory(): SceneMemory {
 }
 
 /**
- * Advance an ageing thing, capped at its own span.
+ * Advance an ageing thing, capped at its own **unscaled** pacing constant.
+ *
+ * **The cap is `PACING[name]` and not `motion.seconds(name)`, because the age
+ * outlives the Speed it was accumulated at.** `speedMultiplier` is 1 or 0.6, so
+ * the unscaled constant is the longest span any Speed can ask for, and an age
+ * capped there still reads finished at every Speed. Capping at the scaled span
+ * instead made Fast park every finished age at `0.6 x PACING[name]`; SPEC 14
+ * lets Speed move mid-round, and the next Normal frame divided that parked age
+ * by the full constant, so every settled card, chip and hand width read back at
+ * progress 0.6 and flew to its place a second time. The machine does not behave
+ * that way (`table.setSpeed` leaves its accumulator alone), and neither does
+ * this. The residual, stated because it is small rather than absent: between
+ * `0.6 x PACING[name]` and `PACING[name]` of wall clock a Fast tween has
+ * finished while its age is still climbing, so a switch taken inside that window
+ * still shows the tail of the movement, shrinking to nothing as the age tops
+ * out. `tests/unit/motion.test.ts` drives the settled case, in both directions.
  *
  * **The delta is guarded here, because only the simulation half of the frame is
  * clamped.** `table.update` runs QUALITY-BAR section 7's three clauses on its
@@ -585,8 +601,8 @@ function newMemory(): SceneMemory {
  * section 7 asks the presentation for; borrowing the machine's clamp here would
  * leave them mid-flight instead.
  */
-function advance(timer: Ageing, dt: number, motion: Motion): void {
-  const span = motion.seconds(timer.pacing);
+function advance(timer: Ageing, dt: number): void {
+  const span = PACING[timer.pacing];
   const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
   timer.age = Math.min(timer.age + step, span);
 }
@@ -618,7 +634,7 @@ function progressOf(
     timer = { age: 0, pacing };
     memory.set(key, timer);
   } else {
-    advance(timer, dt, motion);
+    advance(timer, dt);
   }
   return motion.progress(pacing, timer.age);
 }
@@ -688,7 +704,10 @@ export interface EaseReading {
  * so a restarted ease reads `from`, which is the value it was showing.
  */
 export function easeStep(held: Easing, target: number, dt: number, motion: Motion): EaseReading {
-  held.age = Math.min(held.age + dt, motion.seconds('handRecentre'));
+  // The unscaled constant, for `advance`'s reason: the age outlives the Speed
+  // it was accumulated at, and a hand width parked at `0.6 x handRecentre` by
+  // Fast would re-slide on the first Normal frame after a mid-round switch.
+  held.age = Math.min(held.age + dt, PACING.handRecentre);
   if (held.to !== target) {
     held.from = toward(held.from, held.to, motion.progress('handRecentre', held.age));
     held.to = target;
@@ -1009,14 +1028,23 @@ export interface FeltLayerHost {
  *
  * **Bounded because it is a cache of backing stores and not of numbers.** Each
  * entry holds a canvas the size of the play surface, so an unbounded map would
- * be a leak item `H5` measures for. Four, because the shipped phase cycle
- * visits exactly three surface sizes, measured over three rounds on the built
- * page (1029 x 579 at betting and the player turn, 1121 x 631 at dealing and
- * the reveal, 407 x 229 at the round result), and the fourth slot absorbs one
- * drift, a viewport resize or a forced-colors flip, without evicting the set in
- * play. Past that a bake is what the renderer did on every size change before
- * this cache existed, so the worst case is the old behaviour rather than a new
- * failure.
+ * be a leak item `H5` measures for.
+ *
+ * **Four, re-derived from what the shipped page visits now.** The original
+ * measurement, three rounds on the built page, found three sizes: 1029 x 579 at
+ * betting and the player turn, 1121 x 631 at dealing and the reveal, and
+ * 407 x 229 at the round result, over 27 backing-store changes. The two
+ * transient visits to the widest size were the action row being replaced by a
+ * status line, and `src/ui/chrome.css` has since pinned the five timed screens
+ * to the betting row's own height, so at the reference viewport those phases
+ * now measure what betting measures and `tests/browser/surface-stability.spec.ts`
+ * is what holds that true. What the cycle still visits is two sizes, the
+ * action-and-timed size and the round result's, and the bound keeps its
+ * headroom for the changes that are not phase changes: a viewport resize, the
+ * play-surface size setting, a forced-colors flip, and the narrow breakpoints
+ * where the action rows wrap and the timed pin does not equalise them. Past
+ * that a bake is what the renderer did on every size change before this cache
+ * existed, so the worst case is the old behaviour rather than a new failure.
  */
 export const FELT_CACHE_LIMIT = 4;
 
@@ -1074,11 +1102,19 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
    *
    * **The cache is why the shipped page stopped rebaking on every screen.**
    * SPEC 10 replaces the whole controls row at every phase, that row is an
-   * `auto` grid track, and the play-surface row above it therefore changes
+   * `auto` grid track, and the play-surface row above it therefore changed
    * height at every screen: three rounds of measured play on the built page
    * changed the backing store 27 times over three distinct sizes. Each of those
    * changes rebaked the felt, and a bake is the one expensive thing this
-   * renderer does. Three bakes now serve all 27.
+   * renderer does. Three bakes served all 27.
+   *
+   * The stylesheet has since pinned the five timed screens to the action rows'
+   * own height, so at the reference viewport the row stops moving between
+   * betting and the reveal and the changes themselves are fewer; the cache is
+   * still what makes the ones that remain free, and it is the only thing
+   * covering the narrow breakpoints, where the action rows wrap and the pin
+   * does not equalise them. `tests/browser/surface-stability.spec.ts` holds the
+   * wide case and states the narrow one.
    */
   function feltFor(state: SceneState): FeltLayer {
     const wanted: FeltSpec = {
@@ -1098,7 +1134,11 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
     const baked = bakeFelt(
       feltLayer === null ? options.offscreen() : feltLayer.acquire(),
       wanted,
-      grainFor({ felt: feltColour(state.palette.surface, state.felt), dpr: surface.dpr }),
+      // Deferred, not resolved: the flat felt takes no grain and asking for a
+      // pair it cannot draw both pays for two canvases and evicts a live pair
+      // out of a cache bounded at four. `bakeFelt` calls this only inside the
+      // branch that draws.
+      () => grainFor({ felt: feltColour(state.palette.surface, state.felt), dpr: surface.dpr }),
     );
     felts.unshift(baked);
     for (const evicted of felts.splice(FELT_CACHE_LIMIT)) {
@@ -1119,7 +1159,7 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
     if (was > 0 && state.dealer.length > HOLE_CARD) {
       memory.flip = { age: 0, pacing: 'holeCardFlip' };
     } else if (memory.flip !== null) {
-      advance(memory.flip, dt, state.motion);
+      advance(memory.flip, dt);
     }
     if (memory.flip === null) {
       return null;
@@ -1143,7 +1183,7 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
     if (!was) {
       memory.pulse = { age: 0, pacing: 'winPulse' };
     } else if (memory.pulse !== null) {
-      advance(memory.pulse, dt, state.motion);
+      advance(memory.pulse, dt);
     }
     if (memory.pulse === null) {
       return 0;

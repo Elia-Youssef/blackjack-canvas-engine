@@ -162,6 +162,28 @@ describe('BJ-22: the felt bakes once per distinct size, not once per screen', ()
     expect(canvases()).toBe(3 + 2);
   });
 
+  it('bakes no grain at all for a flat felt, which cannot draw one', () => {
+    // SPEC 16's forced-colors subsection suppresses the gradient and the grain
+    // under the high-contrast set, so `bakeFelt` skips the whole grain path and
+    // issues zero `drawImage` calls. A pair baked anyway is 4,096 cells of work
+    // no frame can read, and it lands in a `GRAIN_CACHE_LIMIT` of four beside
+    // the pairs the standard set is still using: three tables under forced
+    // colors fill it, and the live pair is evicted by pairs that exist only
+    // because the call site asked for one before the bake could refuse it.
+    const flat = harness();
+    flat.surface.render(scene({ palette: HIGH_CONTRAST_PALETTE }), 0);
+    expect(flat.bakes(), 'the felt did not bake').toBe(1);
+    expect(flat.canvases(), 'a flat felt paid for grain squares').toBe(1);
+
+    // The control: the same frame on the standard set does bake the pair, so
+    // the count above is the flat path answering and not the instrument
+    // failing to see a grain square at all.
+    const textured = harness();
+    textured.surface.render(scene(), 0);
+    expect(textured.bakes()).toBe(1);
+    expect(textured.canvases()).toBe(1 + 2);
+  });
+
   it('still rebakes for every spec change `needsRebake` reports', () => {
     // The cache is not a licence to serve a stale table. Each of these is a
     // field `needsRebake` compares, and each has to cost a bake.

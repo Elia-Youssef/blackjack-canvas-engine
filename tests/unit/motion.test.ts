@@ -982,6 +982,107 @@ describe('settled play-surface rendering', () => {
 });
 
 /**
+ * SPEC 14 lets Speed move mid-round "because neither can change an outcome",
+ * and `src/core/table.ts` honours that by leaving its accumulator alone: a
+ * phase already half spent stays half spent. The scene holds the same shape of
+ * state and has to answer the same way, in both directions.
+ *
+ * **The asymmetry is the whole finding.** A tween's age used to be capped at
+ * the span the *current* Speed asks for, so Fast capped every finished age at
+ * `0.6 x PACING[name]`; switching to Normal then divided that age by the full
+ * constant and every settled card read back at progress 0.6 and re-flew. The
+ * other direction caps an age down, which finishes a tween rather than
+ * resurrecting one, and Normal to Fast is the only direction any committed test
+ * drives (`tests/browser/speed-setting.spec.ts` switches during the player
+ * turn). Both directions are below, and the Normal-to-Fast case is the control
+ * that localises the defect to the cap rather than to the arrangement.
+ */
+describe('E9: a mid-round Speed change leaves the settled picture alone', () => {
+  /** Every card base drawn in one frame: the fill is `cardMargin`, once each. */
+  function cardOrigins(entries: readonly RecordedEntry[]): { x: number; y: number }[] {
+    const found: { x: number; y: number }[] = [];
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      if (
+        entry?.kind !== 'set' ||
+        entry.property !== 'fillStyle' ||
+        entry.value !== SURFACE.cardMargin
+      ) {
+        continue;
+      }
+      for (let cursor = index + 1; cursor < entries.length; cursor += 1) {
+        const call = entries[cursor];
+        if (call?.kind === 'call' && call.op === 'moveTo') {
+          found.push({ x: Number(call.args[0]), y: Number(call.args[1]) });
+          break;
+        }
+      }
+    }
+    return found;
+  }
+
+  const DEALT: Card[] = [card('A', 'spades'), card('K', 'hearts')];
+
+  /**
+   * Settle every tween at `from`, then take one frame at `to` with a scene
+   * that is identical in every other respect. 90 frames is 1.5 s, past every
+   * pacing constant at either Speed, so the picture is at rest by construction.
+   */
+  function switched(from: Speed, to: Speed) {
+    const { canvas, recording } = createStyleFreeCanvas();
+    const surface = createPlaySurface({
+      canvas,
+      offscreen: () => createStyleFreeCanvas().canvas,
+      sizing: { width: 1029, height: 579, dpr: 1 },
+    });
+    const at = (speed: Speed): SceneState =>
+      scene({
+        dealer: [...DEALT],
+        hands: [{ cards: [...DEALT], wager: 50, won: null }],
+        motion: motionOf(false, speed),
+      });
+
+    let settled: { x: number; y: number }[] = [];
+    for (let frame = 0; frame < 90; frame += 1) {
+      recording.entries.length = 0;
+      surface.render(at(from), 1 / 60);
+      const drawn = cardOrigins(recording.entries);
+      if (drawn.length > 0) {
+        settled = drawn;
+      }
+    }
+    const restingInFlight = surface.tweensInFlight();
+
+    recording.entries.length = 0;
+    surface.render(at(to), 1 / 60);
+    return {
+      settled,
+      after: cardOrigins(recording.entries),
+      restingInFlight,
+      movedInFlight: surface.tweensInFlight(),
+    };
+  }
+
+  it('holds a Fast-settled surface still through a switch to Normal', () => {
+    const { settled, after, restingInFlight, movedInFlight } = switched('fast', 'normal');
+    // The picture was genuinely at rest before the switch, and there was a
+    // picture: four cards, not an empty recording agreeing with itself.
+    expect(settled).toHaveLength(4);
+    expect(restingInFlight).toBe(0);
+    expect(movedInFlight, 'the switch put settled tweens back in flight').toBe(0);
+    expect(after).toEqual(settled);
+  });
+
+  it('and the control: Normal to Fast was already still, and stays still', () => {
+    const { settled, after, restingInFlight, movedInFlight } = switched('normal', 'fast');
+    expect(settled).toHaveLength(4);
+    expect(restingInFlight).toBe(0);
+    expect(movedInFlight).toBe(0);
+    expect(after).toEqual(settled);
+  });
+});
+
+/**
  * QUALITY-BAR section 7's clauses reach `table.update` and stop there: the
  * composition root hands the raw delta to `surface.render` and to `chrome.sync`.
  * Item `M5` at `BJ-12` drives the machine on an unstable clock and nothing has

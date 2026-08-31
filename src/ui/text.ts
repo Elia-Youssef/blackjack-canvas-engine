@@ -26,7 +26,7 @@ import type { Rung, Outcome } from '../core/settlement';
 import type { CellAddress, CoachAction, PreferenceList } from '../core/strategy';
 import type { RejectionReason } from '../core/table';
 import type { HandInPlay, HandState, InsuranceOffer, Phase, PlayerAction } from '../core/types';
-import type { MilestoneId } from '../core/statistics';
+import type { MilestoneId, ScopeReadout } from '../core/statistics';
 import {
   ACCURACY_DECISIONS,
   ACCURACY_PERCENT,
@@ -36,7 +36,7 @@ import {
 } from '../core/statistics';
 import type { TableId } from '../core/wallet';
 
-import { chips } from './format';
+import { NOTHING_YET, chips, percentOfHundred } from './format';
 
 /**
  * Why the start screen greys a table, when the machine's one word is not enough.
@@ -60,6 +60,27 @@ import { chips } from './format';
 export type ChooserRefusal = 'table-not-unlocked' | 'table-unaffordable';
 
 /**
+ * Why the betting bar greys one chip, which is not why a tap of it is refused.
+ * The chooser precedent above, applied to SPEC 4.11's other doubled meaning.
+ *
+ * SPEC 4.11 distinguishes two things and `src/ui/components/betting.ts`'s
+ * header sets them out: a chip whose **denomination alone** exceeds
+ * `min(tableMax, chips)` can never be wagered at this table and renders
+ * disabled, while a chip whose denomination fits but whose **tap** would carry
+ * the wager past the ceiling stays pressable and is rejected when pressed. The
+ * machine answers `above-ceiling` for the second, correctly, and the greyed
+ * chip is the first: a 500 at Bronze is not "more than the ceiling given what
+ * you have already staked", it is a chip this table has no use for.
+ *
+ * The betting bar held that sentence privately, so the control said one thing
+ * and the mirror, reading the machine's word, said the other, which is the one
+ * place in the product where `src/ui/dom.ts`'s "three surfaces, one sentence"
+ * was false. **The machine's refusal kinds are untouched**: `core/wallet.ts`
+ * still answers one `above-ceiling` and nothing downstream of it branches.
+ */
+export type DenominationRefusal = 'chip-over-ceiling';
+
+/**
  * Everything the chrome has a sentence for: the machine's reasons, and the
  * chooser's two.
  *
@@ -68,15 +89,15 @@ export type ChooserRefusal = 'table-not-unlocked' | 'table-unaffordable';
  * are among them. Widening the parameter keeps every existing caller compiling
  * and keeps the switch below exhaustive over both halves at once.
  */
-export type DisplayReason = RejectionReason | ChooserRefusal;
+export type DisplayReason = RejectionReason | ChooserRefusal | DenominationRefusal;
 
 /**
  * Why an action was refused. SPEC 4.11, SPEC 10 and the availability rules of
  * SPEC 4.5, 4.6, 4.7 and 4.8.
  *
- * Nineteen arms and no default, so a reason added to any of the three layers,
- * or to the chooser's pair, is a compile error here rather than a blank line on
- * screen.
+ * Twenty arms and no default, so a reason added to any of the three layers, or
+ * to either of the two display-only splits, is a compile error here rather than
+ * a blank line on screen.
  */
 export function reasonText(reason: DisplayReason): string {
   switch (reason) {
@@ -117,6 +138,14 @@ export function reasonText(reason: DisplayReason): string {
       return 'That table unlocks at a higher best balance than you have reached.';
     case 'table-unaffordable':
       return 'Your balance is below that table minimum.';
+
+    // The betting bar's one, which is `above-ceiling` split the same way: this
+    // is the chip's own denomination against the table, not the wager the tap
+    // would have built. `This chip` rather than `That` because the sentence is
+    // about the control it is attached to, and a player reading the greyed
+    // list needs to know it is the denomination that is out of range.
+    case 'chip-over-ceiling':
+      return 'This chip is more than the table maximum or your balance allows.';
 
     // The wallet layer. SPEC 4.11's own refusals, and SPEC 4.5 and 4.6's funding.
     case 'no-wager':
@@ -297,6 +326,28 @@ export function milestoneText(milestone: MilestoneId): string {
     case 'survivedAndRecovered':
       return `Survived below ${chips(LOW_WATER_PERCENT)} percent and recovered`;
   }
+}
+
+/**
+ * SPEC 7's running percentage with the denominator it was taken over.
+ *
+ * **A bare percentage is not an honest readout at a small denominator**, which
+ * is the same reason `strategy.accuracy` answers `null` before the first
+ * decision rather than 0 or 100: "100%" over one decision and "100%" over four
+ * hundred are the same three characters, and only one of them means anything.
+ * SPEC 7 asks for all three quantities and the readout now publishes all three,
+ * so this is the sentence that spends them.
+ *
+ * The percentage itself is `percentOfHundred`'s, which truncates, so this can
+ * never read the milestone's own threshold back to a player the milestone has
+ * not awarded.
+ */
+export function accuracyText(scope: ScopeReadout): string {
+  if (scope.accuracy === null) {
+    return NOTHING_YET;
+  }
+  const noun = scope.decisions === 1 ? 'decision' : 'decisions';
+  return `${percentOfHundred(scope.accuracy)} over ${chips(scope.decisions)} ${noun}`;
 }
 
 // ---------------------------------------------------------------------------

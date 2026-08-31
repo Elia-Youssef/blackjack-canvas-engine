@@ -248,10 +248,29 @@ export function createFocusPolicy(options: FocusOptions): FocusPolicy {
   return {
     sync(frame: FocusFrame): void {
       const wanted = frame.overlay;
-      if (wanted !== null && open === null) {
-        // Opened. Remember where focus was, then give it to the dialog itself
-        // rather than to the first control inside it, so what a screen reader
-        // reads on arrival is the panel's name and not "Close, button".
+      if (wanted !== null && wanted !== open) {
+        // Opened, or switched straight from another panel. Remember where focus
+        // was, then give it to the dialog itself rather than to the first
+        // control inside it, so what a screen reader reads on arrival is the
+        // panel's name and not "Close, button".
+        //
+        // **A switch is a close and an open, not neither.** The three openers
+        // live in the top bar, outside the overlay host, and nothing disables
+        // them while a panel is open (SPEC 10 calls the overlays reachable at
+        // any time, and `tests/browser/keyboard.spec.ts` already proves a
+        // background control takes focus with a panel up). So two presses put
+        // a different panel behind the same host, and a condition written as
+        // `open === null` skipped both branches: the new panel never took
+        // focus, `Overlays.update` rewrote the host's accessible name under a
+        // screen reader with no focus event to announce it, and Close then
+        // went back to the opener of the panel the player had already left.
+        //
+        // The restore target is recaptured here rather than carried over from
+        // the panel being replaced, so Close returns to the control the player
+        // last pressed to arrive. `options.opener(wanted)` is the fallback for
+        // the engines that do not focus a button on press, which is the same
+        // pair of readings the open branch has always used, and it makes both
+        // engines land on the same control.
         restoreTo = activeInShell() ?? options.opener(wanted);
         dialog.focus();
       } else if (wanted === null && open !== null) {

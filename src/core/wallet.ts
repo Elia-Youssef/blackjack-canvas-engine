@@ -93,6 +93,10 @@
  * without touching it. It marks the **balance**, never the balance plus what is
  * still committed: a hand paid while its sibling is still on the table would
  * otherwise mark money that is at risk, and unlock a table early and for good.
+ * It is not the balance plus what is still owed either: SPEC 4.7's deferred
+ * stake is money `endRound` takes straight back, so the mark reads
+ * `chips - deferredStake` and the two readings the conserved quantity makes
+ * available are both refused for the same reason.
  * Lifetime statistics and milestones survive the same reset and are not this
  * module's: `statistics.ts` is built at `BJ-10`, `J6` grades the milestones and
  * `J5` the hand history, and `C4` at `BJ-20` grades the preservation clause end
@@ -701,10 +705,23 @@ export function createWallet(options: WalletOptions = {}): Wallet {
   let insuranceStake = 0;
   let deferredStake = 0;
 
-  /** The high-water mark of SPEC 6. It rises and never falls. */
+  /**
+   * The high-water mark of SPEC 6. It rises and never falls.
+   *
+   * **The balance it marks is the settled one**, which is `chips` less what is
+   * still owed. SPEC 4.7's even money can leave part of the stake unfunded, and
+   * on every deferred round the balance peaks at exactly `2.5 x wager` between
+   * `settleHand` and `endRound` while `deferredStake` of that is money the
+   * player does not have: `endRound` takes it straight back. Marking the peak
+   * put the mark permanently above a balance the player never held free, in the
+   * number SPEC 6 keys every unlock to and SPEC 13 persists. It is the mirror of
+   * the third term's reading this module's header already refuses: money still
+   * at risk is not a balance, and neither is money still owed.
+   */
   function recordBest(): void {
-    if (chips > bestBalance) {
-      bestBalance = chips;
+    const settledBalance = chips - deferredStake;
+    if (settledBalance > bestBalance) {
+      bestBalance = settledBalance;
     }
   }
 

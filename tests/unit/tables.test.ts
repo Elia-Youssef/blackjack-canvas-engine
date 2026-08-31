@@ -260,6 +260,19 @@ function place(wallet: Wallet, id: TableId, target: number): void {
   expect(wallet.readout().wager).toBe(target);
 }
 
+/** Drive a fresh wallet's balance down to `target` in whole losing rounds. */
+function loseDownTo(target: number): Wallet {
+  const wallet = createWallet();
+  const turn = bounded('losing a fresh bankroll down to a balance', LOOP_LIMIT);
+  while (wallet.readout().chips > target) {
+    turn();
+    const step = Math.min(100, wallet.readout().chips - target);
+    playRound(wallet, 'bronze', step, -step);
+  }
+  expect(wallet.readout().chips).toBe(target);
+  return wallet;
+}
+
 /** One round at one wager, settled at the net given. Nothing is split. */
 function playRound(wallet: Wallet, id: TableId, wager: number, net: number): void {
   place(wallet, id, wager);
@@ -697,6 +710,113 @@ describe('J2: unlocks are keyed to the best chip balance ever reached', () => {
     expect(Math.max(...committedReading)).toBe(COMMITTED_READING_PEAK);
     expect(COMMITTED_READING_PEAK).toBeGreaterThanOrEqual(row('silver').unlocksAt);
     expect(isUnlocked('silver', Math.max(...committedReading))).toBe(true);
+  });
+
+  /**
+   * The fourth term's mirror of the test above, which had neither a test nor an
+   * entry until AUDIT-1.
+   *
+   * The conserved quantity is `chips + committed + insuranceStake -
+   * deferredStake`, and the mark reads the **balance**. The test above proves
+   * it does not read the third term's money, which is still at risk; this one
+   * proves it does not read money that is still **owed**, which is the fourth.
+   *
+   * SPEC 4.7's even money is the one path that produces a deferred stake, and
+   * the arithmetic there is exact on both branches. Entering on `B` with wager
+   * `W`, the deal leaves `B - W`; even money stakes `W / 2` and defers
+   * `1.5W - B` when `B < 1.5W`. On a dealer natural the peek credits `3 x stake`
+   * and rung 2 pushes `W`; on no dealer natural the peek credits nothing and
+   * rung 3 pays `2.5W`. Either way the balance stands at exactly `2.5W` when
+   * the last `recordBest` fires, and `endRound` then takes `1.5W - B` back to
+   * leave `B + W`. So the mark taken at the peak stood `deferredStake` above a
+   * balance the player never held free, permanently, in a number SPEC 6 keys
+   * every unlock to and SPEC 13 persists.
+   */
+  it('marks the balance and never the money it still owes', () => {
+    for (const dealerNatural of [false, true]) {
+      const wallet = loseDownTo(700);
+      const silver = tableLimits('silver');
+      expect(wallet.readout().chips).toBe(700);
+      expect(wallet.readout().bestBalance).toBe(STARTING_CHIPS);
+
+      const wager = 500;
+      place(wallet, 'silver', wager);
+      expect(wallet.commitInitial(silver).ok).toBe(true);
+      expect(wallet.readout().chips).toBe(200);
+
+      // SPEC 4.7's even money: a stake of half the wager, offered regardless of
+      // balance. 200 funds it and 50 defers.
+      const stake = wager / 2;
+      wallet.takeInsurance(stake);
+      const staked = wallet.readout();
+      expect(staked.chips).toBe(0);
+      expect(staked.deferredStake).toBe(50);
+      expect(staked.conserved).toBe(700);
+
+      wallet.settleInsurance(dealerNatural ? 2 * stake : -stake);
+      wallet.settleHand(0, dealerNatural ? 0 : (wager * 3) / 2);
+
+      // The peak, at the moment the last `recordBest` fired. The balance reads
+      // 1,250 and 50 of it is owed, so the mark is 1,200 and not 1,250.
+      const atSettling = wallet.readout();
+      expect(atSettling.chips, 'the derived peak is not 2.5 x wager').toBe(2.5 * wager);
+      expect(atSettling.deferredStake).toBe(50);
+      expect(atSettling.bestBalance, 'the mark read a balance still owing').toBe(
+        atSettling.chips - atSettling.deferredStake,
+      );
+
+      wallet.endRound();
+      const closed = wallet.readout();
+      // SPEC 4.7's net is +wager on both branches: 700 + 500 = 1,200.
+      expect(closed.chips).toBe(1200);
+      expect(closed.conserved).toBe(1200);
+      expect(closed.deferredStake).toBe(0);
+      expect(closed.bestBalance - closed.chips, 'the mark outlived the money').toBe(0);
+
+      // And it is permanent: SPEC 6 keys unlocks to it and it never falls.
+      wallet.reset();
+      expect(wallet.readout().bestBalance).toBe(1200);
+    }
+  });
+
+  /**
+   * Why the defect above was invisible on the shipped tables, asserted rather
+   * than argued.
+   *
+   * `recordBest` only moves the mark when the peak exceeds the mark already
+   * held, and a player seated at table `T` already holds one: `createWallet`
+   * refuses a carried mark below `STARTING_CHIPS`, the mark only rises, and
+   * `canEnter` refuses a seat whose `unlocksAt` the mark has not reached. So
+   * the bound is `2.5 x maximum < max(STARTING_CHIPS, unlocksAt)` per row, and
+   * the narrowest margin on the shipped set is 2.00x.
+   *
+   * **The load-bearing comparison is the seat's mark floor, not the thresholds
+   * in the abstract.** At Gold, `2.5 x 2000 = 5000` is above Silver's 2,500
+   * threshold and above every table minimum; what saves it is that a Gold seat
+   * already implies a mark of at least 10,000.
+   *
+   * Retuning any maximum or any threshold fails here rather than quietly making
+   * the mark reachable again.
+   */
+  it('keeps every table maximum clear of the seat its deferred peak could mark', () => {
+    const margins = TABLES.map((limits) => ({
+      id: limits.id,
+      peak: 2.5 * limits.maximum,
+      floor: Math.max(STARTING_CHIPS, limits.unlocksAt),
+    }));
+    expect(margins).toEqual([
+      { id: 'bronze', peak: 250, floor: 1000 },
+      { id: 'silver', peak: 1250, floor: 2500 },
+      { id: 'gold', peak: 5000, floor: 10_000 },
+    ]);
+    for (const margin of margins) {
+      expect(margin.peak, `${margin.id}: the deferred peak reaches its own seat`).toBeLessThan(
+        margin.floor,
+      );
+    }
+    // Gold's peak clears Silver's threshold, which is the reason the bound is
+    // written against the seat rather than against the thresholds.
+    expect(isUnlocked('silver', 2.5 * row('gold').maximum)).toBe(true);
   });
 });
 

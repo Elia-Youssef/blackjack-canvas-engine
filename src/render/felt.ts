@@ -412,8 +412,22 @@ function drawPrint(ctx: CanvasRenderingContext2D, spec: FeltSpec): void {
  * it. The bake follows the same two-pass discipline as a frame, shapes then
  * text, each with its state set explicitly, because the offscreen is a canvas
  * like any other and inherits nothing either.
+ *
+ * **`grain` is a thunk because the flat felt never reads one.** SPEC 16's
+ * forced-colors subsection suppresses the gradient and the grain under the
+ * high-contrast set, so the whole grain path below is inside a branch this bake
+ * does not take; a `GrainTiles` passed by value made the caller bake 4,096
+ * cells into two canvases first, and this function then threw them away. Worse
+ * than wasted: `scene.ts` caches grain pairs in a bound of four, and a
+ * forced-colors session that visits three tables filled it with pairs no frame
+ * can draw and evicted the pair the standard set was still using. The thunk
+ * moves the decision to the one place that knows the answer.
  */
-export function bakeFelt(canvas: SurfaceCanvas, spec: FeltSpec, grain: GrainTiles): FeltLayer {
+export function bakeFelt(
+  canvas: SurfaceCanvas,
+  spec: FeltSpec,
+  grain: () => GrainTiles,
+): FeltLayer {
   const tokens = spec.palette.surface;
   const felt = feltColour(tokens, spec.felt);
   const surface = createSurface(canvas, { width: spec.width, height: spec.height, dpr: spec.dpr });
@@ -430,15 +444,16 @@ export function bakeFelt(canvas: SurfaceCanvas, spec: FeltSpec, grain: GrainTile
   // flat fill". The ground, the band, the rail and the print are unchanged, so
   // what the set removes is texture and never information.
   if (!spec.palette.flatFelt) {
+    const tiles = grain();
     // A pair baked for another colour or another backing-store scale would
     // tile the wrong texture at the wrong resolution and nothing downstream
     // would say so, which is exactly the failure a cache in front of a bake
     // invites. It refuses instead.
-    if (!sameGrain(grain.spec, { felt, dpr: spec.dpr })) {
+    if (!sameGrain(tiles.spec, { felt, dpr: spec.dpr })) {
       throw new Error('felt: the grain tiles were baked for another colour or backing-store scale');
     }
     drawVignette(ctx, spec, frame, felt);
-    drawGrain(ctx, spec, frame, grain);
+    drawGrain(ctx, spec, frame, tiles);
   }
   drawBand(ctx, spec);
   drawRail(ctx, frame, tokens.rail);

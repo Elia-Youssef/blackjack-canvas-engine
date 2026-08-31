@@ -153,6 +153,60 @@ describe('SPEC 13: the composition root reads every one of them at boot', () => 
     expect(missing, 'a persisted setting is saved and never restored').toEqual([]);
   });
 
+  /**
+   * The other door, and the one setting that had none. `AUDIT-1`.
+   *
+   * Six of the eight arrive with an `options.X ?? persisted...` merge, and
+   * `theme` alone read the document with no option in front of it, while
+   * `SessionState.theme` cited the same Speed precedent the six follow and the
+   * merge comment above them claimed "every merge runs the option on the
+   * right". `Theme` is three-valued, so unlike `alwaysReduceMotion` there was
+   * no boolean shorthand standing in for it either: an explicit theme simply
+   * could not be booted, and every theme test drives the panel by click.
+   *
+   * Scanned rather than booted, for the reason the census above gives: the
+   * composition root assembles a DOM shell and an audio engine and does not run
+   * under this runner. What is held here is the merge's shape, which is the
+   * thing that was missing.
+   */
+  it('lets an explicit option win over the document, for every setting that has one', () => {
+    const body = bootBody();
+    // The five that always had a `??` door, and `theme`, which now does.
+    const merges: readonly (readonly [string, string])[] = [
+      ['table', 'options.table ?? restored.launch.table'],
+      ['speed', 'options.speed ?? persisted.settings.speed'],
+      ['coachMode', 'options.coachMode ?? persisted.settings.coach'],
+      ['surfaceSize', 'options.surfaceSize ?? persisted.settings.surfaceSize'],
+      ['theme', 'options.theme ?? persisted.settings.theme'],
+    ];
+    for (const [name, merge] of merges) {
+      expect(body, `${name} has no boot door`).toContain(merge);
+    }
+    // The scan can tell a merge from a bare read, or the assertions above are
+    // satisfied by the file merely mentioning the setting.
+    expect(body).not.toContain('let theme: Theme = persisted.settings.theme;');
+  });
+
+  it('declares the option on BootOptions, so a caller can actually pass it', () => {
+    const options = MAIN.slice(
+      MAIN.indexOf('export interface BootOptions'),
+      MAIN.indexOf('let current: Game | null = null;'),
+    );
+    expect(options.length).toBeGreaterThan(0);
+    // Every optional setting the merges above spend, declared. `theme` was the
+    // absentee; the four beside it are the control that this slice is the
+    // interface and not an empty string.
+    for (const declaration of [
+      'readonly speed?: Speed;',
+      'readonly surfaceSize?: SurfaceSize;',
+      'readonly coachMode?: CoachMode;',
+      'readonly volume?: number;',
+      'readonly theme?: Theme;',
+    ]) {
+      expect(options, `BootOptions is missing ${declaration}`).toContain(declaration);
+    }
+  });
+
   it('writes all eight back, which the compiler already enforces', () => {
     // The other end of the round trip, asserted here so the two halves are
     // stated together rather than one of them being assumed. `save()` builds a

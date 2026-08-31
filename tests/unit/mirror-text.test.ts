@@ -46,6 +46,7 @@ import {
   offerText,
   phaseText,
   rankText,
+  reasonText,
   screenTitle,
   suitText,
   unavailableText,
@@ -263,6 +264,43 @@ describe('G4: the reason a control is greyed is one reading, rendered twice', ()
     expect(unavailableText('Double', 'not-two-cards')).toBe(
       'Double: Only on a hand of exactly two cards.',
     );
+  });
+
+  it('greys a chip for its denomination, in the sentence that state deserves', () => {
+    // SPEC 4.11 gives the ceiling two player meanings and this is the first of
+    // them: a 500 chip at Bronze can never be wagered at this table whatever
+    // the wager on the board is, which is not the same fact as a tap that
+    // would carry the wager past the ceiling. The betting bar held the
+    // accurate sentence privately and the mirror spoke the other one, against
+    // `src/ui/dom.ts`'s own "three surfaces, one sentence". On the `BJ-21`
+    // chooser precedent the split is display-only: `core/wallet.ts` still
+    // answers one `above-ceiling` for both and nothing downstream of it
+    // branches.
+    const table = createTable({
+      wallet: createWallet(),
+      table: 'bronze',
+      rules: {},
+      seed: 1,
+    });
+    table.apply({ kind: 'start' });
+    const readout = table.readout();
+    expect(readout.phase.kind).toBe('betting');
+    const chips = screenAvailability(readout).filter((control) =>
+      control.key.startsWith('chip-'),
+    );
+    // Bronze runs 10 to 100, so the 500 is greyed and the 10 is not: the
+    // instrument sees both answers, not only the one being asserted.
+    expect(chips.map((control) => `${control.key}: ${String(control.refusal)}`)).toEqual([
+      'chip-10: null',
+      'chip-50: null',
+      'chip-100: null',
+      'chip-500: chip-over-ceiling',
+    ]);
+    expect(unavailableText('500', 'chip-over-ceiling')).toBe(
+      '500: This chip is more than the table maximum or your balance allows.',
+    );
+    // The two meanings really are two sentences, or the split bought nothing.
+    expect(reasonText('chip-over-ceiling')).not.toBe(reasonText('above-ceiling'));
   });
 
   it('offers no control at all on the five timed phases', () => {

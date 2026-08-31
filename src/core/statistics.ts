@@ -538,10 +538,23 @@ export function observeRound(
 // SPEC 11's readout
 // ---------------------------------------------------------------------------
 
-/** One scope as SPEC 11 and SPEC 7 show it together. */
+/**
+ * One scope as SPEC 11 and SPEC 7 show it together.
+ *
+ * SPEC 7 names three accuracy quantities, "decisions made, decisions matching
+ * basic strategy, and a running percentage", and all three are here: publishing
+ * the percentage alone left the Statistics panel with no denominator to show
+ * beside it, so 100 percent over one decision and 100 percent over four hundred
+ * read identically. The two counters are the coach's own, passed through rather
+ * than tallied a second time.
+ */
 export interface ScopeReadout extends Counters {
   /** SPEC 7's running percentage for this scope, or `null` before the first. */
   readonly accuracy: number | null;
+  /** SPEC 7's "decisions made", which the percentage above is taken over. */
+  readonly decisions: number;
+  /** SPEC 7's "decisions matching basic strategy". */
+  readonly matched: number;
 }
 
 /**
@@ -563,7 +576,12 @@ export interface StatisticsReadout {
 }
 
 function scope(counters: Counters, coach: CoachAccuracy): ScopeReadout {
-  return Object.freeze({ ...counters, accuracy: accuracy(coach) });
+  return Object.freeze({
+    ...counters,
+    accuracy: accuracy(coach),
+    decisions: coach.decisions,
+    matched: coach.matched,
+  });
 }
 
 /**
