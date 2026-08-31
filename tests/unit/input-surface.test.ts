@@ -33,6 +33,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { stripComments as code } from './support/source-scan';
+
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 interface SourceFile {
@@ -55,11 +57,6 @@ function sourcesUnder(...segments: readonly string[]): readonly SourceFile[] {
   };
   walk(root);
   return files;
-}
-
-/** Source with its comments removed, so a scan reads code and not prose. */
-function code(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
 /** Every event name this file's scans care about, as they appear in a listener. */

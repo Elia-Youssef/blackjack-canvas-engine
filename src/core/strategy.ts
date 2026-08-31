@@ -504,6 +504,16 @@ function buildSurface<Row>(
   return surface;
 }
 
+/**
+ * One cell out of one surface.
+ *
+ * The row guard is reachable and pinned; the column guard is a deliberate belt.
+ * `chartRank` is total over `Rank`, so every up card a hand can carry maps into
+ * `UP_CARDS` and `build` filled every one of them, which leaves a cast as the
+ * only way to reach the second throw. It stays because `read` is generic over
+ * the row type and a future surface built from a shorter column list would find
+ * it here rather than by answering with an undefined preference list.
+ */
 function read<Row>(
   surface: Surface<Row>,
   row: Row,
@@ -622,6 +632,12 @@ export interface CoachSituation {
  * `dealerVisible[0]` is the up card while the hole card is down, which SPEC 4.3
  * fixes: the deal is player, dealer up, player, dealer down, and `table.ts`
  * publishes only the face-up cards until the reveal.
+ *
+ * **The two-`undefined` guard below is a deliberate belt.** At `playerTurn` the
+ * active index always names a hand and `dealerVisible` always carries the up
+ * card, so no readout the machine publishes can take that branch; it is what
+ * `noUncheckedIndexedAccess` requires and it answers `null` rather than throwing
+ * so a hand-built readout costs a lost verdict rather than a crashed frame.
  */
 export function situationAt(readout: TableReadout): CoachSituation | null {
   const { phase } = readout;

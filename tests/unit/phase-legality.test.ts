@@ -92,6 +92,7 @@ import type {
 } from '../../src/core/wallet';
 import { createWallet, tableLimits } from '../../src/core/wallet';
 
+import { bounded } from './support/drive';
 import { scriptedShoe } from './support/stacked-shoe';
 
 // ---------------------------------------------------------------------------
@@ -320,17 +321,14 @@ function plainTable(rounds: number, options: TableOptions = {}): Table {
  */
 const LOOP_LIMIT = 2000;
 
-function bounded(label: string): () => void {
-  let turns = 0;
-  return () => {
-    turns += 1;
-    if (turns > LOOP_LIMIT) {
-      throw new RangeError(`${label} did not finish inside ${String(LOOP_LIMIT)} turns`);
-    }
-  };
-}
-
-/** Read an accepted result, or fail loudly with the reason it was refused. */
+/**
+ * Read an accepted result, or fail loudly with the reason it was refused.
+ *
+ * Kept local rather than taken from `./support/drive`, which the other eleven
+ * suites now share. This file drives 187 legality cells and a failure here has
+ * to say which direction it failed in: the shared sentence names the refusal,
+ * and this one names the expectation the refusal broke.
+ */
 function accept(result: IntentResult): IntentResult {
   if (!result.ok) {
     throw new Error(
@@ -342,7 +340,7 @@ function accept(result: IntentResult): IntentResult {
 
 /** Feed the accumulator in chunks no larger than QUALITY-BAR section 7's clamp. */
 function feed(table: Table, seconds: number): void {
-  const turn = bounded('feeding the accumulator');
+  const turn = bounded('feeding the accumulator', LOOP_LIMIT);
   let left = seconds;
   while (left > 0) {
     turn();
@@ -382,7 +380,7 @@ function signature(table: Table): string {
  * and gets a clamped frame. Nothing here reaches inside the machine.
  */
 function driveTo(table: Table, target: PhaseKind): Table {
-  const turn = bounded(`driving the machine to ${target}`);
+  const turn = bounded(`driving the machine to ${target}`, LOOP_LIMIT);
   while (table.readout().phase.kind !== target) {
     turn();
     const state = table.readout();
@@ -419,7 +417,7 @@ function driveTo(table: Table, target: PhaseKind): Table {
  */
 function driveRound(table: Table): readonly PhaseKind[] {
   const seen: PhaseKind[] = [table.readout().phase.kind];
-  const turn = bounded('driving one round to the round result');
+  const turn = bounded('driving one round to the round result', LOOP_LIMIT);
   while (table.readout().phase.kind !== 'roundResult') {
     turn();
     const was = table.readout().phase.kind;
@@ -535,7 +533,7 @@ function wrapWallet(inner: Wallet, hooks: WalletHooks = {}): Wallet {
 
 /** Build a wager out of chip taps, largest denomination first. SPEC 4.11. */
 function place(wallet: Wallet, limits: TableLimits, target: number): void {
-  const turn = bounded('building a wager out of chip taps');
+  const turn = bounded('building a wager out of chip taps', LOOP_LIMIT);
   for (const chip of [500, 100, 50, 10] as const) {
     while (wallet.readout().wager + chip <= target) {
       turn();

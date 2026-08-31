@@ -304,8 +304,12 @@ body {
   min-width: 0;
 }
 
-/* The five timed screens carry only their status line, so this row used to
- * collapse from the 76 px action-row height to 24 px. At the 1280 x 800
+/* The five timed screens carry no control of their own, so this row holds only
+ * `.bj-notice`, whose own `min-height: var(--space-5)` is the 24 px it used to
+ * collapse to from the 76 px action-row height. The phase sentence goes to the
+ * visually hidden mirror in `main` and never into this row, so the growth to
+ * watch here is a `wrong-phase` notice wrapping at 320 px under 200 percent
+ * text, not a translated status line. At the 1280 x 800
  * reference viewport that made the play surface jump from 1029 x 579 to
  * 1121 x 631 and back, reallocating both canvas backing stores on the first
  * deal. Under QUALITY-BAR section 2's 4x throttle that compositor commit was

@@ -286,17 +286,34 @@ export interface PersistenceReadout {
   readonly load: LoadReport;
 }
 
-/** SPEC 13's persistence, as the composition root at `BJ-19` will hold it. */
+/**
+ * SPEC 13's persistence, as the composition root holds it.
+ *
+ * **Three of the six are the shipped page's, and two of the rest are
+ * test-facing seams.** `restored()`, `save()` and `resetAll()` are what
+ * `src/main.ts` calls. `document()` and `update()` are consumed by
+ * `tests/unit/storage-migration.test.ts` and `tests/unit/storage-corrupt.test.ts`
+ * and by nothing under `src/`: the root assembles the whole document from the
+ * live session at every save rather than patching a held one, deliberately, so
+ * the patch form is a convenience for a test that wants one field moved.
+ * Named here rather than deleted, so the surface reads as what it is.
+ */
 export interface Persistence {
   /** The degradation, for the settings panel and for a test. */
   readout(): PersistenceReadout;
-  /** The authoritative in-memory document. */
+  /** The authoritative in-memory document. A test-facing seam. */
   document(): GameDocument;
-  /** The launch this load produced. Rebuilt only by `resetAll`. */
-  session(): RestoredSession;
+  /**
+   * The launch this load produced. Rebuilt only by `resetAll`.
+   *
+   * Named `restored` and not `session`, because `Game.session()` in
+   * `src/main.ts` is a different shape with a different lifetime, the live
+   * settings set rebuilt on every call, and the composition root holds both.
+   */
+  restored(): RestoredSession;
   /** Replace the document and try to write it. */
   save(next: GameDocument): SaveResult;
-  /** Replace some of the document and try to write it. */
+  /** Replace some of the document and try to write it. A test-facing seam. */
   update(patch: Partial<GameDocument>): SaveResult;
   /**
    * SPEC 14's Reset all data, and SPEC 8's "cleared only by a full data reset".
@@ -392,7 +409,7 @@ export function createPersistence(probe: StoreProbe): Persistence {
      * 1,000 mid-session. Only `resetAll` replaces it, because that is the one
      * operation whose whole point is that everything starts again.
      */
-    session(): RestoredSession {
+    restored(): RestoredSession {
       return restored;
     },
     save,

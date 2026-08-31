@@ -202,7 +202,16 @@ export function playerActionText(action: PlayerAction): string {
   }
 }
 
-/** SPEC 4.5's actions, as the coach names one. */
+/**
+ * SPEC 4.5's actions, as the coach names one.
+ *
+ * **`double` is "Double Down" here and "Double" on the control**, and the split
+ * is deliberate: this is the prose register, following SPEC 4.5's action table,
+ * while `ACTION_LABELS` in `src/ui/availability.ts` is the button register,
+ * following the control row SPEC.md draws. The other four names agree in both
+ * places. Unifying them drops one of the two spec spellings, so it is a
+ * question for whoever owns the spec rather than a tidy-up.
+ */
 export function actionText(action: CoachAction): string {
   switch (action) {
     case 'hit':
@@ -497,6 +506,19 @@ export function documentTitle(phase: Phase): string {
   return `${screenTitle(phase)} - Blackjack`;
 }
 
+/**
+ * SPEC 4.7's side wager, by the name the offer taken gives it.
+ *
+ * One decision, in the file that owns the sentences: the title bar, the
+ * announcement of the result and the printed result panel all describe the same
+ * round, and a rename or a translation pass that reached only one of them would
+ * have a player hearing the round under one name and reading it under another
+ * on the screen that shows both.
+ */
+export function sideWagerText(evenMoney: boolean): string {
+  return evenMoney ? 'Even money' : 'Insurance';
+}
+
 /** The short name of one screen, as the title bar carries it. */
 export function screenTitle(phase: Phase): string {
   switch (phase.kind) {
@@ -509,7 +531,7 @@ export function screenTitle(phase: Phase): string {
     case 'peek':
       return 'Dealer peek';
     case 'insurance':
-      return phase.offer.evenMoney ? 'Even money' : 'Insurance';
+      return sideWagerText(phase.offer.evenMoney);
     case 'playerTurn':
       return 'Your turn';
     case 'reveal':

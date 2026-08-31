@@ -48,6 +48,7 @@ import type { Table, TableReadout } from '../../src/core/table';
 import { OPENING_DEAL, TIMINGS, createTable } from '../../src/core/table';
 import type { PhaseKind } from '../../src/core/types';
 
+import { acceptIntent as accept, bounded } from './support/drive';
 import { scriptedShoe } from './support/stacked-shoe';
 
 // ---------------------------------------------------------------------------
@@ -83,26 +84,9 @@ const ONE_CARD = TIMINGS.dealInterval;
 /** Bounded, for the reason `wallet.test.ts` gives: a stall must fail loudly. */
 const LOOP_LIMIT = 500;
 
-function bounded(label: string): () => void {
-  let turns = 0;
-  return () => {
-    turns += 1;
-    if (turns > LOOP_LIMIT) {
-      throw new RangeError(`${label} did not finish inside ${String(LOOP_LIMIT)} turns`);
-    }
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Driving the machine, through SPEC 10's controls and nothing else
 // ---------------------------------------------------------------------------
-
-function accept(table: Table, intent: Parameters<Table['apply']>[0]): void {
-  const result = table.apply(intent);
-  if (!result.ok) {
-    throw new Error(`${intent.kind} was refused by ${result.layer} as ${result.reason}`);
-  }
-}
 
 /** Start, wager and Deal, so the machine is sitting at the top of the queue. */
 function toDealing(table: Table): Table {
@@ -148,7 +132,7 @@ function published(state: TableReadout): readonly Card[] {
 /** Drive a whole round, keeping every snapshot it passed through. */
 function transcript(table: Table): readonly TableReadout[] {
   const seen: TableReadout[] = [table.readout()];
-  const turn = bounded('driving one round to the round result');
+  const turn = bounded('driving one round to the round result', LOOP_LIMIT);
   while (table.readout().phase.kind !== 'roundResult') {
     turn();
     const state = table.readout();

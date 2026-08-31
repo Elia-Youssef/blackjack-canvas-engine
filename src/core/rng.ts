@@ -179,7 +179,9 @@ function createFrom(wordA: number, wordB: number, wordC: number, wordD: number):
    * near 2^32. Rejection has no such range where the fault hides.
    *
    * At most half of the draws are rejected, so the expected number of words per
-   * call is under two whatever the bound is.
+   * call is at most two. Two is reached at a bound of 1, where `bitsFor`
+   * deliberately keeps a bit nothing needs and exactly half the draws are
+   * thrown away; every larger bound accepts more than half and costs less.
    */
   function nextInt(bound: number): number {
     if (!Number.isInteger(bound) || bound < 1 || bound > UINT32_SPAN) {

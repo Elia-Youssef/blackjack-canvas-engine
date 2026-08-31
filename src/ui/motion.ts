@@ -33,8 +33,13 @@
  * `tests/unit/storage-write-failure.test.ts` requires that exactly one file
  * under `src/` names the platform storage globals, and the seam it means is
  * `src/storage/store.ts`. The composition root takes `devicePixelRatio` the same
- * way and says so.
+ * way and says so. The reading itself lives in `src/ui/platform.ts`, which is
+ * the one guard five modules were carrying a copy of; the query constant below
+ * and the subscription further down are what makes this module the owner of
+ * reduced motion, and both stay here.
  */
+
+import { mediaQuery } from './platform';
 
 /** The media query QUALITY-BAR section 4 and item `E7` are both written on. */
 export const REDUCED_MOTION_QUERY = '(prefers-reduced-motion: reduce)';
@@ -105,22 +110,6 @@ export interface MotionPreferenceOptions {
 }
 
 /**
- * Read the platform's answer, or `false` where there is nothing to ask.
- *
- * A host with no `matchMedia` is not a host that prefers reduced motion: it is a
- * host that has not been asked, and defaulting to reduced there would remove the
- * animation from every environment the game is unit tested in and hide the
- * difference `E7` exists to measure. All three engines the browser gate runs
- * carry it; the guard is for the headless runner.
- */
-function platformQuery(): MediaQueryList | null {
-  if (typeof matchMedia !== 'function') {
-    return null;
-  }
-  return matchMedia(REDUCED_MOTION_QUERY);
-}
-
-/**
  * Build the preference and start listening.
  *
  * The listener matters even though the query rarely changes mid-session: a
@@ -129,7 +118,13 @@ function platformQuery(): MediaQueryList | null {
  * asks this object rather than a value captured at boot.
  */
 export function createMotionPreference(options: MotionPreferenceOptions = {}): MotionPreference {
-  const query = options.query === undefined ? platformQuery() : options.query;
+  // Read the platform's answer, or `false` where there is nothing to ask. A
+  // host with no `matchMedia` is not a host that prefers reduced motion: it is
+  // a host that has not been asked, and defaulting to reduced there would
+  // remove the animation from every environment the game is unit tested in and
+  // hide the difference `E7` exists to measure. All three engines the browser
+  // gate runs carry it; `src/ui/platform.ts`'s guard is for the headless runner.
+  const query = options.query === undefined ? mediaQuery(REDUCED_MOTION_QUERY) : options.query;
   let alwaysReduce = options.alwaysReduce ?? false;
   let system = query?.matches ?? false;
 

@@ -53,6 +53,7 @@ import { expect, test, type Page } from '@playwright/test';
 
 import { INTENT_KINDS } from '../../src/core/table';
 import type { ChromeActions } from '../../src/ui/state';
+import { expectWager } from './support/flow';
 import { BUST_OUT_WAGER, bustOutSeed, splitSeed } from './support/action-seeds';
 import {
   INPUT_METHODS,
@@ -168,26 +169,6 @@ const ROUTE_ACTIONS = Object.freeze({
   sound: ['toggleMuted'],
   disclosure: ['moreReadouts'],
 });
-
-/** The wager on SPEC 11's readout, as a number. */
-async function wagerOf(page: Page): Promise<number> {
-  return numberIn(readoutValue(page, 'wager'));
-}
-
-/**
- * Wait for SPEC 11's wager readout to reach a number, and require it.
- *
- * A poll rather than a read, and the reason is DESIGN section 3: a press is
- * **queued**, drained on the next frame and rendered by the sync at the end of
- * it, so a wager read in the same round trip as the press it followed is the
- * wager from before. The poll's failure message carries what the readout
- * actually said, so a wager that never arrives is still a readable failure.
- */
-async function expectWager(page: Page, wager: number): Promise<void> {
-  await expect
-    .poll(async () => wagerOf(page), { message: `the wager readout reaches ${String(wager)}` })
-    .toBe(wager);
-}
 
 /**
  * Wait until the player's turn is on the exact hand named, with the cards named.

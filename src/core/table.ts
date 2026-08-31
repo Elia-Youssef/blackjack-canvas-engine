@@ -25,11 +25,17 @@
  *
  * **The randomness is the seeded stream and nothing else.** SPEC 4.1 and item
  * `M3`: the table takes a seed, builds one session stream from it and hands that
- * stream to the shoe, which splits its own child off it. There is no second
- * consumer yet, and when one arrives it takes its own `split()` rather than
- * sharing the shoe's, which is what keeps a seeded deal stable against a
- * consumer added later. A shoe may be injected instead, which is how a test
- * puts a known pair in front of a known up card without hunting for a seed.
+ * stream to the shoe, which splits its own child off it. A staged deck change
+ * rebuilds the shoe and takes the next child, so the session stream already has
+ * more than one consumer; each takes its own `split()` rather than sharing the
+ * shoe's, which is what keeps a seeded deal stable against a consumer added
+ * later. **A consumer added later must take its `split()` at construction**,
+ * before any `setRules` can rebuild the shoe: a child taken lazily depends on
+ * how many deck changes the player has made, while a child taken at
+ * construction does not. The shoe's own child is unaffected by anything that
+ * splits after it either way, which is the half `determinism.test.ts` pins. A
+ * shoe may be injected instead, which is how a test puts a known pair in front
+ * of a known up card without hunting for a seed.
  *
  * **Legality is checked first, and it is checked here.** SPEC 4.11 blocks
  * "changing the wager after the deal" and "acting after the round ends", and
@@ -141,11 +147,11 @@ export const TIMINGS = Object.freeze({
  *
  * Named beside them because SPEC 5 puts it there and because a multiplier
  * defined next to the control that toggles it would be a second copy of a
- * number the simulation has to agree with. **Nothing here reads it yet**:
- * applying it needs the Settings control and a persisted value, and item `E9`
- * at `BJ-14` grades the whole clause, that Fast multiplies every pacing
- * constant by 0.6, applies in both motion modes, persists, and changes neither
- * the sequence of states nor any outcome.
+ * number the simulation has to agree with. **`speedMultiplier` below is the one
+ * reader**, and `timedStep` is the one consumption site. Item `E9` grades the
+ * whole clause: Fast multiplies every pacing constant by 0.6, applies in both
+ * motion modes, persists, and changes neither the sequence of states nor any
+ * outcome.
  */
 export const FAST_SPEED_MULTIPLIER = 0.6;
 
@@ -202,10 +208,10 @@ export function speedMultiplier(speed: Speed): number {
  * `BJ-14`, whose scripted capture takes a peek on both branches and requires
  * them identical in motion and pacing.
  *
- * **This binds once, so `E9`'s Speed setting must multiply at the consumption
- * site.** The value is read out of `TIMINGS` here at module load, and an alias
- * cannot follow a record that is later replaced or copied. So when `BJ-14`
- * applies Fast it multiplies the duration `timedStep` returns and nothing else.
+ * **This binds once, which is why `E9`'s Speed setting multiplies at the
+ * consumption site.** The value is read out of `TIMINGS` here at module load,
+ * and an alias cannot follow a record that is later replaced or copied. So Fast
+ * multiplies the duration `timedStep` returns and nothing else.
  * A scaled copy of `TIMINGS` would shorten the deal and the reveal and leave
  * the peek at Normal speed, which is a peek whose length no longer matches the
  * pacing around it: the timing difference SPEC 4.4 forbids, graded by `E6`.
@@ -330,7 +336,7 @@ const NOT_FOUND = -1;
  * options deals a fixed, reproducible round, which is what every test in the
  * suite wants and what `B16` at `BJ-12` grades.
  */
-export const DEFAULT_SEED = 1;
+const DEFAULT_SEED = 1;
 
 // ---------------------------------------------------------------------------
 // SPEC 10: which intents each phase allows, and no others
@@ -413,7 +419,7 @@ export const PLAYER_ACTIONS: readonly PlayerAction[] = Object.freeze([
  * gives. Two questions, two lists, and folding them together would put an
  * insurance decision into the coach's accuracy.
  */
-export function playerActionOf(kind: IntentKind): PlayerAction | null {
+function playerActionOf(kind: IntentKind): PlayerAction | null {
   const found = PLAYER_ACTIONS.find((action) => action === kind);
   return found ?? null;
 }
@@ -1680,8 +1686,7 @@ export function createTable(options: TableOptions = {}): Table {
         }
         const state = stateAfterCard(dealTo(index));
         if (state !== 'live') {
-          resolve(index, state);
-          phase = handOverToPlayer();
+          resolveActiveHand(state);
         }
         return accepted('hit');
       }
@@ -1715,8 +1720,7 @@ export function createTable(options: TableOptions = {}): Table {
         }
         hands[index] = Object.freeze({ ...hand, wager: commit.wager });
         const grown = dealTo(index);
-        resolve(index, isBust(grown.cards) ? 'bust' : 'doubled');
-        phase = handOverToPlayer();
+        resolveActiveHand(isBust(grown.cards) ? 'bust' : 'doubled');
         return accepted('double');
       }
       case 'split': {

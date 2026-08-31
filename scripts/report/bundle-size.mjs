@@ -31,6 +31,7 @@ import {
   finish,
   requireDist,
   table,
+  verdict,
 } from './support.mjs';
 
 /** The item's two numbers, in bytes. KB is 1024 bytes, as a bundler reports it. */
@@ -144,13 +145,13 @@ function main() {
           'JavaScript, gzipped',
           `${asKb(jsBytes)} KB`,
           `<= ${asKb(JS_CEILING)} KB`,
-          jsBytes <= JS_CEILING ? 'PASS' : '**FAIL**',
+          verdict(jsBytes <= JS_CEILING),
         ],
         [
           'Total transfer, gzipped',
           `${asKb(totalBytes)} KB`,
           `<= ${asKb(TOTAL_CEILING)} KB`,
-          totalBytes <= TOTAL_CEILING ? 'PASS' : '**FAIL**',
+          verdict(totalBytes <= TOTAL_CEILING),
         ],
         [
           'Headroom on JavaScript',

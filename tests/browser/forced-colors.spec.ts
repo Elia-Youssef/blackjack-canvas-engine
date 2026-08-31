@@ -37,6 +37,7 @@ import { fileURLToPath } from 'node:url';
 
 import { expect, test, type Page } from '@playwright/test';
 
+import { forceColours } from './support/forced-colors';
 import { accessibilityProbe, atShippedBetting, bootGame, control, settle, shell, waitForPhase } from './support/game';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -142,11 +143,6 @@ async function chromeColours(page: Page): Promise<ColourReport> {
     }
     return { used, values: [...values] };
   });
-}
-
-/** Whether the page itself agrees that forced colors is active. */
-async function queryTookEffect(page: Page): Promise<boolean> {
-  return page.evaluate(() => matchMedia('(forced-colors: active)').matches);
 }
 
 /**
@@ -272,23 +268,6 @@ async function feltSample(page: Page): Promise<FeltSample> {
     }
     return { distinct: counts.size, commonest };
   });
-}
-
-async function forceColours(page: Page, browserName: string): Promise<void> {
-  await page.emulateMedia({ forcedColors: 'active' }).catch(() => {
-    // The engine has no forced-colors emulation at all. The check below turns
-    // that into a skip; swallowing it here would be a bare catch, so the reason
-    // is recorded rather than dropped.
-    test.info().annotations.push({
-      type: 'engine',
-      description: `${browserName} rejected the forced-colors emulation`,
-    });
-  });
-  await settle(page);
-  test.skip(
-    !(await queryTookEffect(page)),
-    `${browserName} does not emulate forced-colors, so this criterion is unmeasurable here`,
-  );
 }
 
 test.describe('G9: the chrome adopts the system palette', () => {

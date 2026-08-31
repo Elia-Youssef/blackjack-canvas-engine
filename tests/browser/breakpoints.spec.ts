@@ -62,6 +62,7 @@ import { MIN_SURFACE_HEIGHT, resolveBreakpoint } from '../../src/ui/breakpoints'
 // The control census moved to `support/controls.ts` at `BJ-17`, unchanged: item
 // `D2` grades the same list against a different question, and two copies of it
 // is how one of them quietly stops being complete.
+import { scrollToTop } from './support/flow';
 import { SCREEN_CONTROLS, selectorFor } from './support/controls';
 import {
   atBetting,
@@ -149,13 +150,6 @@ async function reachableByPageScroll(page: Page, selector: string): Promise<stri
     const hit = document.elementFromPoint(centreX, centreY);
     return hit !== null && node.contains(hit) ? 'self' : 'covered';
   }, selector);
-}
-
-async function scrollToTop(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    window.scrollTo(0, 0);
-  });
-  await settle(page);
 }
 
 /** Clause 1, on the regions, on every label, and on the play-surface row. */

@@ -107,6 +107,8 @@ import {
   type SurfaceSize,
 } from '../render/surface';
 
+import { isRecord } from './store';
+
 // ---------------------------------------------------------------------------
 // The key and the schema version. QUALITY-BAR section 8
 // ---------------------------------------------------------------------------
@@ -395,12 +397,6 @@ function reasonFor(value: unknown, mismatch: RepairReason): RepairReason {
 // ---------------------------------------------------------------------------
 // The primitives every field is checked with
 // ---------------------------------------------------------------------------
-
-type Unknowns = Readonly<Record<string, unknown>>;
-
-function isRecord(value: unknown): value is Unknowns {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
 
 function isList(value: unknown): value is readonly unknown[] {
   return Array.isArray(value);

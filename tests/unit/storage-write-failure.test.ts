@@ -52,9 +52,11 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import type { Table, TableReadout } from '../../src/core/table';
+import { acceptIntent as accept } from './support/drive';
+import { stripComments as code } from './support/source-scan';
+
+import type { TableReadout } from '../../src/core/table';
 import { createTable } from '../../src/core/table';
-import type { Intent } from '../../src/core/types';
 import { STARTING_CHIPS } from '../../src/core/wallet';
 import type { GameDocument } from '../../src/storage/document';
 import { DEFAULT_DOCUMENT, STORAGE_KEY } from '../../src/storage/document';
@@ -224,8 +226,8 @@ describe('I3: without preventing the game from starting', () => {
     const persistence = openPersistence(() => host.localStorage);
 
     expect(persistence.readout().durable).toBe(false);
-    expect(reachesBetting(persistence.session())).toBe(true);
-    expect(persistence.session().wallet.readout().chips).toBe(SPEC_STARTING_CHIPS);
+    expect(reachesBetting(persistence.restored())).toBe(true);
+    expect(persistence.restored().wallet.readout().chips).toBe(SPEC_STARTING_CHIPS);
   });
 
   it('starts the game when the store refuses the read', () => {
@@ -235,7 +237,7 @@ describe('I3: without preventing the game from starting', () => {
     expect(persistence.readout().load.source).toBe('unreadable');
     expect(persistence.readout().load.failure?.name).toBe('SecurityError');
     expect(persistence.document()).toEqual(DEFAULT_DOCUMENT);
-    expect(reachesBetting(persistence.session())).toBe(true);
+    expect(reachesBetting(persistence.restored())).toBe(true);
   });
 
   it('says plainly that the carry is degraded, which is what settings shows', () => {
@@ -314,13 +316,6 @@ describe('I3: the in-memory value stays authoritative', () => {
 // ---------------------------------------------------------------------------
 // A write that throws does not interrupt the round
 // ---------------------------------------------------------------------------
-
-function accept(table: Table, intent: Intent): void {
-  const result = table.apply(intent);
-  if (!result.ok) {
-    throw new Error(`${result.kind} was refused by ${result.layer} as ${result.reason}`);
-  }
-}
 
 /**
  * Play one round, saving at every phase transition. The shape a composition
@@ -458,7 +453,7 @@ describe('I3: reset all data degrades the same way', () => {
     const result = persistence.resetAll();
     expect(result.ok).toBe(false);
     expect(persistence.document()).toEqual(DEFAULT_DOCUMENT);
-    expect(persistence.session().wallet.readout().bestBalance).toBe(STARTING_CHIPS);
+    expect(persistence.restored().wallet.readout().bestBalance).toBe(STARTING_CHIPS);
     expect(persistence.readout().carryDegraded).toBe(true);
   });
 
@@ -477,9 +472,9 @@ describe('I3: reset all data degrades the same way', () => {
     createPersistence({ store, durable: true, failure: null }).save(carried);
 
     const persistence = createPersistence({ store, durable: true, failure: null });
-    expect(persistence.session().wallet.readout().bestBalance).toBe(11_000);
-    expect(persistence.session().launch.table).toBe('gold');
-    expect(persistence.session().howToPlaySeen).toBe(true);
+    expect(persistence.restored().wallet.readout().bestBalance).toBe(11_000);
+    expect(persistence.restored().launch.table).toBe('gold');
+    expect(persistence.restored().howToPlaySeen).toBe(true);
     expect(store.read(STORAGE_KEY)).not.toBeNull();
 
     expect(persistence.resetAll().ok).toBe(true);
@@ -487,10 +482,10 @@ describe('I3: reset all data degrades the same way', () => {
     expect(persistence.document()).toEqual(DEFAULT_DOCUMENT);
     // SPEC 14's "clears every persisted value": a fresh wallet at the starting
     // mark, back at the table SPEC 6 never locks, with nothing seen.
-    expect(persistence.session().wallet.readout().bestBalance).toBe(STARTING_CHIPS);
-    expect(persistence.session().launch.table).toBe('bronze');
-    expect(persistence.session().history).toHaveLength(0);
-    expect(persistence.session().howToPlaySeen).toBe(false);
+    expect(persistence.restored().wallet.readout().bestBalance).toBe(STARTING_CHIPS);
+    expect(persistence.restored().launch.table).toBe('bronze');
+    expect(persistence.restored().history).toHaveLength(0);
+    expect(persistence.restored().howToPlaySeen).toBe(false);
     expect(loadDocument(store).report.source).toBe('absent');
   });
 });
@@ -498,19 +493,6 @@ describe('I3: reset all data degrades the same way', () => {
 // ---------------------------------------------------------------------------
 // The two scanners, and the controls that prove they can see
 // ---------------------------------------------------------------------------
-
-/**
- * Strip comments so a scanner reads code and not prose.
- *
- * Deliberately simple, and its limits are known: a `//` inside a string literal
- * would be mistaken for a comment. The guard on the preceding character keeps a
- * `://` intact, and nothing under `src/storage/` contains either. The can-see
- * controls below are what make the simplicity safe: a stripper that removed too
- * much would fail them.
- */
-function code(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
-}
 
 /** QUALITY-BAR section 12: a `catch` with no binding, or with an empty body. */
 function bareCatches(text: string): readonly string[] {

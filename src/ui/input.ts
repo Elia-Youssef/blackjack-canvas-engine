@@ -225,7 +225,10 @@ export function createFocusPolicy(options: FocusOptions): FocusPolicy {
         // `tests/unit/input-surface.test.ts` pins the whole product's listener
         // list, one activation path among them, and a listener outside that
         // list has to be argued for. `BJ-19` argued two more in, the audio
-        // gesture and its resume hook, and the census grew with them.
+        // gesture and its resume hook; `BJ-20` the settings inputs and
+        // `BJ-21` the boundary's two page-level hooks. The census grew with
+        // each of them, which is the gate working: what it holds is not a
+        // number but that nothing joins the list quietly.
         active.scrollIntoView({ block: 'nearest', inline: 'nearest' });
       }
       return;

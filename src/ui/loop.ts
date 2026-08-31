@@ -25,7 +25,14 @@
  * independence against a derived wall-clock schedule, and it drives the machine
  * directly rather than through this file for exactly the reason above: the
  * simulation's behaviour must not depend on who is holding the clock.
+ *
+ * The `document` reading and the two target types are `src/ui/platform.ts`'s:
+ * three modules degraded on the same `typeof` guard and now share it. Why this
+ * one degrades, and what it does with a page that has no tabs to hide, stays
+ * here.
  */
+
+import { type PageTarget, type VisibilityTarget, pageDocument } from './platform';
 
 /** Milliseconds per second, for the one conversion this module performs. */
 const MS_PER_SECOND = 1000;
@@ -50,21 +57,6 @@ export interface FrameLoop {
    */
   dispose(): void;
 }
-
-/**
- * The visibility half of the platform, read for `visibilityState`.
- *
- * `EventTarget` plus the one field the handler reads, so a test can build a
- * fake that answers honestly without a page. The same shape `src/ui/audio.ts`
- * reads its resume from.
- */
-type VisibilityTarget = EventTarget & { readonly visibilityState: string };
-
-/**
- * Where `pagehide` is read from. Window in a page, `null` under a headless
- * test that did not inject one.
- */
-type PageTarget = EventTarget;
 
 /** What a loop is built from. Both schedulers are injectable, for a test. */
 export interface FrameLoopOptions {
@@ -96,27 +88,15 @@ export interface FrameLoopOptions {
   readonly onHidden?: () => void;
 }
 
-/**
- * The page's `document`, or `null` where there is none to read.
- *
- * Read off the global scope by name rather than through `window`, on the same
- * terms `src/ui/audio.ts` reads its own targets: a host with no document is a
- * host whose tabs cannot hide, and the loop there simply never pauses.
- */
-function platformDocument(): Document | null {
-  if (typeof document === 'undefined') {
-    return null;
-  }
-  return document;
-}
-
 /** Build a loop. Nothing is scheduled until `start` is called. */
 export function createFrameLoop(options: FrameLoopOptions): FrameLoop {
   const schedule =
     options.schedule ?? ((callback: (timestamp: number) => void): number => requestAnimationFrame(callback));
   const cancel = options.cancel ?? ((handle: number): void => { cancelAnimationFrame(handle); });
+  // A host with no document is a host whose tabs cannot hide, and the loop
+  // there simply never pauses.
   const documentTarget: VisibilityTarget | null =
-    options.visibility === undefined ? platformDocument() : options.visibility;
+    options.visibility === undefined ? pageDocument() : options.visibility;
   const visibilityTarget = documentTarget;
   // `pagehide` fires on the window, and the document's own `defaultView` is
   // that window. Reaching it that way rather than by naming the `window`

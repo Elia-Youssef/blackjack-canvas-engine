@@ -79,18 +79,61 @@ if (!branchPattern.test(branch)) fail(`branch name ${JSON.stringify(branch)} is 
 checkText(branch, 'branch name');
 
 const tracked = git('ls-files', '-z').split('\0').filter(Boolean);
-const textExtensions = new Set([
-  '', '.css', '.html', '.js', '.json', '.md', '.mjs', '.ts', '.tsx', '.txt', '.yaml', '.yml',
-]);
+
+/**
+ * The extensions whose bytes are not text, taken from `.gitattributes`.
+ *
+ * **A skiplist, not an allowlist, because GITHUB section 7's rule is about
+ * content.** "Nothing pushed names the tooling that produced it, ever ... a
+ * file, a filename, a directory name" is a claim about every tracked file, so
+ * the correct default for a content scan is to open everything and to name the
+ * exceptions. An allowlist of eleven extensions was the opposite default: a
+ * `.svg`, a `.cjs`, a `.toml`, a `.sh` or a `.webmanifest` had its path scanned
+ * and its bytes never read, and the gate would have reported clean over it.
+ * `eslint.config.js` already anticipates exactly that class for the `core/`
+ * boundary, in as many words: "a file the gate does not match is a file the
+ * gate does not check."
+ *
+ * The list is `.gitattributes`' `binary` set, read from that file rather than
+ * restated, so the repository has one place that says which files are not text.
+ * The scanned set is unchanged on today's tree.
+ */
+function binaryExtensions() {
+  // Relative, like every other read here: this gate is run from the project
+  // root, and the tracked paths `git ls-files` hands back are relative to it.
+  const attributes = readFileSync('.gitattributes', 'utf8');
+  const found = new Set();
+  for (const line of attributes.split(/\r?\n/)) {
+    const match = /^\*(\.[A-Za-z0-9]+)\s+binary\b/.exec(line.trim());
+    if (match !== null) {
+      found.add(match[1].toLowerCase());
+    }
+  }
+  if (found.size === 0) {
+    fail('.gitattributes names no binary extensions, so the provenance scan cannot skip any');
+  }
+  return found;
+}
+
+const binary = binaryExtensions();
 for (const file of tracked) {
   const lowerPath = file.toLowerCase();
   if (reservedFiles.includes(basename(lowerPath))) {
     fail(`${file} is a reserved local instruction file`);
   }
   checkText(file, `tracked path ${file}`);
-  if (textExtensions.has(extname(file)) || basename(file).startsWith('.')) {
-    checkText(readFileSync(file, 'utf8'), file);
+  if (binary.has(extname(lowerPath))) {
+    continue;
   }
+  // Decoded as UTF-8. A tracked file that is not valid UTF-8 and is not on the
+  // binary list is a file this gate cannot read, which is a finding rather than
+  // a pass: it would be the one place content could hide.
+  const bytes = readFileSync(file);
+  const text = bytes.toString('utf8');
+  if (!Buffer.from(text, 'utf8').equals(bytes)) {
+    fail(`${file} is neither valid UTF-8 nor listed as binary in .gitattributes`);
+  }
+  checkText(text, file);
 }
 
 let hasCommit = true;

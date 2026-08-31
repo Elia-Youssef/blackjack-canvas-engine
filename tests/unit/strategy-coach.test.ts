@@ -70,6 +70,9 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { acceptIntent as accept, bounded } from './support/drive';
+import { stripComments as withoutComments } from './support/source-scan';
+
 import type { Card, Rank } from '../../src/core/cards';
 import { RANKS, card, isTenValue } from '../../src/core/cards';
 import { handValue } from '../../src/core/hand';
@@ -810,16 +813,6 @@ describe('J3: the reference chart shares no declaration with what it checks', ()
     'utf8',
   );
 
-  /**
-   * The comment strip `payout-integrality.test.ts` uses, and for its reason.
-   * Most of that file's header is prose explaining why it imports nothing from
-   * `src/`, and a scan that went red on the explanation would be switched off
-   * inside a week.
-   */
-  function withoutComments(text: string): string {
-    return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-  }
-
   it('imports nothing at all, so it cannot share a misreading', () => {
     // The claim behind the whole item. A chart that reached into `src/` for a
     // type, a constant or a rank list would agree with the generator on
@@ -998,23 +991,6 @@ const TICK = TIMINGS.dealInterval;
 /** Bounded, for the reason `wallet.test.ts` gives: a stall must fail loudly. */
 const LOOP_LIMIT = 40000;
 
-function bounded(label: string): () => void {
-  let turns = 0;
-  return () => {
-    turns += 1;
-    if (turns > LOOP_LIMIT) {
-      throw new RangeError(`${label} did not finish inside ${String(LOOP_LIMIT)} turns`);
-    }
-  };
-}
-
-function accept(table: Table, intent: Parameters<Table['apply']>[0]): void {
-  const result = table.apply(intent);
-  if (!result.ok) {
-    throw new Error(`${intent.kind} was refused by ${result.layer} as ${result.reason}`);
-  }
-}
-
 /**
  * One move, chosen from the readout alone.
  *
@@ -1104,7 +1080,7 @@ function playSession(seed: number, coachOn: boolean): Session {
   const steps: string[] = [JSON.stringify(table.readout())];
   let record: CoachRecord = NO_DECISIONS;
   let advice = 0;
-  const turn = bounded(`a ${String(SESSION_ROUNDS)} round seeded session`);
+  const turn = bounded(`a ${String(SESSION_ROUNDS)} round seeded session`, LOOP_LIMIT);
 
   while (table.readout().rounds < SESSION_ROUNDS) {
     turn();
@@ -1175,7 +1151,7 @@ describe('J3: the coach reads the situation off the published readout', () => {
   it('answers nothing on every phase that is not the player turn', () => {
     const table = createTable({ seed: 5 });
     const seen = new Set<string>();
-    const turn = bounded('collecting one round of phases');
+    const turn = bounded('collecting one round of phases', LOOP_LIMIT);
     while (table.readout().rounds < 2) {
       turn();
       const state = table.readout();
@@ -1221,7 +1197,7 @@ function activeIndex(state: TableReadout): number {
 }
 
 function settleToPlayerTurn(table: Table): void {
-  const turn = bounded('driving the machine back to the player turn');
+  const turn = bounded('driving the machine back to the player turn', LOOP_LIMIT);
   while (!['playerTurn', 'roundResult'].includes(table.readout().phase.kind)) {
     turn();
     table.update(TICK);

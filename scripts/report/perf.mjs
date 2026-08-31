@@ -36,7 +36,14 @@
 import { chromium } from '@playwright/test';
 
 import { bootGame, findSeedReaching, settle, toBetting } from './drive.mjs';
-import { environmentRows, finish, round2, startPreview, table } from './support.mjs';
+import {
+  environmentRows,
+  finish,
+  resultRows,
+  round2,
+  startPreview,
+  table,
+} from './support.mjs';
 
 const PORT = 4183;
 
@@ -344,11 +351,7 @@ async function main() {
       `${String(round2(results.slowShare * 100))} percent`,
       `< ${String(SLOW_FRAME_SHARE * 100)} percent`, results.slowShare < SLOW_FRAME_SHARE],
   ];
-  for (const [measure, value, threshold, ok] of rows) {
-    if (!ok) {
-      breaches.push(`${measure}: ${value} against ${threshold}`);
-    }
-  }
+  const measured = resultRows(rows, breaches);
   if (runs.some((entry) => !entry.observed)) {
     breaches.push('the long-task observer never attached, so H4 measured nothing');
   }
@@ -410,7 +413,7 @@ async function main() {
     '',
     ...table(
       ['Measure', 'Median', 'Threshold', 'Verdict'],
-      rows.map(([measure, value, threshold, ok]) => [measure, value, threshold, ok ? 'PASS' : '**FAIL**']),
+      measured,
     ),
     '',
     '## Every run',
@@ -519,9 +522,19 @@ async function main() {
     'felt, bounded, and looks it up through `needsRebake` so the rule has one home: three',
     'bakes now serve all 27 size changes, and `tests/unit/felt-cache.test.ts` pins that count.',
     '`src/render/felt.ts` pays for the grain once into one square and blits it across the',
-    'table under the two blend operations, so a bake that does happen is cheap. The controls',
-    'row was left alone on purpose: freezing its height would reach the committed invariants',
-    'of items `F1` and `F7`, and with the cache the cost of a moving row is one blit.',
+    'table under the two blend operations, so a bake that does happen is cheap.',
+    '',
+    '**The controls row is pinned as well, for the five screens that carry no control.**',
+    'The paragraph above recorded the opposite decision, that the row was left alone because',
+    'freezing its height would reach the committed invariants of items `F1` and `F7`; a later',
+    'change pinned `.bj-controls` to the action-row height under `dealing`, `peek`, `reveal`,',
+    '`dealerTurn` and `settling`, and `tests/browser/surface-stability.spec.ts` holds the',
+    'betting-to-dealing backing store equal across it. The `F1` and `F7` reading the earlier',
+    'decision rested on is the one to re-verify: the pinned height feeds `barsStick` through',
+    'the measured controls height, and the pin equals the action row only at `wide`, where one',
+    'row of buttons fits. Narrow viewports wrap that row and continue to resize, and the round',
+    'result is a taller screen still, so the largest excursion recorded above is untouched by',
+    'the pin and the felt cache is what absorbs its bake.',
     '',
     '## Environment',
     '',

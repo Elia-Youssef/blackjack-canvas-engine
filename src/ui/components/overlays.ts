@@ -60,7 +60,13 @@ import type { SplitRule } from '../../core/hand';
 import { SURFACE_SIZES, type SurfaceSize } from '../../render/surface';
 import { MAX_VOLUME, MIN_VOLUME } from '../audio';
 import { button, el, empty, setAttribute, setHidden, setText } from '../dom';
-import { NOTHING_YET, chips as formatChips, delta as formatDelta, percentOfHundred } from '../format';
+import {
+  NOTHING_YET,
+  chips as formatChips,
+  delta as formatDelta,
+  percent,
+  percentOfHundred,
+} from '../format';
 import { MOTION_SETTINGS, type MotionSetting } from '../motion';
 import {
   OVERLAY_IDS,
@@ -564,7 +570,11 @@ function settingsPanel(actions: ChromeActions): Component {
       if (volume.value !== wanted) {
         volume.value = wanted;
       }
-      setText(volumeText, `Volume ${percentOfHundred(state.volume * 100)} of full.`);
+      // `state.volume` is already the fraction `percent` takes, so it goes
+      // straight in: `percentOfHundred` is for a value that arrives as a
+      // percentage already, and multiplying by 100 to have it divided again is
+      // exactly the round trip that entry point exists to stop.
+      setText(volumeText, `Volume ${percent(state.volume)} of full.`);
 
       for (const [theme, control] of themeButtons) {
         setAttribute(control, 'aria-pressed', String(theme === state.theme));

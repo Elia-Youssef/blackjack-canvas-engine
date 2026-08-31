@@ -36,7 +36,14 @@
 import { chromium } from '@playwright/test';
 
 import { bootGame, findSeedReaching, settle, toBetting } from './drive.mjs';
-import { environmentRows, finish, round2, startPreview, table } from './support.mjs';
+import {
+  environmentRows,
+  finish,
+  resultRows,
+  round2,
+  startPreview,
+  table,
+} from './support.mjs';
 
 const PORT = 4185;
 
@@ -246,11 +253,7 @@ async function main() {
     ['Listeners accumulated', String(listenerGrowth), '<= 0', listenerGrowth <= 0],
     ['Timers accumulated', String(timerGrowth), '<= 0', timerGrowth <= 0],
   ];
-  for (const [measure, value, threshold, ok] of rows) {
-    if (!ok) {
-      breaches.push(`${measure}: ${value} against ${threshold}`);
-    }
-  }
+  const measured = resultRows(rows, breaches);
   // **Every interval has to have been played, not just the first.** Two runs of
   // this soak reported the same 103 rounds at fifteen minutes and at thirty: the
   // driver was tapping a fixed chip, the balance fell below it, the tap was
@@ -296,7 +299,7 @@ async function main() {
     '',
     ...table(
       ['Measure', 'Value', 'Threshold', 'Verdict'],
-      rows.map(([measure, value, threshold, ok]) => [measure, value, threshold, ok ? 'PASS' : '**FAIL**']),
+      measured,
     ),
     '',
     '## Every snapshot',

@@ -28,6 +28,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { stripComments as withoutComments } from './support/source-scan';
+
 import {
   BORDER,
   CHIP_DENOMINATIONS,
@@ -570,11 +572,6 @@ describe('E1: no literal value in component code', () => {
 
     walk(join(PROJECT_ROOT, 'src'));
     return files;
-  }
-
-  /** Comments are prose, and prose is allowed to quote a value. */
-  function withoutComments(text: string): string {
-    return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
   }
 
   it('finds the token layer and excludes exactly it', () => {

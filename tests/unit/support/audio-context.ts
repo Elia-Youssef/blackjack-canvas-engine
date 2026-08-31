@@ -53,10 +53,29 @@ export class RecordingAudioContext {
     return Promise.resolve();
   }
 
+  /**
+   * A gain node whose `value` is as strict as the real one.
+   *
+   * `AudioParam.value` is a WebIDL restricted `float`, so a real engine throws
+   * a `TypeError` on a non-finite write. A plain field takes `NaN` without
+   * complaint, and a stand-in that is more permissive than the platform is a
+   * stand-in that cannot see the one defect a volume clamp can have. The
+   * getter and setter are what let `audio.test.ts` assert the engine's clamp
+   * rather than assert that nothing threw.
+   */
   createGain(): unknown {
+    let level = 1;
     const node = {
       gain: {
-        value: 1,
+        get value(): number {
+          return level;
+        },
+        set value(next: number) {
+          if (!Number.isFinite(next)) {
+            throw new TypeError('AudioParam.value is a restricted float');
+          }
+          level = next;
+        },
         setValueAtTime: (value: number, at: number): void => {
           this.gainWrites.push(value);
           void at;

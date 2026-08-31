@@ -235,9 +235,14 @@ const LINT = {
  * both are correctness rather than tuning.
  *
  * The first is that a gate naming `--project=chromium` for that spec would
- * select **no tests at all**, and a command that runs nothing exits zero, so
- * every mutation measured against it would be reported detected while nothing
- * had been measured. `MOTION_DEMO` therefore names a timing project.
+ * select **no tests at all**. This Playwright treats an empty root suite as an
+ * error rather than a pass, so such a gate is red on the unmutated tree, and
+ * `main`'s baseline sweep below runs every distinct `detectedBy` before
+ * anything is measured and refuses to report at all when one of them is red.
+ * Had it exited zero instead, `record(mutation, !passes(...))` would report
+ * every mutation measured against it UNDETECTED, which reddens the sweep too.
+ * Both directions are loud, which is the property worth stating; what is not
+ * available is a quiet pass. `MOTION_DEMO` therefore names a timing project.
  *
  * The second is that a project with dependencies drags its whole chain in. Left
  * alone, each single-spec invocation here would run the three timing projects
@@ -1252,6 +1257,19 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The fallback's own use of the entry predicate. Both arms of `canEnter`
+    // reach it, and the minimum arm is the one no launch can exercise, since
+    // SPEC 13 always starts at 1,000 and every minimum sits at or below it. The
+    // sweep in `tables.test.ts` drives the function directly, which is where
+    // this is caught.
+    item: 'J1',
+    name: 'the fallback offers a table the balance cannot afford',
+    file: 'src/core/wallet.ts',
+    find: '    if (table !== undefined && canEnter(table.id, bestBalance, chips)) {',
+    replace: '    if (table !== undefined && bestBalance >= table.unlocksAt) {',
+    detectedBy: UNIT,
+  },
+  {
     item: 'J1',
     name: 'a launch stops preferring the persisted table',
     file: 'src/core/wallet.ts',
@@ -1347,6 +1365,22 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The reset's other half of `endRound`'s refusal. Dropping it lets a reset
+    // run with a side wager open, and the bankroll then arrives on top of a term
+    // the identity is still counting.
+    item: 'J2',
+    name: 'the reset runs with a side wager open, creating the stake out of nothing',
+    file: 'src/core/wallet.ts',
+    find:
+      '    if (insuranceStake !== 0 || deferredStake !== 0) {\n' +
+      '      throw new RangeError(\n' +
+      "        'a reset with a side wager open would create chips; SPEC 4.7 settles it first',\n" +
+      '      );\n' +
+      '    }\n',
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
     item: 'J2',
     name: 'a persisted high-water mark is dropped on the way in',
     file: 'src/core/wallet.ts',
@@ -1366,8 +1400,8 @@ const EDITS = [
     item: 'J2',
     name: 'the bust-out offer lists a lower table the balance cannot afford',
     file: 'src/core/wallet.ts',
-    find: '    (table) => bestBalance >= table.unlocksAt && chips >= table.minimum,',
-    replace: '    (table) => bestBalance >= table.unlocksAt,',
+    find: '    canEnter(table.id, bestBalance, chips),',
+    replace: '    bestBalance >= table.unlocksAt,',
     detectedBy: UNIT,
   },
   {
@@ -2306,8 +2340,8 @@ const EDITS = [
     file: 'src/core/table.ts',
     find:
       '        const grown = dealTo(index);\n' +
-      "        resolve(index, isBust(grown.cards) ? 'bust' : 'doubled');",
-    replace: "        resolve(index, 'doubled');",
+      "        resolveActiveHand(isBust(grown.cards) ? 'bust' : 'doubled');",
+    replace: "        resolveActiveHand('doubled');",
     detectedBy: UNIT,
   },
   {
@@ -2315,9 +2349,9 @@ const EDITS = [
     name: 'Double leaves the hand live instead of ending it',
     file: 'src/core/table.ts',
     find:
-      "        resolve(index, isBust(grown.cards) ? 'bust' : 'doubled');\n" +
-      '        phase = handOverToPlayer();',
-    replace: '        void grown;',
+      "        resolveActiveHand(isBust(grown.cards) ? 'bust' : 'doubled');\n" +
+      "        return accepted('double');",
+    replace: "        void grown;\n        return accepted('double');",
     detectedBy: UNIT,
   },
   {
@@ -2332,8 +2366,8 @@ const EDITS = [
     item: 'B9',
     name: 'a doubled hand that busts is recorded as doubled, so the dealer draws for it',
     file: 'src/core/table.ts',
-    find: "        resolve(index, isBust(grown.cards) ? 'bust' : 'doubled');",
-    replace: "        resolve(index, 'doubled');",
+    find: "        resolveActiveHand(isBust(grown.cards) ? 'bust' : 'doubled');",
+    replace: "        resolveActiveHand('doubled');",
     detectedBy: UNIT,
   },
 
@@ -4596,6 +4630,17 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // QUALITY-BAR section 7 on the presentation half. The machine clamps its
+    // own delta; the renderer is handed the raw one and spends it here, and a
+    // poisoned age never recovers because `Math.min(NaN, span)` is `NaN`.
+    item: 'M5',
+    name: 'the tween ages on the raw delta, so one hostile frame freezes the felt',
+    file: 'src/render/scene.ts',
+    find: '  const step = Number.isFinite(dt) && dt > 0 ? dt : 0;',
+    replace: '  const step = dt;',
+    detectedBy: UNIT,
+  },
+  {
     item: 'M1',
     name: 'the frame loop invents a delta for the frame it cannot measure',
     file: 'src/ui/loop.ts',
@@ -4778,8 +4823,8 @@ const EDITS = [
     item: 'E7',
     name: 'the media query is never read, so the page answers no-preference',
     file: 'src/ui/motion.ts',
-    find: '  return matchMedia(REDUCED_MOTION_QUERY);',
-    replace: '  return null;',
+    find: '  const query = options.query === undefined ? mediaQuery(REDUCED_MOTION_QUERY) : options.query;',
+    replace: '  const query = options.query === undefined ? null : options.query;',
     detectedBy: REDUCED_MOTION,
   },
   {
@@ -5812,6 +5857,18 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The dealer has no bust state on the readout, so the cue reads the value
+    // off the face-up cards; drop the reading and every dealer draw sounds a
+    // bust. The player's arm reads `hand.state` and is not touched by this.
+    item: 'K5',
+    name: 'the dealer bust cue fires on every dealer draw rather than the one that busted',
+    file: 'src/ui/cues.ts',
+    find:
+      '    if (now.dealerVisible.length > before.dealerVisible.length && isBust(now.dealerVisible)) {',
+    replace: '    if (now.dealerVisible.length > before.dealerVisible.length) {',
+    detectedBy: UNIT,
+  },
+  {
     item: 'K5',
     name: 'the shuffle cue fires on every round boundary rather than a reshuffle',
     file: 'src/ui/cues.ts',
@@ -5833,6 +5890,19 @@ const EDITS = [
     file: 'src/ui/announce.ts',
     find: '  if (next.context.muted !== prior.context.muted) {',
     replace: '    if (false && next.context.muted !== prior.context.muted) {',
+    detectedBy: UNIT,
+  },
+  {
+    // The one input the bare comparison answers outside its own range. The
+    // stand-in's gain setter is as strict as the real `AudioParam`, so the
+    // mutant both reports a `NaN` volume and throws inside the gesture handler
+    // the engine promises never throws from.
+    item: 'K3',
+    name: 'the volume clamp answers NaN, which reaches the master gain',
+    file: 'src/ui/audio.ts',
+    find:
+      '  return Number.isNaN(value) ? DEFAULT_VOLUME : Math.min(MAX_VOLUME, Math.max(MIN_VOLUME, value));',
+    replace: '  return Math.min(MAX_VOLUME, Math.max(MIN_VOLUME, value));',
     detectedBy: UNIT,
   },
   {

@@ -37,7 +37,14 @@ import type { InsuranceResult, RoundResult, SettledHand } from '../../core/types
 import { button, el, empty, setHidden, setText } from '../dom';
 import { chips as formatChips, delta as formatDelta } from '../format';
 import type { ChromeState, ChromeActions, Component, HandVerdict } from '../state';
-import { actionText, addressText, outcomeText, preferenceText, rungText } from '../text';
+import {
+  actionText,
+  addressText,
+  outcomeText,
+  preferenceText,
+  rungText,
+  sideWagerText,
+} from '../text';
 
 /** One labelled field of the result, with the field name a test can find. */
 function field(label: string, name: string, text: string): HTMLElement {
@@ -76,7 +83,7 @@ function verdictText(entry: HandVerdict): string {
 
 /** SPEC 12's "the insurance result if any", as one line. */
 function insuranceText(insurance: InsuranceResult): string {
-  const kind = insurance.evenMoney ? 'Even money' : 'Insurance';
+  const kind = sideWagerText(insurance.evenMoney);
   const deferred =
     insurance.deferred === 0
       ? ''

@@ -76,7 +76,14 @@ export default defineConfig({
   // affordable again: the one measurement that cannot share a machine no longer
   // shares one, so the rest of the suite is free to use the machine it is on.
   workers: isCI ? 1 : 4,
-  reporter: isCI ? [['list'], ['html', { open: 'never' }]] : [['list']],
+  // `no-skips-reporter.ts` carries the reasoning: the suite runs 0 skipped, and
+  // that had been a number read off a report rather than one anything enforced.
+  // It is registered in both shapes, because a skip is no more acceptable
+  // locally than in CI. A `--reporter=` on the command line replaces this list,
+  // which is why the mutation harness's per-entry runs are unaffected.
+  reporter: isCI
+    ? [['list'], ['html', { open: 'never' }], ['./tests/browser/support/no-skips-reporter.ts']]
+    : [['list'], ['./tests/browser/support/no-skips-reporter.ts']],
 
   use: {
     baseURL: BASE_URL,

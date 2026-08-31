@@ -44,6 +44,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { stripComments as withoutComments } from './support/source-scan';
+
 import type { Rank } from '../../src/core/cards';
 import { card } from '../../src/core/cards';
 import type { PhaseKind } from '../../src/core/types';
@@ -436,11 +438,6 @@ describe('E9: the machine itself runs to the scaled schedule', () => {
 // ---------------------------------------------------------------------------
 // E7: the one switch, and nothing in core/ that could read the flag
 // ---------------------------------------------------------------------------
-
-/** Comments are prose; a scanner reads code. Mirrors `tokens.test.ts`. */
-function withoutComments(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
-}
 
 function sourcesUnder(...segments: readonly string[]): { path: string; code: string }[] {
   const root = join(PROJECT_ROOT, ...segments);
@@ -904,6 +901,56 @@ describe('settled play-surface rendering', () => {
     recording.entries.length = 0;
     surface.render(state, 1 / 60);
     expect(recording.entries).toHaveLength(0);
+  });
+});
+
+/**
+ * QUALITY-BAR section 7's clauses reach `table.update` and stop there: the
+ * composition root hands the raw delta to `surface.render` and to `chrome.sync`.
+ * Item `M5` at `BJ-12` drives the machine on an unstable clock and nothing has
+ * ever driven the renderer on one, which matters because the renderer's failure
+ * on a non-finite delta is permanent rather than transient: `Math.min(NaN, span)`
+ * is `NaN`, so an age poisoned once never advances again and every tween sits at
+ * progress 0 for the life of its key.
+ *
+ * A large delta is deliberately not clamped and the third test says so: a resume
+ * must land the tweens finished, not leave them mid-flight.
+ */
+describe('QUALITY-BAR 7: the presentation half survives a hostile clock', () => {
+  it('lands its tweens after a non-finite frame instead of freezing at zero', () => {
+    const { surface } = recordingSurface();
+    const state = scene({ pendingWager: FLIGHT_WAGER });
+
+    surface.render(state, 0);
+    expect(surface.tweensInFlight(), 'nothing was in flight to poison').toBeGreaterThan(0);
+    surface.render(state, Number.NaN);
+
+    for (let frame = 0; frame < 240; frame += 1) {
+      surface.render(state, 1 / 60);
+    }
+    expect(surface.tweensInFlight(), 'a NaN frame stopped the tween for ever').toBe(0);
+  });
+
+  it('does not rewind a settled tween on a negative frame', () => {
+    const { surface } = recordingSurface();
+    const state = scene({ pendingWager: FLIGHT_WAGER });
+
+    surface.render(state, 0);
+    surface.render(state, PACING.chipSlide);
+    expect(surface.tweensInFlight()).toBe(0);
+
+    surface.render(state, -PACING.chipSlide);
+    expect(surface.tweensInFlight(), 'a negative delta put a settled tween back in flight').toBe(0);
+  });
+
+  it('still saturates on a resume-sized frame, which is what a resume needs', () => {
+    const { surface } = recordingSurface();
+    const state = scene({ pendingWager: FLIGHT_WAGER });
+
+    surface.render(state, 0);
+    expect(surface.tweensInFlight()).toBeGreaterThan(0);
+    surface.render(state, 30);
+    expect(surface.tweensInFlight(), 'a resume left the tweens mid-flight').toBe(0);
   });
 });
 

@@ -566,10 +566,29 @@ function newMemory(): SceneMemory {
   };
 }
 
-/** Advance an ageing thing, capped at its own span. */
+/**
+ * Advance an ageing thing, capped at its own span.
+ *
+ * **The delta is guarded here, because only the simulation half of the frame is
+ * clamped.** `table.update` runs QUALITY-BAR section 7's three clauses on its
+ * own copy of `dt`; the composition root hands the presentation half the raw
+ * one, and this is where that raw number is spent. A non-finite delta would
+ * write `NaN` into the age and `Math.min` keeps it there for the life of the
+ * key, so every tween would sit at progress 0 for ever rather than jumping to
+ * finished: a card mid-flight would never land. A negative delta would rewind
+ * an age the machine consumed as zero. Neither is reachable through
+ * `requestAnimationFrame`, whose timestamps are finite and non-decreasing; the
+ * guard is here because the failure would be permanent rather than transient.
+ *
+ * A **large** delta is deliberately not clamped. Saturating at the span is what
+ * lands every tween finished after a resume, which is the behaviour clause 3 of
+ * section 7 asks the presentation for; borrowing the machine's clamp here would
+ * leave them mid-flight instead.
+ */
 function advance(timer: Ageing, dt: number, motion: Motion): void {
   const span = motion.seconds(timer.pacing);
-  timer.age = Math.min(timer.age + dt, span);
+  const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
+  timer.age = Math.min(timer.age + step, span);
 }
 
 /** True once an ageing thing has run its whole span. */
@@ -604,8 +623,14 @@ function progressOf(
   return motion.progress(pacing, timer.age);
 }
 
-/** Drop every key that did not appear this frame. */
-function prune(memory: Map<string, Ageing>, seen: Set<string>): void {
+/**
+ * Drop every key that did not appear this frame.
+ *
+ * Generic over the value, because the two memories prune identically and the
+ * value type was the only thing that differed between the two copies this
+ * replaced. What a memory holds is nothing to do with when it is emptied.
+ */
+function prune<T>(memory: Map<string, T>, seen: Set<string>): void {
   for (const key of [...memory.keys()]) {
     if (!seen.has(key)) {
       memory.delete(key);
@@ -671,14 +696,6 @@ export function easeStep(held: Easing, target: number, dt: number, motion: Motio
   }
   const progress = motion.progress('handRecentre', held.age);
   return { value: toward(held.from, held.to, progress), moving: progress < 1 };
-}
-
-function pruneEasings(memory: Map<string, Easing>, seen: Set<string>): void {
-  for (const key of [...memory.keys()]) {
-    if (!seen.has(key)) {
-      memory.delete(key);
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -997,7 +1014,7 @@ export const FELT_CACHE_LIMIT = 4;
  * A pair is two `noiseTileCells` squares rather than two full surfaces, so this
  * bound costs far less than the one above; it exists for the same reason.
  */
-export const GRAIN_CACHE_LIMIT = 4;
+const GRAIN_CACHE_LIMIT = 4;
 
 /** Build the play surface. The felt bakes on the first frame, not here. */
 export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
@@ -1156,21 +1173,34 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
       // each band then compresses its own pitch inside that width. The dealer's
       // band has the whole surface; each player hand has its equal share of it,
       // which is the room `handCentre` below already lays the hands out in.
+      //
+      // **Each band's fan is resolved once, here, and carried to whatever draws
+      // it.** `fanFor` is arithmetic, so this is not about cost: the reading
+      // `fan()` publishes is what `tests/browser/fan-floor.spec.ts` measures the
+      // composited pixels against, and a second derivation beside the one the
+      // cards are laid out from would let the probe report a fan the scene did
+      // not draw.
       const handCount = Math.max(1, state.hands.length);
       const handRoom = width / handCount;
       const natural = naturalCardWidth(width);
+      const dealerBand: FanBand = {
+        count: state.dealer.length + state.dealerConcealed,
+        room: width,
+      };
       const bands: FanBand[] = [
-        { count: state.dealer.length + state.dealerConcealed, room: width },
+        dealerBand,
         ...state.hands.map((hand) => ({ count: hand.cards.length, room: handRoom })),
       ];
       const cardWidth = fanCardWidth(bands, natural);
-      const resolved = bands.map((band) => fanFor(band.count, band.room, cardWidth, natural));
-      const handFan = fanFor(
-        state.hands[0]?.cards.length ?? 0,
-        handRoom,
-        cardWidth,
-        natural,
-      );
+      const dealerFan = fanFor(dealerBand.count, dealerBand.room, cardWidth, natural);
+      const laidHands = state.hands.map((hand) => ({
+        hand,
+        fan: fanFor(hand.cards.length, handRoom, cardWidth, natural),
+      }));
+      const resolved: Fan[] = [dealerFan, ...laidHands.map((entry) => entry.fan)];
+      // The reading names the player's band, and a table with no hand on it
+      // still has to answer: an empty band at the same room is what that is.
+      const handFan = laidHands[0]?.fan ?? fanFor(0, handRoom, cardWidth, natural);
       const dealerRowTop = height * SCENE_GEOMETRY.dealerY;
       const playerRowTop = Math.max(
         height * SCENE_GEOMETRY.handY,
@@ -1208,9 +1238,8 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
         topY: number,
         faceUpCount: number,
         flip: Flip | null,
-        room: number,
+        fan: Fan,
       ): readonly DrawnCard[] {
-        const fan = fanFor(cards.length, room, cardWidth, natural);
         // SPEC 5's hand re-centre: the laid width eases to its new value, so the
         // cards already on the felt slide apart as one rather than jumping.
         const laid = easeToward(memory.widths, key, fan.laid, dt, motion, seenWidths);
@@ -1324,7 +1353,7 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
               dealerTop,
               state.dealer.length,
               flipAt === null ? null : { index: HOLE_CARD, progress: flipAt },
-              width,
+              dealerFan,
             ),
             tokens,
           ),
@@ -1350,11 +1379,11 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
       const stacks: ChipStackSpec[] = [];
       const flying: FlyingChip[] = [];
       const rings: PulseRing[] = [];
-      state.hands.forEach((hand, index) => {
+      laidHands.forEach(({ hand, fan }, index) => {
         const key = `h${String(index)}`;
         const centre = handCentre(index, state.hands.length, width);
         const topY = handTop;
-        const drawn = travelled(key, hand.cards, centre, topY, hand.cards.length, null, handRoom);
+        const drawn = travelled(key, hand.cards, centre, topY, hand.cards.length, null, fan);
         layers.push(cardLayer(drawn, tokens));
 
         stacked(
@@ -1396,7 +1425,7 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
 
       prune(memory.cards, seenCards);
       prune(memory.chips, seenChips);
-      pruneEasings(memory.widths, seenWidths);
+      prune(memory.widths, seenWidths);
       const wasInFlight = inFlight;
       inFlight = moving;
 

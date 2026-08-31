@@ -44,6 +44,8 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { bounded } from './support/drive';
+
 import type { TableId } from '../../src/core/wallet';
 import {
   LOWEST_TABLE,
@@ -224,20 +226,10 @@ type Wallet = ReturnType<typeof createWallet>;
  */
 const LOOP_LIMIT = 1000;
 
-function bounded(label: string): () => void {
-  let turns = 0;
-  return () => {
-    turns += 1;
-    if (turns > LOOP_LIMIT) {
-      throw new RangeError(`${label} did not finish inside ${String(LOOP_LIMIT)} turns`);
-    }
-  };
-}
-
 /** Build a wager out of chip taps, largest first, asserting every tap lands. */
 function place(wallet: Wallet, id: TableId, target: number): void {
   const limits = tableLimits(id);
-  const turn = bounded('building a wager out of chip taps');
+  const turn = bounded('building a wager out of chip taps', LOOP_LIMIT);
   for (const chip of [500, 100, 50, 10] as const) {
     while (wallet.readout().wager + chip <= target) {
       turn();
@@ -651,12 +643,12 @@ describe('J2: unlocks survive a bust and a bankroll reset', () => {
   /** Wins a wallet up to a mark, then loses every chip it has. */
   function bustFrom(target: number, table: TableId, wager: number): Wallet {
     const wallet = createWallet();
-    const up = bounded('winning up to the high-water mark');
+    const up = bounded('winning up to the high-water mark', LOOP_LIMIT);
     while (wallet.readout().bestBalance < target) {
       up();
       playRound(wallet, table, wager, wager);
     }
-    const down = bounded('losing the bankroll back down');
+    const down = bounded('losing the bankroll back down', LOOP_LIMIT);
     while (wallet.readout().chips >= wager) {
       down();
       playRound(wallet, table, wager, -wager);

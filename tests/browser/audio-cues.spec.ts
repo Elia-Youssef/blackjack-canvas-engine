@@ -49,6 +49,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 
+import { settleRound } from './support/flow';
 import { BUST_OUT_WAGER, bustOutSeed } from './support/action-seeds';
 import { audioProbe, bootGame, chip, control, waitForPhase } from './support/game';
 
@@ -62,26 +63,6 @@ async function tally(page: Page): Promise<Record<string, number>> {
 async function phaseTally(page: Page): Promise<Record<string, number>> {
   const probe = await audioProbe(page);
   return { ...probe.cuePhases };
-}
-
-/** Answer every screen that waits for the player until the round settles. */
-async function settleRound(page: Page): Promise<void> {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const phase = (await page.locator('.bj-shell').getAttribute('data-phase')) ?? '';
-    if (phase === 'roundResult') {
-      return;
-    }
-    if (phase === 'insurance') {
-      await control(page, 'decline-insurance').click({ timeout: 2000 }).catch(() => undefined);
-      continue;
-    }
-    if (phase === 'playerTurn') {
-      await page.locator('[data-action="stand"]').click({ timeout: 2000 }).catch(() => undefined);
-      continue;
-    }
-    await page.waitForTimeout(150);
-  }
-  throw new Error('the seeded round never settled');
 }
 
 /** The drive the unit driver takes: bet 50, deal, answer, stand, stop at the result. */

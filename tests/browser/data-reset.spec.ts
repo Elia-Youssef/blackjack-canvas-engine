@@ -25,6 +25,8 @@
 
 import { expect, test, type Page } from '@playwright/test';
 
+import { STORAGE_KEY } from '../../src/storage/document';
+
 import { splitSeed } from './support/action-seeds';
 import {
   bootGame,
@@ -37,9 +39,6 @@ import {
   waitForPhase,
 } from './support/game';
 import { pressOn } from './support/game';
-
-/** The one key this game ever touches, as `document.ts` spells it. */
-const STORAGE_KEY = 'js-games.blackjack';
 
 /** SPEC 14's own sentence, which the panel must carry word for word. */
 const BROWSER_ONLY_SENTENCE =

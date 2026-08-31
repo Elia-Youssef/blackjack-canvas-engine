@@ -111,8 +111,17 @@ export interface ChromeState {
   readonly statistics: StatisticsReadout;
   /** SPEC 8's last 50 rounds, newest first. */
   readonly history: History;
-  /** SPEC 9's awarded milestones, in award order. */
+  /** SPEC 9's awarded milestones, in award order. The whole standing list. */
   readonly milestones: readonly MilestoneId[];
+  /**
+   * SPEC 9's milestones **this frame** awarded, in award order. Usually empty.
+   *
+   * The standing list above answers "has this been awarded"; this one answers
+   * "was it awarded just now", which is the announcer's question and the audio
+   * cue's. Both come from the list `observeRound` returns rather than from a
+   * difference of two records taken in the chrome.
+   */
+  readonly awarded: readonly MilestoneId[];
   /** SPEC 7's coach mode. `off` shows nothing and counts nothing. */
   readonly coachMode: CoachMode;
   /**

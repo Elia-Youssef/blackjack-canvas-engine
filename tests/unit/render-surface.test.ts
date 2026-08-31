@@ -29,6 +29,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { stripComments as withoutComments } from './support/source-scan';
+
 import {
   beginShapePass,
   beginTextPass,
@@ -234,11 +236,6 @@ describe('the frame: two ordered passes, state set explicitly at each top', () =
 });
 
 describe('the directory scan: no second DPR, no clock, no randomness', () => {
-  /** Comments are prose; the scan reads code. Mirrors tokens.test.ts. */
-  function withoutComments(text: string): string {
-    return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-  }
-
   function renderSources(): { name: string; code: string }[] {
     return readdirSync(RENDER_DIR)
       .filter((name) => name.endsWith('.ts'))

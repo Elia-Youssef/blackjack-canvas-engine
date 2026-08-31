@@ -45,6 +45,8 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { acceptIntent as accept } from './support/drive';
+
 import type { History } from '../../src/core/history';
 import { NO_HISTORY, record } from '../../src/core/history';
 import { DEFAULT_RULES } from '../../src/core/rules';
@@ -59,7 +61,6 @@ import {
 import { NO_DECISIONS, openSession as openCoachSession } from '../../src/core/strategy';
 import type { Table, TableReadout } from '../../src/core/table';
 import { createTable } from '../../src/core/table';
-import type { Intent } from '../../src/core/types';
 import { STARTING_CHIPS, createWallet } from '../../src/core/wallet';
 import type { GameDocument } from '../../src/storage/document';
 import {
@@ -127,13 +128,6 @@ const TICK = 0.25;
 
 /** Bounded, in the house pattern: a stall must fail loudly, not hang. */
 const LOOP_LIMIT = 500;
-
-function accept(table: Table, intent: Intent): void {
-  const result = table.apply(intent);
-  if (!result.ok) {
-    throw new Error(`${result.kind} was refused by ${result.layer} as ${result.reason}`);
-  }
-}
 
 /** Play one round through the real machine and stop at SPEC 10's round result. */
 function playOneRound(table: Table): TableReadout {
@@ -398,6 +392,16 @@ const STORED: readonly Fixture[] = Object.freeze([
 /** The whole matrix. */
 const CORRUPT: readonly Fixture[] = Object.freeze([...UNREADABLE, ...STORED]);
 
+/**
+ * The size the bank must not fall below. `BJ-11`'s record quotes 73.
+ *
+ * A floor rather than a count, so a fixture added needs no edit here and a
+ * fixture deleted is loud. Every other guard in this file's census is satisfied
+ * by four fixtures as readily as by seventy-three, because each loop iterates
+ * the list: erosion makes them assert less and stay green.
+ */
+const BANK_FLOOR = 73;
+
 function withoutKey(key: string): Readonly<Record<string, unknown>> {
   const copy: Record<string, unknown> = { ...HEALTHY };
   delete copy[key];
@@ -491,13 +495,31 @@ const HOSTILE_MARKS: readonly unknown[] = Object.freeze([
 
 describe('I2: a corrupt saved value does not prevent the game from starting', () => {
   describe('the whole matrix', () => {
+    /**
+     * SPEC 13's bank, as a floor rather than a count.
+     *
+     * The counts below are derived from the list, so adding a fixture moves
+     * them rather than slipping past a hard-coded number. What is asserted is
+     * that the list is partitioned, that neither half is empty, and that no two
+     * fixtures share a name, since a duplicated name is a fixture that is
+     * silently running twice instead of covering two cases.
+     *
+     * **The floor is what those six guards could not say.** Every one of them
+     * is satisfied by four fixtures as readily as by seventy-three: each loop in
+     * this file iterates the list, so a deletion makes every assertion run
+     * fewer times and leaves the suite green. `BANK_FLOOR` is the number the
+     * part's record and `BJ-11`'s report both quote, written down once, as a
+     * floor so that adding a fixture still needs no edit and removing one is
+     * loud. It is deliberately not an equality: the bank is meant to grow.
+     *
+     * One line was dropped with it. `CORRUPT` is defined as
+     * `[...UNREADABLE, ...STORED]`, so requiring its length to equal the sum of
+     * those two lengths is a property of the spread operator and cannot fail;
+     * the partition assertion below it is the one with force, because it fails
+     * on any fixture whose `reach` is neither `'whole'` nor `'field'`.
+     */
     it('covers both reaches and every category the criterion names', () => {
-      // The counts are derived from the list, so adding a fixture moves them
-      // rather than slipping past a hard-coded number. What is asserted is that
-      // the list is partitioned, that neither half is empty, and that no two
-      // fixtures share a name, since a duplicated name is a fixture that is
-      // silently running twice instead of covering two cases.
-      expect(CORRUPT).toHaveLength(UNREADABLE.length + STORED.length);
+      expect(CORRUPT.length).toBeGreaterThanOrEqual(BANK_FLOOR);
       expect(CORRUPT).toHaveLength(WHOLE_DOCUMENT_FIXTURES + PER_FIELD_FIXTURES);
       expect(UNREADABLE.length).toBeGreaterThan(0);
       expect(WHOLE_DOCUMENT_FIXTURES).toBeGreaterThan(UNREADABLE.length);
@@ -540,7 +562,7 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
           durable: true,
           failure: null,
         });
-        expect(reachesBetting(persistence.session()), fixture.name).toBe(true);
+        expect(reachesBetting(persistence.restored()), fixture.name).toBe(true);
       }
     });
 
@@ -575,7 +597,7 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
           durable: true,
           failure: null,
         });
-        const { launch, wallet } = persistence.session();
+        const { launch, wallet } = persistence.restored();
         expect(wallet.readout().chips, fixture.name).toBe(SPEC_STARTING_CHIPS);
         expect(['bronze', 'silver', 'gold'], fixture.name).toContain(launch.table);
       }
@@ -777,7 +799,7 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
         expect(Object.keys(stored.data)).not.toContain(excluded);
       }
       // A launch starts at 1,000 whatever the document said.
-      expect(persistence.session().wallet.readout().chips).toBe(SPEC_STARTING_CHIPS);
+      expect(persistence.restored().wallet.readout().chips).toBe(SPEC_STARTING_CHIPS);
     });
 
     it('opens the session scope on the way in, so nothing session-shaped is carried', () => {

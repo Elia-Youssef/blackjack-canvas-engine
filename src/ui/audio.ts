@@ -56,6 +56,8 @@
  * branch that way; the browser gate drives the real one.
  */
 
+import { type VisibilityTarget, pageDocument } from './platform';
+
 // ---------------------------------------------------------------------------
 // SPEC 14's sound constants, relocated at BJ-19 on the Speed precedent
 // ---------------------------------------------------------------------------
@@ -285,15 +287,29 @@ function unbindGestures(target: EventTarget, onGesture: () => void): void {
   target.removeEventListener('keydown', onGesture);
 }
 
-/** The visibility half of the same surface, read for `visibilityState`. */
-type VisibilityTarget = EventTarget & { readonly visibilityState: string };
-
-/** The page's document, or nothing under a host that has none. */
-function platformDocument(): VisibilityTarget | null {
-  if (typeof document === 'undefined') {
-    return null;
-  }
-  return document;
+/**
+ * SPEC 14's volume, clamped to the range the constants name.
+ *
+ * **The finite guard is the whole reason this is a function.** Both clamp sites
+ * were `Math.min(MAX, Math.max(MIN, value))`, which answers `NaN` for a `NaN`
+ * input, so `volume()` could report a value outside the range its own contract
+ * promises and the `NaN` would reach the master gain. `AudioParam.value` is a
+ * restricted `float` in WebIDL, so that assignment is a `TypeError` thrown
+ * inside the first-gesture handler, which is inside the one function this
+ * module promises never throws. Nothing reachable produces a non-finite volume
+ * today: the settings panel and the document sanitiser both filter with
+ * `Number.isFinite` first, and both of those guards are pinned. This is the
+ * module's own guard, so the promise does not rest on its two callers.
+ *
+ * **The guard names `NaN` and not every non-finite value, because `NaN` is the
+ * whole hole.** Both infinities already clamp correctly through the comparison
+ * below, `-Infinity` to `MIN_VOLUME` and `+Infinity` to `MAX_VOLUME`, and
+ * sending them to the default instead would change an answer that is right
+ * today for no gain. Every other value, finite or infinite, reaches exactly the
+ * expression it reached before.
+ */
+function clampVolume(value: number): number {
+  return Number.isNaN(value) ? DEFAULT_VOLUME : Math.min(MAX_VOLUME, Math.max(MIN_VOLUME, value));
 }
 
 /** A context, on a platform that offers one. Never called outside a gesture. */
@@ -391,12 +407,9 @@ export interface AudioEngine {
  */
 export function createAudioEngine(options: AudioEngineOptions = {}): AudioEngine {
   const mutedStart = options.muted ?? DEFAULT_MUTED;
-  const volumeStart = Math.min(
-    MAX_VOLUME,
-    Math.max(MIN_VOLUME, options.volume === undefined ? DEFAULT_VOLUME : options.volume),
-  );
+  const volumeStart = clampVolume(options.volume === undefined ? DEFAULT_VOLUME : options.volume);
   const factory: () => AudioContext | null = options.contextFactory ?? platformContext;
-  const gestureTarget = options.listeners === undefined ? platformDocument() : options.listeners;
+  const gestureTarget = options.listeners === undefined ? pageDocument() : options.listeners;
   const visibilityTarget =
     options.visibility === undefined ? (gestureTarget as VisibilityTarget | null) : options.visibility;
 
@@ -559,7 +572,7 @@ export function createAudioEngine(options: AudioEngineOptions = {}): AudioEngine
     },
 
     setVolume(next: number): void {
-      volume = Math.min(MAX_VOLUME, Math.max(MIN_VOLUME, next));
+      volume = clampVolume(next);
       if (master !== null) {
         master.gain.value = level();
       }

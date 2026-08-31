@@ -44,6 +44,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 
+import { expectWager } from './support/flow';
 import { splitSeed } from './support/action-seeds';
 import {
   SCREEN_CONTROLS,
@@ -58,10 +59,8 @@ import {
   bootGame,
   control,
   notice,
-  numberIn,
   openShippedPage,
   readout,
-  readoutValue,
   resizeTo,
   settle,
   shell,
@@ -74,17 +73,6 @@ const MIN_INDICATOR_CONTRAST = 3;
 
 /** How far outside a control's box the ring is looked for, in CSS pixels. */
 const RING_MARGIN = 8;
-
-/** The wager on SPEC 11's readout, as a number. */
-async function wagerOf(page: Page): Promise<number> {
-  return numberIn(readoutValue(page, 'wager'));
-}
-
-async function expectWager(page: Page, wager: number): Promise<void> {
-  await expect
-    .poll(async () => wagerOf(page), { message: `the wager readout reaches ${String(wager)}` })
-    .toBe(wager);
-}
 
 /** Reach the betting screen on the shipped page, with nothing injected. */
 async function atBettingScreen(page: Page): Promise<void> {

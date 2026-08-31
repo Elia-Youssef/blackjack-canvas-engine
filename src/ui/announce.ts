@@ -64,6 +64,7 @@ import {
   outcomeText,
   phaseText,
   reasonText,
+  sideWagerText,
 } from './text';
 
 /**
@@ -179,8 +180,15 @@ export function createAnnouncementQueue(options: QueueOptions = {}): Announcemen
 export interface AnnounceContext {
   /** The most recent refusal, or `null`. SPEC 4.11's reason, as an event. */
   readonly notice: Notice | null;
-  /** SPEC 9's awarded milestones, in award order. */
-  readonly milestones: readonly MilestoneId[];
+  /**
+   * SPEC 9's milestones **this frame** awarded, in award order. Usually empty.
+   *
+   * The list `observeRound` returned for the frame rather than a slice off the
+   * end of two milestone records: `statistics.ts` is where an award is decided
+   * and a delta computed here would agree with it only while that record stays
+   * append-only.
+   */
+  readonly awarded: readonly MilestoneId[];
   /**
    * SPEC 14's mute, as this frame resolved it. `BJ-19`, item `K3`.
    *
@@ -216,7 +224,7 @@ export function roundOutcomeText(result: RoundResult): string {
   const side =
     result.insurance === null
       ? ''
-      : ` ${result.insurance.evenMoney ? 'Even money' : 'Insurance'} ` +
+      : ` ${sideWagerText(result.insurance.evenMoney)} ` +
         `${formatDelta(result.insurance.net)}.`;
   return `Round result. ${hands}.${side} Balance ${formatChips(result.chips)}.`;
 }
@@ -357,10 +365,8 @@ export function announcementsFor(
   }
 
   // SPEC 9's milestones, which are awarded exactly once each.
-  if (next.context.milestones.length > prior.context.milestones.length) {
-    for (const id of next.context.milestones.slice(prior.context.milestones.length)) {
-      said.push({ priority: 'polite', text: `Milestone: ${milestoneText(id)}.` });
-    }
+  for (const id of next.context.awarded) {
+    said.push({ priority: 'polite', text: `Milestone: ${milestoneText(id)}.` });
   }
 
   // SPEC 14's mute, as an event. `BJ-19`: the control carries `aria-pressed`

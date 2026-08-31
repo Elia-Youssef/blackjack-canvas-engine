@@ -51,7 +51,8 @@
 
 import { expect, test, type ConsoleMessage, type Page } from '@playwright/test';
 
-import { control, openShippedPage, settle, shell, waitForPhase } from './support/game';
+import { forceColours } from './support/forced-colors';
+import { control, openShippedPage, shell, waitForPhase } from './support/game';
 
 declare global {
   interface Window {
@@ -155,40 +156,6 @@ async function breakTheSurface(page: Page): Promise<void> {
       chip.click();
     }
   });
-}
-
-/**
- * Whether the forced-colors query actually took effect on this engine.
- *
- * `tests/browser/forced-colors.spec.ts`'s probe, verbatim. It is the page's own
- * answer rather than the emulation's return value, which is what makes the skip
- * below a statement about the engine rather than about its name.
- */
-async function queryTookEffect(page: Page): Promise<boolean> {
-  return page.evaluate(() => matchMedia('(forced-colors: active)').matches);
-}
-
-/**
- * Put the page in forced colors, or skip the test with the reason.
- *
- * `forced-colors.spec.ts`'s `forceColours`, verbatim, for the reason the caller
- * gives: two engines emulate this and naming one of them skipped the other.
- */
-async function forceColours(page: Page, browserName: string): Promise<void> {
-  await page.emulateMedia({ forcedColors: 'active' }).catch(() => {
-    // The engine has no forced-colors emulation at all. The check below turns
-    // that into a skip; swallowing it here would be a bare catch, so the reason
-    // is recorded rather than dropped.
-    test.info().annotations.push({
-      type: 'engine',
-      description: `${browserName} rejected the forced-colors emulation`,
-    });
-  });
-  await settle(page);
-  test.skip(
-    !(await queryTookEffect(page)),
-    `${browserName} does not emulate forced-colors, so this criterion is unmeasurable here`,
-  );
 }
 
 /** Reach SPEC 10's betting screen on the shipped page, with nothing injected. */

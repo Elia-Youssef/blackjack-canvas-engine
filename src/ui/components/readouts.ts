@@ -253,7 +253,14 @@ export function createReadouts(): Component {
       counting.to = target;
       counting.age = 0;
     } else {
-      counting.age = Math.min(counting.age + dt, state.motion.seconds('balanceCountUp'));
+      // The same guard `scene.ts`'s `advance` carries, for the same reason:
+      // only `table.update` clamps its delta, and a non-finite one written into
+      // an age stays there for ever, because `Math.min(NaN, span)` is `NaN` and
+      // nothing resets the count. The balance would then stop moving for the
+      // rest of the session. A large delta is still allowed to saturate, which
+      // is how a resume lands the count on its target.
+      const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
+      counting.age = Math.min(counting.age + step, state.motion.seconds('balanceCountUp'));
     }
     counting.shown = countUp(
       counting.from,

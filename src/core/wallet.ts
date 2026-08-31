@@ -251,7 +251,7 @@ export function canEnter(id: TableId, bestBalance: number, chips: number): boole
 export function highestEnterableTable(bestBalance: number, chips: number): TableLimits | null {
   for (let index = TABLES.length - 1; index >= 0; index -= 1) {
     const table = TABLES[index];
-    if (table !== undefined && bestBalance >= table.unlocksAt && chips >= table.minimum) {
+    if (table !== undefined && canEnter(table.id, bestBalance, chips)) {
       return table;
     }
   }
@@ -333,9 +333,12 @@ export interface BustOut {
  */
 export function bustOut(current: TableId, bestBalance: number, chips: number): BustOut {
   const limits = tableLimits(current);
-  const index = TABLES.indexOf(limits);
-  const lower = TABLES.slice(0, index).filter(
-    (table) => bestBalance >= table.unlocksAt && chips >= table.minimum,
+  // Keyed on the id rather than on object identity: `indexOf` answering -1 is a
+  // legal `slice` argument, so a miss would quietly turn "the tables below mine"
+  // into "all but the last" rather than failing.
+  const index = TABLES.findIndex((table) => table.id === current);
+  const lower = TABLES.slice(0, index).filter((table) =>
+    canEnter(table.id, bestBalance, chips),
   );
   return Object.freeze({
     out: chips < limits.minimum,
@@ -977,10 +980,23 @@ export function createWallet(options: WalletOptions = {}): Wallet {
    * nothing at the new one. It refuses to run mid-round for the same reason
    * `endRound` does: a reset with chips still committed would create the
    * difference out of nothing.
+   *
+   * **Both of `endRound`'s conditions, not just the hands one.** An open
+   * insurance stake or an unpaid deferred remainder is money the identity is
+   * still counting, and raising `chips` to 1,000 underneath either of them adds
+   * that term to the conserved total out of nothing. No caller can reach that
+   * state today, because `table.ts` only takes a side wager with a hand in play,
+   * but that is the caller's shape rather than this module's guarantee, and the
+   * rest of the file refuses to lean on it.
    */
   function reset(): void {
     if (hands.length > 0) {
       throw new RangeError('a reset with hands in play would create chips; settle the round first');
+    }
+    if (insuranceStake !== 0 || deferredStake !== 0) {
+      throw new RangeError(
+        'a reset with a side wager open would create chips; SPEC 4.7 settles it first',
+      );
     }
     chips = STARTING_CHIPS;
     wager = NO_WAGER;

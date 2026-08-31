@@ -89,6 +89,23 @@ export function stackedShoe(script: readonly Card[]): Shoe {
     return stack.length - dealt;
   }
 
+  /**
+   * The readout, with the two fields that are not obvious called out.
+   *
+   * `penetration` is `src/core/shoe.ts`'s expression reproduced, so a consumer
+   * driven through this double reads the field the same way it reads the real
+   * one: against the **current stack** and not against the complement, with an
+   * emptied stack reporting fully penetrated rather than `0 / 0`. It is a copy
+   * on purpose, not an import: the double holds no game rule, and pulling a
+   * derivation in from the module under test would weaken that. The cost is
+   * stated here so the copy is a choice rather than a coincidence.
+   *
+   * `undealtAtCut` is deliberately **not** the real shoe's `stack.length -
+   * cutAt`. A scripted shoe has no cut card, which is the same reason
+   * `cutCardReached` is always `false` and `endRound` always reports that it
+   * did not reshuffle, so the honest answer to "how many are left behind the
+   * cut" is "all of them".
+   */
   function readout(): ShoeReadout {
     return Object.freeze({
       decks: SCRIPTED_DECKS,

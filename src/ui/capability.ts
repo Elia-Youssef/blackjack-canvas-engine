@@ -32,10 +32,16 @@
  *     one.
  *   - **`matchMedia().addEventListener`** is tested, in the form the code
  *     actually depends on. `src/ui/motion.ts` and `src/ui/forced-colors.ts`
- *     degrade where `matchMedia` is missing altogether, but where it exists and
- *     answers with the legacy listener interface alone, `addEventListener` on
- *     the query is a `TypeError` during the boot. QUALITY-BAR section 2 puts
- *     both arms in the same tier, so the probe below does too.
+ *     both degrade where `matchMedia` is missing altogether; the method itself
+ *     is `motion.ts`'s alone, because it is the one of the two that subscribes,
+ *     and `forced-colors.ts` says in its own header that it deliberately does
+ *     not. Where `matchMedia` exists and answers with the legacy listener
+ *     interface alone, `addEventListener` on the query is a `TypeError` during
+ *     the boot. QUALITY-BAR section 2 puts both arms in the same tier, so the
+ *     probe below does too. The day `motion.ts` stops subscribing, this
+ *     requirement has to be re-argued or dropped: a capability standing on a
+ *     dependency nobody has turns browsers that run this game into unsupported
+ *     ones.
  *
  * The two the section does not name are the ones without which there is no game
  * at all: a 2D drawing context, and a frame clock.
@@ -60,7 +66,7 @@ export interface Capability {
 }
 
 /** The page's notice, as a template nothing has cloned yet. */
-export const NOTICE_TEMPLATE_SELECTOR = 'template[data-unsupported]';
+const NOTICE_TEMPLATE_SELECTOR = 'template[data-unsupported]';
 
 /**
  * Whether a 2D drawing context can be had at all.
@@ -109,7 +115,7 @@ function hasAnimationFrames(): boolean {
 }
 
 /** Every capability the game requires, in the order the notice reports them. */
-export const REQUIRED_CAPABILITIES: readonly Capability[] = Object.freeze([
+const REQUIRED_CAPABILITIES: readonly Capability[] = Object.freeze([
   Object.freeze({ name: 'canvas-2d', present: hasCanvas2d }),
   Object.freeze({ name: 'media-query-events', present: hasMediaQueryEvents }),
   Object.freeze({ name: 'animation-frames', present: hasAnimationFrames }),

@@ -104,7 +104,7 @@ const PIP: Readonly<Record<Rank, number>> = {
  * `hand.ts`, and coupling the two would mean a house rule that moved either
  * reading of the Ace silently moved the face cards with it.
  */
-export const TEN = 10;
+const TEN = 10;
 
 /**
  * The card factory.
