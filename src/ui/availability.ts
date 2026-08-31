@@ -39,13 +39,14 @@ import {
   canEnter,
   canFund,
   chipEnabled,
+  isUnlocked,
   tableLimits,
   type ChipDenomination,
   type TableId,
 } from '../core/wallet';
 
 import { chips as formatChips } from './format';
-import { tableText } from './text';
+import { tableText, type ChooserRefusal, type DisplayReason } from './text';
 
 /** One control, its label, and the reason it is unavailable, or `null`. */
 export interface ControlAvailability {
@@ -54,7 +55,7 @@ export interface ControlAvailability {
   /** The label the control carries, which is also what the mirror names it by. */
   readonly label: string;
   /** `null` when the control is available right now. */
-  readonly refusal: RejectionReason | null;
+  readonly refusal: DisplayReason | null;
 }
 
 /**
@@ -140,6 +141,34 @@ export function tableLabel(id: TableId): string {
 }
 
 /**
+ * Why the start screen greys one table, or `null` when it does not. `BJ-21`.
+ *
+ * SPEC 6 gives entry two conditions and the machine answers both with one
+ * `table-locked`, which is right for a machine and wrong for a player: "not
+ * open to you yet" reads as "win more" to somebody whose only problem is that
+ * today's balance does not cover the minimum. This is the split, and it is a
+ * derivation rather than a rule: **both readings are `core/wallet.ts`'s own
+ * predicates**, `canEnter` deciding whether the table is enterable at all and
+ * `isUnlocked` deciding which of the two conditions failed. Nothing here
+ * compares a balance to a threshold.
+ *
+ * The unlock is asked first because it is the condition that outranks the
+ * other: a table whose threshold has never been reached is shut whatever
+ * today's balance is, while an unlocked table the player cannot afford right
+ * now is one good round away.
+ */
+export function tableRefusal(
+  id: TableId,
+  bestBalance: number,
+  chips: number,
+): ChooserRefusal | null {
+  if (canEnter(id, bestBalance, chips)) {
+    return null;
+  }
+  return isUnlocked(id, bestBalance) ? 'table-unaffordable' : 'table-not-unlocked';
+}
+
+/**
  * Every control the current screen offers, with the reason for each greyed one.
  *
  * The list is the current screen's alone. A screen with no unavailable control
@@ -153,7 +182,7 @@ export function screenAvailability(readout: TableReadout): readonly ControlAvail
       return TABLES.map((limits) => ({
         key: `table-${limits.id}`,
         label: tableLabel(limits.id),
-        refusal: canEnter(limits.id, wallet.bestBalance, wallet.chips) ? null : 'table-locked',
+        refusal: tableRefusal(limits.id, wallet.bestBalance, wallet.chips),
       }));
 
     case 'betting': {
@@ -206,8 +235,8 @@ export function screenAvailability(readout: TableReadout): readonly ControlAvail
 /** Only the greyed ones, which is what the mirror lists and why. */
 export function unavailableNow(
   readout: TableReadout,
-): readonly { readonly label: string; readonly refusal: RejectionReason }[] {
-  const found: { label: string; refusal: RejectionReason }[] = [];
+): readonly { readonly label: string; readonly refusal: DisplayReason }[] {
+  const found: { label: string; refusal: DisplayReason }[] = [];
   for (const control of screenAvailability(readout)) {
     if (control.refusal !== null) {
       found.push({ label: control.label, refusal: control.refusal });

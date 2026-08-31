@@ -22,10 +22,19 @@
  * and it moves only by a settled outcome. `BJ-6` pinned two of the four at zero
  * and put them in the readout anyway; `BJ-8` moved them, through `takeInsurance`
  * and `settleInsurance` below, and the expression did not change shape when it
- * did. Writing the two-term form `chips + committed` and widening it later is the
- * exact defect the soak `H6` at `BJ-12` carries as its negative control: that
- * form passes every round until the first insured one. `B15` at `BJ-15` grades
- * the identity at the controls and `B11` at `BJ-8` grades the two terms
+ * did. Writing a form with fewer terms and widening it later is the exact defect
+ * the soak `H6` at `BJ-12` carries negative controls for, and which form each
+ * sentence is about is worth being exact about.
+ *
+ * The two-term reading `chips + committed` is the **intuition**: it passes every
+ * round until the first insured one, and it is not what that soak measures. What
+ * the soak carries as the criterion's own control is the **three-term** form
+ * with `insuranceStake` dropped, `chips + committed - deferredStake`, asserted
+ * to fail exactly twice on every insured round; a second three-term reading with
+ * `deferredStake` dropped, `chips + committed + insuranceStake`, is kept beside
+ * it because it is the only one that isolates the fourth term, and it is
+ * asserted to fail exactly twice on every deferred round. `B15` at `BJ-15`
+ * grades the identity at the controls and `B11` at `BJ-8` grades the two terms
  * themselves.
  *
  * **The balance never goes negative, at any single application and not merely at

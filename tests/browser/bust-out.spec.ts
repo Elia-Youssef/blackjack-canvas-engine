@@ -172,12 +172,16 @@ test.describe('C4: busting out', () => {
     await expect(gold).toHaveAttribute('aria-disabled', 'true');
     await expect(gold).toContainText('Gold');
     // The grey-out carries a reason on its accessible name, which is where
-    // `BJ-18` put every refusal a control can carry. The sentence itself is
-    // the pre-BJ-20 chooser's, and it names the lock rather than the balance:
-    // reported to the owner rather than pinned here, because blessing the
-    // wording on the affordability case would grade a sentence that is not
-    // quite the fact.
-    await expect(gold).toHaveAttribute('aria-label', /\.\s\S/);
+    // `BJ-18` put every refusal a control can carry. `BJ-20` found the
+    // sentence naming the lock rather than the balance and reported it to the
+    // owner rather than pinning it, because blessing that wording on the
+    // affordability case would have graded a sentence that is not quite the
+    // fact. `BJ-21`'s approved rider split it by cause, so the fact can be
+    // pinned now: this player's mark has unlocked Gold and it is today's
+    // balance that stops them, and the name says so rather than telling them
+    // to go and win a threshold they passed two rounds ago.
+    await expect(gold).toHaveAttribute('aria-label', /below that table minimum/i);
+    await expect(gold).not.toHaveAttribute('aria-label', /unlocks at a higher/i);
 
     // And the chrome's own press refusal holds: the platform still delivers
     // a press to an `aria-disabled` control, by design, and the one activation

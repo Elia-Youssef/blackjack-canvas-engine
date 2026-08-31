@@ -156,18 +156,22 @@ test.describe('D6: the page takes no gesture away from the browser', () => {
     // does not implement the property: the declaration is in `dist/`, so a
     // browser that can honour it will, and an edit that removed it fails here on
     // all three engines rather than on two of them.
-    const stylesheet = await page.evaluate(async () => {
-      const hrefs = [...document.querySelectorAll('link[rel="stylesheet"]')].map(
+    // **The bytes are fetched by the harness, not by the page.** `BJ-21` shipped
+    // QUALITY-BAR section 9's policy on the built page, and `connect-src 'none'`
+    // refuses every fetch the page makes, its own stylesheet included: this read
+    // used to happen inside `page.evaluate` and the policy stopped it. The
+    // request context below is the test process asking the same server for the
+    // same URL, which is outside the page's policy and reads the same bytes.
+    const hrefs = await page.evaluate(() =>
+      [...document.querySelectorAll('link[rel="stylesheet"]')].map(
         (node) => (node as HTMLLinkElement).href,
-      );
-      const texts = await Promise.all(
-        hrefs.map(async (href) => {
-          const response = await fetch(href);
-          return response.text();
-        }),
-      );
-      return texts.join('\n');
-    });
+      ),
+    );
+    expect(hrefs.length, 'the page links no stylesheet at all').toBeGreaterThan(0);
+    const texts = await Promise.all(
+      hrefs.map(async (href) => (await page.request.get(href)).text()),
+    );
+    const stylesheet = texts.join('\n');
     expect(stylesheet, 'the play-surface stage does not contain its overscroll').toMatch(
       /overscroll-behavior:\s*contain/,
     );

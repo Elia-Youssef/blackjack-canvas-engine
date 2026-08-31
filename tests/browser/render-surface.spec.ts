@@ -30,6 +30,7 @@ import { build } from 'vite';
 import { CARD_GEOMETRY, cardHeight } from '../../src/render/card';
 import { CHIP_FILL, CHIP_RING, FELT, SURFACE, type FeltName } from '../../src/render/tokens';
 import { FELT_GEOMETRY } from '../../src/render/felt';
+import { injectScript } from './support/game';
 import type { RenderDemoApi } from './support/render-demo';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -76,7 +77,7 @@ async function buildHarness(): Promise<string> {
 
 async function inject(page: Page): Promise<void> {
   await page.goto('/');
-  await page.addScriptTag({ content: await bundle() });
+  await injectScript(page, await bundle());
   await page.waitForFunction(() => window.__bjRenderDemo !== undefined);
 }
 

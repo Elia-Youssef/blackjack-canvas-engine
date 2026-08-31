@@ -11,8 +11,52 @@
     -->
     <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <title>Blackjack</title>
+    <!--
+      QUALITY-BAR section 9's Content Security Policy is injected as the FIRST
+      element in head by the build, and the `nomodule` script below the body is
+      injected by the same plugin. `vite.config.ts` carries both and the
+      reasoning: a policy written into this file directly would also govern the
+      dev server, whose module graph is inline script and whose reload channel
+      is a websocket, and the game would stop being developable. Item `L2` at
+      `BJ-21` reads the policy back off the built page and demonstrates it
+      positively.
+    -->
   </head>
   <body>
+    <!--
+      Item `A5`'s notice, and the one copy of its wording. `BJ-21`.
+
+      In a `<template>`, so it is inert until something clones it: it paints
+      nothing on a supported browser, adds no second `h1` to the game's document
+      (item `G6` requires exactly one, and `tests/browser/screen-reader.spec.ts`
+      counts them), and cannot flash on the frame before the module runs.
+
+      Two routes clone it, and neither builds a sentence of its own.
+      `src/ui/capability.ts` clones it from inside the module when the feature
+      test finds something missing; the emitted `unsupported.js` clones it from
+      outside, for the browser that never runs a module at all. It is a real
+      heading and a real paragraph with `role="alert"`, so it is announced on
+      arrival and readable at any zoom, and `src/ui/chrome.css` styles it
+      through the token layer like every other piece of chrome.
+    -->
+    <template data-unsupported>
+      <div class="bj-unsupported" data-notice="unsupported" role="alert" tabindex="-1">
+        <h1 class="bj-unsupported__title">Blackjack cannot run in this browser</h1>
+        <p class="bj-unsupported__message">
+          This game needs a newer browser than this one. Open it in a current version of Chrome,
+          Edge, Firefox or Safari, and it will start.
+        </p>
+      </div>
+    </template>
+    <noscript>
+      <div class="bj-unsupported">
+        <h1 class="bj-unsupported__title">Blackjack cannot run in this browser</h1>
+        <p class="bj-unsupported__message">
+          This game is played in the browser and needs scripting turned on. Turn it on for this
+          page, and the game will start.
+        </p>
+      </div>
+    </noscript>
     <div id="app"></div>
     <script type="module" src="/src/main.ts"></script>
   </body>

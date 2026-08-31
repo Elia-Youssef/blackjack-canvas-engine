@@ -12,28 +12,42 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { INTENT_KINDS, type RejectionReason } from '../../src/core/table';
+import { INTENT_KINDS } from '../../src/core/table';
 import type { Rank, Suit } from '../../src/core/cards';
+import { STARTING_CHIPS, TABLES, canEnter, isUnlocked } from '../../src/core/wallet';
 import type { FeltSpec } from '../../src/render/felt';
 import { SCENE_GEOMETRY, handCentre, handLayout, needsRebake } from '../../src/render/scene';
+import { tableRefusal } from '../../src/ui/availability';
 import { createFrameLoop } from '../../src/ui/loop';
 import { OVERLAY_IDS, OVERLAY_TITLES } from '../../src/ui/state';
-import { actionText, outcomeText, playerActionText, reasonText, rungText } from '../../src/ui/text';
+import {
+  actionText,
+  outcomeText,
+  playerActionText,
+  reasonText,
+  rungText,
+  type DisplayReason,
+} from '../../src/ui/text';
 
 // ---------------------------------------------------------------------------
 // SPEC 4.11's "with a reason surfaced to the player"
 // ---------------------------------------------------------------------------
 
 /**
- * Every reason the three layers of `table.ts` can answer with.
+ * Every reason the three layers of `table.ts` can answer with, and the two the
+ * chooser derives.
  *
  * A total `Record` rather than a list, so the compiler decides whether it is
- * complete: a reason added to `RejectionReason` and not added here is a type
+ * complete: a reason added to `DisplayReason` and not added here is a type
  * error, where a list would simply be short and the tests below would keep
  * passing over the gap. `table.ts` deliberately does not export the union as a
  * value, for the reason its legality table gives, so this is written out.
+ *
+ * `BJ-21` widened it by two. The machine still answers `table-locked` for both
+ * of SPEC 6's entry conditions; the start screen derives which one failed and
+ * says so, and those two sentences are graded here beside the seventeen.
  */
-const REASON_COVERAGE: Readonly<Record<RejectionReason, true>> = {
+const REASON_COVERAGE: Readonly<Record<DisplayReason, true>> = {
   'wrong-phase': true,
   'pending-wager': true,
   'hand-resolved': true,
@@ -51,15 +65,17 @@ const REASON_COVERAGE: Readonly<Record<RejectionReason, true>> = {
   'below-minimum': true,
   'nothing-to-repeat': true,
   'insufficient-chips': true,
+  'table-not-unlocked': true,
+  'table-unaffordable': true,
 };
 
-const EVERY_REASON = Object.keys(REASON_COVERAGE) as RejectionReason[];
+const EVERY_REASON = Object.keys(REASON_COVERAGE) as DisplayReason[];
 
 describe('B15 armour: every refusal has a sentence, and no two share one', () => {
-  it('covers all seventeen reasons of the three layers', () => {
+  it('covers all seventeen reasons of the three layers, and the chooser two', () => {
     // The count is the union's, and it is stated so that a reason quietly
-    // removed from `RejectionReason` is as visible as one quietly added.
-    expect(EVERY_REASON).toHaveLength(17);
+    // removed from `DisplayReason` is as visible as one quietly added.
+    expect(EVERY_REASON).toHaveLength(19);
   });
 
   it('answers every reason with a non-empty sentence', () => {
@@ -84,6 +100,55 @@ describe('B15 armour: every refusal has a sentence, and no two share one', () =>
     expect(reasonText('above-ceiling')).not.toBe(reasonText('below-minimum'));
     expect(reasonText('above-ceiling')).toMatch(/maximum|balance/i);
     expect(reasonText('below-minimum')).toMatch(/minimum/i);
+  });
+
+  it('splits the chooser refusal by which of SPEC 6 two conditions failed', () => {
+    // `BJ-21`'s rider. The machine's one `table-locked` covers both, and a
+    // player told "not open to you yet" when their best balance has long
+    // passed the threshold has been told to do the wrong thing about it.
+    expect(reasonText('table-not-unlocked')).not.toBe(reasonText('table-unaffordable'));
+    expect(reasonText('table-not-unlocked')).not.toBe(reasonText('table-locked'));
+    expect(reasonText('table-unaffordable')).not.toBe(reasonText('table-locked'));
+    // Each names its own cause: the unlock is about the best balance ever
+    // reached, and the shortfall is about the table's minimum.
+    expect(reasonText('table-not-unlocked')).toMatch(/unlocks|best balance/i);
+    expect(reasonText('table-unaffordable')).toMatch(/minimum/i);
+  });
+});
+
+describe('BJ-21 rider: which chooser refusal each table earns', () => {
+  it('asks core for both readings and never invents a comparison', () => {
+    // Silver unlocks at 2,500 and its minimum is 50; Gold unlocks at 10,000
+    // with a minimum of 100. The three cases below are the only three there
+    // are, and each is checked against `canEnter`, which is the predicate the
+    // machine itself refuses with.
+    expect(tableRefusal('bronze', STARTING_CHIPS, STARTING_CHIPS)).toBeNull();
+
+    // Never reached the threshold: locked, whatever today's balance is.
+    expect(tableRefusal('silver', STARTING_CHIPS, 5_000)).toBe('table-not-unlocked');
+    expect(isUnlocked('silver', STARTING_CHIPS)).toBe(false);
+
+    // Reached it once, and cannot cover the minimum today.
+    expect(tableRefusal('gold', 25_000, 10)).toBe('table-unaffordable');
+    expect(isUnlocked('gold', 25_000)).toBe(true);
+
+    // Reached it and can afford it: no refusal at all.
+    expect(tableRefusal('gold', 25_000, STARTING_CHIPS)).toBeNull();
+  });
+
+  it('answers null exactly when the machine would let the player in', () => {
+    // The property, rather than three examples: the split may change which
+    // sentence a player reads and may never change who gets in.
+    for (const table of TABLES) {
+      for (const best of [0, 999, 2_500, 9_999, 10_000, 25_000]) {
+        for (const chips of [0, 10, 49, 50, 99, 100, STARTING_CHIPS]) {
+          expect(
+            tableRefusal(table.id, best, chips) === null,
+            `${table.id} at best ${String(best)} with ${String(chips)}`,
+          ).toBe(canEnter(table.id, best, chips));
+        }
+      }
+    }
   });
 });
 

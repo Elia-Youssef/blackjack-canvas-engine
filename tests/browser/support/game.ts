@@ -63,6 +63,70 @@ function bundle(): Promise<string> {
   return bundleSupport('game-harness.ts');
 }
 
+/** How many scripts this worker has served, so each gets a URL of its own. */
+let served = 0;
+
+/**
+ * Add one test-time script to the page, through a route rather than inline.
+ *
+ * **This exists because the shipped page carries a Content Security Policy.**
+ * `BJ-21`, item `L2`: `dist/index.html` opens with
+ * `script-src 'self'`, so a script element whose body is inline text is blocked
+ * by the page the gate is supposed to be grading. `page.addScriptTag({ content
+ * })` builds exactly that element, which is why every call site now comes
+ * through here.
+ *
+ * The route serves the same bundle from a same-origin URL, which the policy
+ * allows, so the injection is legal under the shipped directives rather than
+ * being excused from them: **nothing in this suite runs with `bypassCSP`**, and
+ * every one of the browser gate's specs therefore exercises the real policy.
+ * Widening `script-src` to admit the harness would have been the other way to
+ * make these calls work, and it would have shipped a weaker policy to players
+ * so that a test could keep its convenience.
+ *
+ * The URL is unique per injection so that a page which injects twice, as the
+ * axe scan over a harness-booted game does, gets each script it asked for.
+ */
+export async function injectScript(page: Page, code: string): Promise<void> {
+  served += 1;
+  const path = `/__bj-support-${String(served)}.js`;
+  await page.route(`**${path}`, (route) => {
+    void route.fulfill({
+      status: 200,
+      contentType: 'text/javascript; charset=utf-8',
+      body: code,
+    });
+  });
+  await page.addScriptTag({ url: path });
+}
+
+/**
+ * Add one test-time stylesheet to the page, through a route rather than inline.
+ *
+ * `injectScript`'s twin, and it exists for the same reason: the shipped page's
+ * policy carries `style-src 'self'`, so a `<style>` element whose body is
+ * inline text is blocked. The rule this serves is a real stylesheet from the
+ * page's own origin, which the policy allows.
+ *
+ * The one caller is `text-scale.spec.ts`'s negative control, which pins a
+ * readout's font size in `px` so that item `G5`'s assertion can be shown to
+ * notice a chrome that ignored the root size. It was the spec that found this:
+ * under the policy its `<style>` never applied, the control stopped failing,
+ * and a test whose whole job is to fail passed.
+ */
+export async function injectStyle(page: Page, css: string): Promise<void> {
+  served += 1;
+  const path = `/__bj-support-${String(served)}.css`;
+  await page.route(`**${path}`, (route) => {
+    void route.fulfill({
+      status: 200,
+      contentType: 'text/css; charset=utf-8',
+      body: css,
+    });
+  });
+  await page.addStyleTag({ url: path });
+}
+
 async function buildSupport(entry: string): Promise<string> {
   const result: unknown = await build({
     root: PROJECT_ROOT,
@@ -140,7 +204,7 @@ export async function openShippedPage(page: Page): Promise<void> {
 export async function bootGame(page: Page, options: HarnessBootOptions = {}): Promise<void> {
   await page.goto('/');
   await dismissOnboarding(page);
-  await page.addScriptTag({ content: await bundle() });
+  await injectScript(page, await bundle());
   await page.waitForFunction(() => window.__bjGame !== undefined, undefined, {
     timeout: PHASE_TIMEOUT,
   });

@@ -45,13 +45,26 @@
  * a defect that would be invisible until it was not, and a composition root that
  * can be called twice has to answer for it.
  *
- * **There is no error boundary here, and that is deliberate.** QUALITY-BAR
- * section 12 wants one, and item `M4` at `BJ-21` grades it: a thrown error from
- * the loop, a `window.onerror` and an `unhandledrejection` each stopping the
- * loop cleanly and showing a styled recovery panel. Wrapping the loop in a
- * `try` here without that panel would swallow the failure and leave a frozen
- * canvas, which is the exact defect that item exists to prevent. There is no
- * `catch` in this file at all.
+ * **The error boundary is here, and it is one wrapper and one call.** `BJ-21`,
+ * item `M4`, QUALITY-BAR section 12. The frame callback handed to the loop is
+ * wrapped in `boundary.run`, which is the criterion's "thrown error from the
+ * loop"; the other two routes are the page-level listeners `src/ui/recovery.ts`
+ * installs, and all three end in the same stop and the same panel. The stop is
+ * `dispose` on the game this module last built, so the loop, every listener and
+ * the shell go together and nothing is left half alive.
+ *
+ * There is still no `catch` in this file. The one `try` in the project's chrome
+ * is inside `recovery.ts`, where the value it catches is read and reported;
+ * wrapping the loop here without that panel would swallow the failure and leave
+ * a frozen canvas, which is the defect item `M4` exists to prevent.
+ *
+ * **The feature test runs before the boot, and before anything that could
+ * throw for want of a platform.** `BJ-21`, item `A5`. `start` below asks
+ * `src/ui/capability.ts` what is missing and mounts the page's own notice
+ * instead of booting when the answer is not empty. Nothing this module imports
+ * touches a gated platform API while it is being evaluated, which is what makes
+ * "before anything that would throw" true of the bundle and not only of this
+ * file.
  */
 
 import { record as recordRound, type History } from './core/history';
@@ -108,8 +121,10 @@ import type { QueueState } from './ui/announce';
 import { createChrome } from './ui/chrome';
 import { resolvedLocale } from './ui/format';
 import { createForcedColorsPreference, type ForcedColorsPreference } from './ui/forced-colors';
+import { missingCapabilities, showUnsupportedNotice } from './ui/capability';
 import type { Shell } from './ui/layout';
 import { createFrameLoop, type FrameLoop } from './ui/loop';
+import { createErrorBoundary, type ErrorBoundary } from './ui/recovery';
 import {
   alwaysReduceOf,
   createMotionPreference,
@@ -393,6 +408,33 @@ export interface BootOptions {
 
 /** The game this module last built, so a second boot can dispose the first. */
 let current: Game | null = null;
+
+/**
+ * Where the last boot mounted its chrome, so a failure has somewhere to write.
+ *
+ * The boundary is installed once, at module scope, before any game exists, and
+ * the mount point is decided per boot by `mountPoint` below. Held here rather
+ * than passed in, so the panel lands where the page put the game even when the
+ * page put it somewhere other than `#app`.
+ */
+let mounted: HTMLElement | null = null;
+
+/**
+ * The page's error boundary. `BJ-21`, item `M4`.
+ *
+ * Installed at module scope and never disposed, which is the difference between
+ * it and everything else this file builds: it belongs to the page rather than to
+ * a game, and a game that has just been stopped by a failure is exactly when its
+ * listeners must still be attached. The stop reads `current` through the same
+ * handle a second `boot` disposes, so a crash after an in-page Reset stops the
+ * game that is actually running.
+ */
+const boundary: ErrorBoundary = createErrorBoundary({
+  mount: () => mounted ?? document.body,
+  stop: () => {
+    current?.dispose();
+  },
+});
 
 /**
  * The game this module currently runs, or `null` before the first boot.
@@ -772,6 +814,9 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
 
   const chrome = createChrome(actions);
   const root = mountPoint(options);
+  // Where a failure would put the recovery panel. Written before the shell is
+  // mounted, so a throw from this boot's own first frame has a home already.
+  mounted = root;
   root.replaceChildren(chrome.shell.root);
 
   /**
@@ -1045,13 +1090,19 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
   // hidden moment misses and `beforeunload` is the one hook the section
   // forbids. The machine needs no telling: a loop that stops asks `update`
   // nothing, so no accumulator advances while nobody can see it.
-  const loop: FrameLoop = createFrameLoop({ onFrame: frame, onHidden: save });
-
-  // One synchronous frame before the loop starts, so the page is never briefly
-  // blank and so a caller that reads the DOM immediately after `boot` finds a
-  // rendered chrome rather than an empty shell.
-  frame(0);
-  loop.start();
+  //
+  // The frame is handed to the loop wrapped in the boundary, which is item
+  // `M4`'s first route. `src/ui/loop.ts` schedules the next frame before it
+  // calls back, so a throw already stopped the loop before this wrapper saw it;
+  // what the wrapper adds is the clean stop of everything else and the panel.
+  const loop: FrameLoop = createFrameLoop({
+    onFrame: (dt: number): void => {
+      boundary.run(() => {
+        frame(dt);
+      });
+    },
+    onHidden: save,
+  });
 
   const game: Game = {
     readout: () => table.readout(),
@@ -1136,8 +1187,43 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       }
     },
   };
+  // Published before the first frame runs, and that ordering is item `M4`'s.
+  // The boundary stops a failure by disposing `current`, so a throw out of the
+  // synchronous frame below has to find a handle to dispose; with the
+  // publication after it, the one frame most likely to fail on a strange
+  // platform would be the one frame that could not be stopped.
   current = game;
+
+  // One synchronous frame before the loop starts, so the page is never briefly
+  // blank and so a caller that reads the DOM immediately after `boot` finds a
+  // rendered chrome rather than an empty shell. Wrapped like the loop's, for
+  // the reason above.
+  boundary.run(() => {
+    frame(0);
+  });
+  if (!boundary.failed()) {
+    loop.start();
+  }
+
   return game;
 }
 
-boot();
+/**
+ * The page's entry. `BJ-21`, items `A5` and `M4`.
+ *
+ * The feature test first, because a browser that cannot give this game a
+ * drawing context must read a notice rather than a stack: item `A5`'s "never a
+ * blank canvas and never an uncaught error" is a statement about this order.
+ * The boot second, wrapped, so a failure while the composition root is being
+ * assembled reaches the same panel every later failure does.
+ */
+function start(): void {
+  if (showUnsupportedNotice(missingCapabilities())) {
+    return;
+  }
+  boundary.run(() => {
+    boot();
+  });
+}
+
+start();

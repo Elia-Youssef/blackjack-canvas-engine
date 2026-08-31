@@ -3,7 +3,7 @@
 The buildable project. Requirements live one directory up in [SPEC.md](../SPEC.md); this file is only how to
 build, run and verify what is here.
 
-**State: parts `BJ-0` through `BJ-20`, with `BJ-20` built last.** The build order puts the DOM shell
+**State: parts `BJ-0` through `BJ-21`, with `BJ-21` built last.** The build order puts the DOM shell
 before the motion that plays inside it, because the composed page is what motion is graded on.
 The toolchain, the CI gates, the design tokens, and the whole
 headless game: cards, hand evaluation, the seeded stream, the shoe, the dealer, settlement, the wallet
@@ -127,7 +127,24 @@ left-to-right play with its announcement by index and its differing per-hand set
 bust-out's two offers and the chooser's exact enterable set, one accepted action per frame however
 many queue at once, the hidden tab's state identity, both themes with a byte-identical felt, the
 fresh launch at 1,000 with the persisted set intact across real reloads, and the first-launch
-onboarding whose dismissal persists. See
+onboarding whose dismissal persists.
+
+`BJ-21` made the game degrade rather than break. A top-level error boundary sits over the frame
+loop and beside the page's own `error` and `unhandledrejection` listeners: all three routes stop
+the running game, take its listeners off with it, and mount one styled recovery panel with a
+working reload, focused on arrival and legible under forced colors and at 200 percent. Nothing is
+saved on the way down, because a crashed frame's state is precisely the state SPEC 13 must not
+write. A feature test runs before the boot and mounts the page's own notice instead of starting a
+game the platform cannot draw, and the browser that cannot run a module at all gets the same
+notice from a `nomodule` script the build emits. QUALITY-BAR section 9's Content Security Policy
+is injected at build time as the first element in `<head>`, so the dev server keeps working and
+the shipped page carries the policy; its enforcement is demonstrated positively, by injecting a
+third-party fetch and an off-origin script and asserting that each is refused with a
+`securitypolicyviolation` event, and the browser gate runs with the policy live rather than
+bypassed. Every number a player reads is formatted through one file with an explicit locale
+list, swept under en-US, de-DE and ar-EG with the exact strings pinned; nothing under `src/`
+assembles a sentence by joining a literal to an expression, names `Intl` outside that file, or
+carries a currency symbol, a network verb, an analytics name or any SPEC 19 non-goal. See
 [../../docs/BUILD-PLAN.md](../../docs/BUILD-PLAN.md) for what fills the rest and in what order.
 
 ## Prerequisites
@@ -304,7 +321,7 @@ BlackJack/BlackJack/
       tokens.css             the design tokens. Item E1
       chrome.css             the shell, the controls and the overlays, all through tokens
       dom.ts                 the element factory every component builds from. Item M1
-      format.ts              Intl with an explicit locale list, per QUALITY-BAR 11
+      format.ts              Intl with an explicit locale list, per QUALITY-BAR 11. Item M2
       text.ts                every sentence the chrome shows, the refusal reasons and the mirror's
       state.ts               what the sync step is given, and what a control may ask for
       layout.ts              the three-row shell, the landmarks and the page heading. C5, G6
@@ -315,6 +332,8 @@ BlackJack/BlackJack/
       availability.ts        one reading of why each control is greyed, for the control and the mirror
       announce.ts            the announcement queue and the frame deltas, both pure. Item G4
       input.ts               the one document listener: Escape, the focus trap, focus custody. D4, G10
+      capability.ts          the feature test that runs before the boot, and the notice. Item A5
+      recovery.ts            the error boundary, its three routes and the recovery panel. Item M4
       chrome.ts              the DOM sync step of DESIGN 3, and where components are mounted
       components/            readouts, betting, actions, screens, round result, overlays, mirror,
                              announcer
@@ -334,6 +353,8 @@ BlackJack/BlackJack/
       render-surface.test.ts the DPR store, the pass order, the render directory scans
       motion.test.ts         the tween shapes, the Speed multiplier on the machine, the flash ceiling
       input-surface.test.ts  D1's scans: one handler path, no capture, no gesture taken
+      locale.test.ts         M2: every formatter under three locales, and the two censuses
+      compliance.test.ts     L1, L3, L4 and L5 armour: the scans the checklists cite
       announce.test.ts       G4 armour: the queue's four rules, against a queue-free control
       mirror-text.test.ts    G4 and G6 armour: the naming template, the card words, the titles
       forced-colors.test.ts  G9: the forced-colors token block, and the palette selection
@@ -356,6 +377,9 @@ BlackJack/BlackJack/
       text-scale.spec.ts     G5: 200 percent text at four breakpoints, clipping, overlap, function
       forced-colors.spec.ts  G9: the chrome adopts the system palette, the surface selects its set
       focus-obscured.spec.ts G10: SC 2.4.11, measured by sampling a focused control's own box
+      error-boundary.spec.ts M4: three routes, the stop measured in frames, the panel, the reload
+      unsupported.spec.ts    A5: a broken platform, the notice, no canvas and no uncaught error
+      no-third-party.spec.ts L2: the policy first in head, and both blocks demonstrated
       support/render-demo.ts the demonstration scenes, bundled at test time, never shipped
       support/motion-demo.ts the E6 capture hook: the real game at a chosen seed, never shipped
       support/controls.ts    the control census, the three presses, and the focus walk
@@ -373,12 +397,16 @@ BlackJack/BlackJack/
     engine/                  extracted from this game at ENG-1. Deliberately empty
 ```
 
-Eight evidence artifacts are written outside this directory, to the repository root, because
+Eleven evidence artifacts are written outside this directory, to the repository root, because
 [../ACCEPTANCE.md](../ACCEPTANCE.md) section 5 is where the evidence index lives and it puts them there:
 `artifacts/reports/build.md`, `docs/review-checklists/build.md`, `docs/review-checklists/tokens.md`,
 `docs/review-checklists/architecture.md` (item `M1`, written at `BJ-15`),
-`docs/review-checklists/input.md` (item `D1`, written at `BJ-17`), and the three `BJ-18` added:
+`docs/review-checklists/input.md` (item `D1`, written at `BJ-17`), the three `BJ-18` added,
 `docs/review-checklists/colour-independence.md` (item `G3`),
-`docs/review-checklists/semantics.md` (item `G6`) and `docs/review-checklists/flash.md` (item `G8`).
-The count was stale by one before `BJ-17`: `architecture.md` had existed since `BJ-15` and the sentence
-still said three.
+`docs/review-checklists/semantics.md` (item `G6`) and `docs/review-checklists/flash.md` (item `G8`),
+`docs/review-checklists/no-audio-assets.md` (item `K1`, written at `BJ-19`), and the two `BJ-21`
+added: `docs/review-checklists/compliance.md` (items `L1`, `L4` and `L5`) and
+`docs/review-checklists/privacy.md` (item `L3`).
+The count has now been stale twice, and both times for the same reason: `architecture.md` had
+existed since `BJ-15` while the sentence still said three, and `no-audio-assets.md` arrived at
+`BJ-19` while it still said eight. It is counted from the directory rather than from memory here.

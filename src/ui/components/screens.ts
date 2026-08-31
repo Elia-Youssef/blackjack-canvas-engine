@@ -22,8 +22,8 @@
  * than applied to both.
  */
 
-import { bustOut, canEnter, tableLimits, type TableId, TABLES } from '../../core/wallet';
-import { insuranceRefusal, tableLabel } from '../availability';
+import { bustOut, tableLimits, type TableId, TABLES } from '../../core/wallet';
+import { insuranceRefusal, tableLabel, tableRefusal } from '../availability';
 import { button, el, empty, setAttribute, setDisabled, setHidden, setText } from '../dom';
 import { chips as formatChips } from '../format';
 import type { ChromeActions, ChromeState, Component } from '../state';
@@ -35,6 +35,15 @@ import { offerText, reasonText, tableText } from '../text';
  * A locked or unaffordable table is disabled with SPEC 6's reason on it. The
  * machine refuses `chooseTable` for the same table with `table-locked`, so the
  * disabled state is a preview of an answer rather than a rule of its own.
+ *
+ * **The displayed reason is split by cause. `BJ-21`.** SPEC 6 gives entry two
+ * conditions and the machine answers both with the one word `table-locked`,
+ * which leaves a player who merely cannot cover today's minimum reading "that
+ * table is not open to you yet" and concluding they have to win their way to a
+ * threshold they have already passed. `tableRefusal` derives which of the two
+ * failed, from `core/wallet.ts`'s own predicates, and the sentence follows;
+ * the machine's refusal kinds are untouched, and `chooseTable` still answers
+ * `table-locked` for either.
  */
 export function createStartScreen(actions: ChromeActions): Component {
   const tableButtons = new Map<TableId, HTMLButtonElement>();
@@ -76,8 +85,13 @@ export function createStartScreen(actions: ChromeActions): Component {
       setHidden(root, state.readout.phase.kind !== 'start');
       const { bestBalance, chips } = state.readout.wallet;
       for (const [id, control] of tableButtons) {
-        const open = canEnter(id, bestBalance, chips);
-        setDisabled(control, !open, reasonText('table-locked'), tableLabel(id));
+        const refusal = tableRefusal(id, bestBalance, chips);
+        setDisabled(
+          control,
+          refusal !== null,
+          refusal === null ? null : reasonText(refusal),
+          tableLabel(id),
+        );
         setAttribute(control, 'aria-pressed', String(id === state.readout.table));
       }
     },

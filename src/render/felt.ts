@@ -107,6 +107,21 @@ export const FELT_GEOMETRY = Object.freeze({
  * them. The limits line carries the active table's numbers as plain digits;
  * the locale-formatted copy of the same numbers is the chrome's DOM text
  * (QUALITY-BAR 11), which is the authoritative one.
+ *
+ * **This is one of item `M2`'s two adjudicated parks, and the ruling is here so
+ * nobody has to rediscover it.** `M2` at `BJ-21` requires every number to be
+ * formatted through `Intl.NumberFormat` with an explicit locale list, and the
+ * line below is not: it is printed as ASCII digits on English felt art, beside
+ * `INSURANCE PAYS 2 TO 1` and `BLACKJACK PAYS 3 TO 2`, whose digits nobody
+ * would localise either. SPEC 16 calls the felt print "a decorative repeat: the
+ * same rules and limits are real DOM text in the chrome", so the copy a player
+ * reads for a decision is the formatted one and this is the table's paintwork.
+ * The other park is the chip's value glyph in `src/render/chips.ts`, which is
+ * object identity in the same way a card's rank is.
+ *
+ * `tests/unit/locale.test.ts` holds both as a named exemption list of exactly
+ * two sites, checked by path, and asserts that this function prints exactly one
+ * data-driven line and that its shape does not grow a second quantity.
  */
 export function feltPrint(limits: FeltLimits): readonly string[] {
   return [

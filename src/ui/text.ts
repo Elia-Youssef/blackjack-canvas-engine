@@ -39,13 +39,46 @@ import type { TableId } from '../core/wallet';
 import { chips } from './format';
 
 /**
+ * Why the start screen greys a table, when the machine's one word is not enough.
+ * `BJ-21`, the user-approved rider on the chooser's refusal sentence.
+ *
+ * SPEC 6 gives entry two conditions, an unlock threshold on the best balance
+ * ever reached and a table minimum the current balance has to cover, and
+ * `core/wallet.ts`'s `canEnter` is their conjunction. The machine answers a
+ * refused `chooseTable` with the single reason `table-locked` for either, which
+ * is right for a machine: both are the same refusal and nothing downstream of
+ * the wallet branches on which. It is not right for a player, who is told "not
+ * yet" and cannot tell whether the answer is "win more" or "you cannot afford
+ * this table today".
+ *
+ * So the display reason is derived at the chooser, from the same two readings
+ * `canEnter` makes, and these are its two names. **The machine's refusal kinds
+ * are untouched**: `RejectionReason` still carries `table-locked` and
+ * `table.ts` still returns it, so this is a second sentence for one machine
+ * answer rather than a second rule.
+ */
+export type ChooserRefusal = 'table-not-unlocked' | 'table-unaffordable';
+
+/**
+ * Everything the chrome has a sentence for: the machine's reasons, and the
+ * chooser's two.
+ *
+ * A union rather than a second function, because the mirror lists every greyed
+ * control on the current screen through one call and the start screen's tables
+ * are among them. Widening the parameter keeps every existing caller compiling
+ * and keeps the switch below exhaustive over both halves at once.
+ */
+export type DisplayReason = RejectionReason | ChooserRefusal;
+
+/**
  * Why an action was refused. SPEC 4.11, SPEC 10 and the availability rules of
  * SPEC 4.5, 4.6, 4.7 and 4.8.
  *
- * Seventeen arms and no default, so a reason added to any of the three layers
- * is a compile error here rather than a blank line on screen.
+ * Nineteen arms and no default, so a reason added to any of the three layers,
+ * or to the chooser's pair, is a compile error here rather than a blank line on
+ * screen.
  */
-export function reasonText(reason: RejectionReason): string {
+export function reasonText(reason: DisplayReason): string {
   switch (reason) {
     // The phase layer. SPEC 10: the screen does not offer this control.
     case 'wrong-phase':
@@ -72,6 +105,18 @@ export function reasonText(reason: RejectionReason): string {
       return 'This table does not allow doubling after a split.';
     case 'table-locked':
       return 'That table is not open to you yet.';
+
+    // The chooser's two, which are one `table-locked` split by its cause. The
+    // machine says the same word for both; the start screen knows which of
+    // SPEC 6's two conditions failed, and a player who is told to win more
+    // when they merely cannot cover the minimum today has been told the wrong
+    // thing. Neither names a number: the button beside the sentence already
+    // carries the table's own minimum and maximum, and the balance it is being
+    // measured against is a continuous readout on the same screen.
+    case 'table-not-unlocked':
+      return 'That table unlocks at a higher best balance than you have reached.';
+    case 'table-unaffordable':
+      return 'Your balance is below that table minimum.';
 
     // The wallet layer. SPEC 4.11's own refusals, and SPEC 4.5 and 4.6's funding.
     case 'no-wager':
@@ -514,8 +559,47 @@ export function houseRulesText(rules: HouseRules): string {
  * accessible name, written by `setDisabled`, and the announcement the polite
  * region makes when a press is actually refused.
  */
-export function unavailableText(label: string, reason: RejectionReason): string {
+export function unavailableText(label: string, reason: DisplayReason): string {
   return `${label}: ${reasonText(reason)}`;
+}
+
+// ---------------------------------------------------------------------------
+// `BJ-21`: the sentences the recovery panel is built from
+// ---------------------------------------------------------------------------
+
+/**
+ * The recovery panel's heading. `BJ-21`, item `M4`, QUALITY-BAR section 12.
+ *
+ * Three sentences rather than one, because the panel is a heading, a paragraph
+ * and a control, and each is its own whole string here for the reason every
+ * other sentence in this file is: a panel that assembled its own prose would be
+ * a second place a sentence lived. Nothing about the caught error appears in
+ * any of them. What a player can act on is that the game stopped and that
+ * reloading starts it again; a message from a stack is neither.
+ */
+export function recoveryTitle(): string {
+  return 'The game stopped';
+}
+
+/**
+ * What happened, and what was kept. Deliberately exact about the second half:
+ * SPEC 13 persists the best balance, the statistics, the milestones, the
+ * history and the settings at each round boundary and at each setting change,
+ * and it never persisted the chips in play, so a round interrupted here costs
+ * that round and nothing else. Promising more than that would be a lie the
+ * next reload would tell on.
+ */
+export function recoveryMessage(): string {
+  return (
+    'Something went wrong, so the game stopped rather than carry on in a state it ' +
+    'could not trust. Everything saved at the end of the last round is still there. ' +
+    'Reload to start again.'
+  );
+}
+
+/** The panel's one action. QUALITY-BAR section 12's "working reload action". */
+export function recoveryReloadLabel(): string {
+  return 'Reload';
 }
 
 /**

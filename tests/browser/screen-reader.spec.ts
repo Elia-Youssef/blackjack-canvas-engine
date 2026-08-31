@@ -49,6 +49,7 @@ import {
   PHASE_TIMEOUT,
 } from './support/game';
 import { peekSeed } from './support/peek-seeds';
+import { reasonText } from '../../src/ui/text';
 
 /** QUALITY-BAR section 4's floor between polite writes, in milliseconds. */
 const POLITE_INTERVAL_MS = 500;
@@ -576,6 +577,35 @@ test.describe('G4: every refusal reason is reachable without a pointer', () => {
     for (const entry of listed) {
       expect(entry, `${entry} is not a label and a sentence`).toMatch(/^.+: .+\.$/);
     }
+  });
+
+  test('says which of SPEC 6 two entry conditions greyed a table', async ({ page }) => {
+    // `BJ-21`'s rider on the chooser. The machine answers a refused
+    // `chooseTable` with one `table-locked` whichever condition failed; the
+    // start screen derives which, and the mirror is where a player who cannot
+    // hover reads it. A fresh account holds 1,000 chips and has never been
+    // above it, so Silver and Gold are both greyed for the unlock and neither
+    // is greyed for the money: the sentence has to be the unlock one.
+    await openShippedPage(page);
+    await waitForPhase(page, 'start');
+    await settle(page);
+
+    const listed = (await mirror(page)).unavailable;
+    expect(listed.length, 'no table is greyed on a fresh account').toBe(2);
+    for (const entry of listed) {
+      expect(entry, `${entry} is not a label and a sentence`).toMatch(/^.+: .+\.$/);
+      expect(entry.endsWith(reasonText('table-not-unlocked')), entry).toBe(true);
+      // And the sentence is about the threshold rather than about the money,
+      // which is the whole point of splitting it.
+      expect(entry, entry).toMatch(/unlocks at a higher best balance/i);
+      expect(entry, entry).not.toMatch(/not open to you yet/i);
+    }
+
+    // The same sentence reaches the control's own accessible name, which is
+    // the other of the three surfaces `BJ-18` put a refusal on.
+    const gold = page.locator('[data-table="gold"]');
+    await expect(gold).toHaveAttribute('aria-disabled', 'true');
+    expect(await gold.getAttribute('aria-label')).toContain(reasonText('table-not-unlocked'));
   });
 
   test('puts the reason on the greyed control accessible name as well', async ({ page }) => {
