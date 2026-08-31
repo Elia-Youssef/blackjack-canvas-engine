@@ -147,12 +147,42 @@ export const INPUT_METHODS: readonly InputMethod[] = Object.freeze([
 ]);
 
 /**
+ * How long a delivered tap is given to produce its click.
+ *
+ * A tap the engine honours produces the click in the same frame, 1 ms after
+ * `touchend` in every instrumented run, and the retry measurements never
+ * exceeded 40 ms. Two hundred and fifty is generous by an order of magnitude
+ * against the fastest observation and by six times against the slowest, which
+ * is the point: the window decides only whether to press again, so it should
+ * be too long to accuse a slow machine and far too short to matter beside the
+ * 20 s a route waits for its own assertion.
+ */
+const TAP_CLICK_WINDOW_MS = 250;
+
+/** Whether the tap just sent produced a click, within the window above. */
+async function tapWasDelivered(page: Page): Promise<boolean> {
+  const deadline = Date.now() + TAP_CLICK_WINDOW_MS;
+  for (;;) {
+    const delivered = await page.evaluate(
+      () => (window as Window & { __bjTapClick?: boolean }).__bjTapClick === true,
+    );
+    if (delivered) {
+      return true;
+    }
+    if (Date.now() >= deadline) {
+      return false;
+    }
+    await page.waitForTimeout(25);
+  }
+}
+
+/**
  * Press one control by one input method, for real.
  *
  * Every arm goes through the platform rather than through a dispatched event.
- * `page.mouse` and `page.touchscreen` drive the engine's own input pipeline, so
- * what the page receives is a genuine mouse press and a genuine touch, with the
- * `pointerType` and the compatibility events the browser generates for each;
+ * `click()` and `tap()` drive the engine's own input pipeline, so what the page
+ * receives is a genuine mouse press and a genuine touch, with the `pointerType`
+ * and the compatibility events the browser generates for each;
  * the keyboard arm focuses and presses a real key. A spec that dispatched
  * `new MouseEvent('click')` would prove that the handler runs when called, which
  * is not what item `D2` is about.
@@ -180,12 +210,56 @@ export async function pressBy(
     await page.keyboard.press(key);
     return;
   }
-  const box = await target.boundingBox();
-  expect(box, `${selector} has a rendered box to tap`).not.toBeNull();
-  if (box === null) {
-    throw new Error(`${selector} has no box`);
+  // `tap()` rather than a measured box and a raw `page.touchscreen.tap(x, y)`.
+  // It keeps what the raw call had, the engine's own synthesized-touch pipeline
+  // with the compatibility events that come with it, and adds what the pointer
+  // arm has had all along: the actionability waits, visible, stable and
+  // receiving events, before anything is sent, and a box read at the moment of
+  // the press rather than one step earlier. It needs a touch-capable context,
+  // which `tests/browser/input-parity.spec.ts`, the only caller, sets for the
+  // whole file.
+  //
+  // **Why there is a probe and one retry.** Firefox discards the **first**
+  // synthesized tap in a cold slot. The touch itself always lands, measured on
+  // the button with capture listeners, twelve of twelve; what the engine
+  // declines to produce is the compatibility `mousedown` / `mouseup` / `click`
+  // that activates anything. Measured 2026-08-31: a throwaway tap followed by
+  // the real one passed 3 of 3 in 2.0 s each, the same tap with nothing before
+  // it failed 3 of 3 at the full 11.9 s timeout, a discarded tap dispatches in
+  // 500 to 900 ms against 20 to 40 ms for one that lands, and a second tap
+  // activated 6 of 6 within 40 ms. The alternative cure, isolating these routes
+  // in a one-worker project on the `BJ-18` precedent, was built exactly and
+  // refuted by construction: it makes every test a first tap and failed 100
+  // percent, 8 of 8, where the contended main project passed about 9 of 10.
+  //
+  // **What the probe does and does not decide.** It watches for a `click`
+  // event on the node and gates the retry on it, nothing else. A `click`
+  // fires on an element whether or not the page listens for it, so this can
+  // only tell a delivered press from a discarded one; it cannot tell a working
+  // control from a broken one. That verdict stays where it belongs, in the
+  // route's own downstream assertions: the phase moved, the attribute toggled,
+  // the wager changed. A control whose activation is broken still fails its
+  // spec, and the retry absorbs exactly one discarded synthesized tap, never a
+  // second press of a control that already answered.
+  await target.evaluate((node) => {
+    const host = window as Window & { __bjTapClick?: boolean };
+    host.__bjTapClick = false;
+    node.addEventListener(
+      'click',
+      () => {
+        host.__bjTapClick = true;
+      },
+      { once: true, capture: true },
+    );
+  });
+  await target.tap();
+  if (!(await tapWasDelivered(page))) {
+    await target.tap();
+    expect(
+      await tapWasDelivered(page),
+      `${selector} received no click from either synthesized tap`,
+    ).toBe(true);
   }
-  await page.touchscreen.tap(box.x + box.width / 2, box.y + box.height / 2);
 }
 
 // ---------------------------------------------------------------------------

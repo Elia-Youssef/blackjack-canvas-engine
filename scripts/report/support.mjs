@@ -81,7 +81,11 @@ export async function startPreview(port) {
       '--port', String(port), '--strictPort'],
     { cwd: PROJECT_ROOT, stdio: ['ignore', 'pipe', 'pipe'] },
   );
-  const url = `http://localhost:${String(port)}`;
+  // The address, not the name: `vite.config.ts` pins `preview.host` to
+  // `127.0.0.1`, so the server this just spawned binds one stack and dialling
+  // `localhost`, which answers with either, would be asking for the collision
+  // that pin exists to refuse.
+  const url = `http://127.0.0.1:${String(port)}`;
   const errors = [];
   child.stderr.on('data', (chunk) => errors.push(String(chunk)));
 

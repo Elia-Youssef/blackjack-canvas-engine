@@ -26,10 +26,13 @@
  * route asserts at its end that it really pressed everything it declared, so a
  * declaration cannot drift from what the route does.
  *
- * **Each method presses through the platform.** `page.mouse` and
- * `page.touchscreen` drive the engine's own input pipeline, so the page receives
- * a real mouse press and a real touch with the compatibility events the browser
- * generates for each; the keyboard arm focuses and presses a real key.
+ * **Each method presses through the platform.** A control is pressed by
+ * `click()` and `tap()`, which drive the engine's own input pipeline behind the
+ * actionability waits, and the one press that needs coordinate arithmetic, the
+ * volume track below, still aims `page.mouse` and `page.touchscreen` at a
+ * computed point on purpose. Either way the page receives a real mouse press
+ * and a real touch with the compatibility events the browser generates for
+ * each; the keyboard arm focuses and presses a real key.
  * `tests/browser/support/controls.ts` holds the one press, so no arm can quietly
  * become a dispatched event.
  *
