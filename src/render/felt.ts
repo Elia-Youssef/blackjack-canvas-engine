@@ -450,7 +450,16 @@ export function bakeFelt(canvas: SurfaceCanvas, spec: FeltSpec, grain: GrainTile
 
   return {
     canvas,
-    spec,
+    // **Frozen, and a copy, because this object is the cache key.**
+    // `scene.ts` keeps baked layers in a list and reuses one when
+    // `needsRebake(entry.spec, wanted)` says the wanted spec matches it, so the
+    // record below is not a description of the bake: it is what decides whether
+    // the next frame pays for another one. `PlaySurface.feltSpec()` hands it out
+    // to anything that asks, and a four-byte edit from outside was enough to
+    // make the cache miss forever and pay a 176 ms bake per frame. Copying keeps
+    // the caller's own literal separate; freezing is what the readout contract
+    // the rest of this codebase follows already promises.
+    spec: Object.freeze({ ...spec }),
     drawShapes(target: CanvasRenderingContext2D): void {
       // The one per-frame cost of the felt. The cast is the seam between the
       // structural canvas this module tests against and the platform type

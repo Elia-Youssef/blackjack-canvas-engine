@@ -51,6 +51,7 @@ import {
   DECK_COUNTS,
   DEFAULT_DECKS,
   createShoe,
+  cutCardRange,
   isDeckCount,
 } from '../../src/core/shoe';
 
@@ -257,6 +258,38 @@ function drawEverything(shoe: Shoe): Card[] {
     drawn.push(shoe.draw());
   }
   return drawn;
+}
+
+/**
+ * Require the shoe to be a fresh, fully reshuffled, correctly cut complement.
+ *
+ * Draining it is part of the assertion rather than a side effect: a shoe that
+ * says `stacked` is a complement and then deals something other than one full
+ * pack per deck has told the truth about a lie, and the composition is the only
+ * reading that catches that.
+ */
+function expectFreshShoe(shoe: Shoe, decks: DeckCount, rebuildsSoFar: number): void {
+  const complement = decks * CARDS_PER_DECK;
+  const range = cutCardRange(decks);
+  const readout = shoe.readout();
+  expect(readout.stacked).toBe(complement);
+  expect(readout.dealt).toBe(0);
+  expect(readout.remaining).toBe(complement);
+  expect(readout.inPlay).toBe(0);
+  expect(readout.penetration).toBe(0);
+  expect(readout.cutCardReached).toBe(false);
+  expect(readout.undealtAtCut).toBeGreaterThanOrEqual(range.min);
+  expect(readout.undealtAtCut).toBeLessThanOrEqual(range.max);
+  // The rebuild counter is a record of what happened, not a state to clear.
+  expect(readout.rebuilds).toBe(rebuildsSoFar);
+
+  const drawn = drawEverything(shoe);
+  expect(drawn).toHaveLength(complement);
+  const counts = countByKey(drawn);
+  expect([...counts.keys()].sort()).toEqual([...packKeys()].sort());
+  for (const key of packKeys()) {
+    expect(counts.get(key)).toBe(decks);
+  }
 }
 
 function draws(rng: Rng, count: number): number[] {
@@ -520,5 +553,76 @@ describe('the defensive rebuild preserves the no-duplicate invariant', () => {
     expect(readout.remaining).toBe(0);
     expect(readout.penetration).toBe(1);
     expect(readout.rebuilds).toBe(1);
+  });
+
+  /**
+   * The boundary the rebuild leaves owing.
+   *
+   * `rebuild()` puts the cut card at the top (`cutAt = 0`), which is the whole
+   * mechanism behind two claims the module makes in prose: that
+   * `cutCardReached` stays true "right through to the next round boundary", and
+   * that "`endRound` therefore reshuffles properly at the boundary". Nothing
+   * called `endRound()` on a shoe with `rebuilds > 0` before these three cases,
+   * so both claims rested on a line no test reached and no mutation broke.
+   *
+   * Three post-rebuild states, at both configured sizes: a rebuild that handed
+   * some cards back, a rebuild that found nothing to hand back, and the control
+   * beside them, an exactly drained stack that never rebuilt at all.
+   */
+  describe('and the next round boundary repays the reshuffle it still owes', () => {
+    for (const decks of CONFIGURED_DECKS) {
+      it(`recovers a ${String(decks)}-deck shoe from a partial rebuild`, () => {
+        const shoe = createShoe(decks, createRng(SEED + 4100 + decks));
+        const complement = decks * CARDS_PER_DECK;
+
+        // A first round well inside the cut, so the boundary passes cleanly and
+        // 60 cards leave play. Those 60 are what the rebuild will hand back.
+        for (let n = 0; n < 60; n += 1) {
+          shoe.draw();
+        }
+        expect(shoe.endRound()).toBe(false);
+
+        // A round that never ends: drain the stack, then force the rebuild.
+        drawEverything(shoe);
+        expect(shoe.readout().rebuilds).toBe(0);
+        shoe.draw();
+
+        const afterRebuild = shoe.readout();
+        expect(afterRebuild.rebuilds).toBe(1);
+        expect(afterRebuild.stacked).toBe(60);
+        expect(afterRebuild.stacked).toBeLessThan(afterRebuild.complement);
+        // The three readings the module documents for this state.
+        expect(afterRebuild.undealtAtCut).toBe(afterRebuild.stacked);
+        expect(afterRebuild.cutCardReached).toBe(true);
+        expect(afterRebuild.inPlay).toBe(complement - 60 + 1);
+
+        expect(shoe.endRound()).toBe(true);
+        expectFreshShoe(shoe, decks, 1);
+      });
+
+      it(`recovers a ${String(decks)}-deck shoe from a rebuild that found nothing`, () => {
+        const shoe = createShoe(decks, createRng(SEED + 4200 + decks));
+        drawEverything(shoe);
+        // Every card is in play, so the rebuild has nothing to hand back.
+        expect(() => shoe.draw()).toThrow(RangeError);
+        const exhausted = shoe.readout();
+        expect(exhausted.stacked).toBe(0);
+        expect(exhausted.penetration).toBe(1);
+        expect(exhausted.rebuilds).toBe(1);
+        expect(exhausted.cutCardReached).toBe(true);
+
+        expect(shoe.endRound()).toBe(true);
+        expectFreshShoe(shoe, decks, 1);
+      });
+
+      it(`reshuffles a ${String(decks)}-deck stack drained exactly, with no rebuild`, () => {
+        const shoe = createShoe(decks, createRng(SEED + 4300 + decks));
+        drawEverything(shoe);
+        expect(shoe.readout().rebuilds).toBe(0);
+        expect(shoe.readout().dealt).toBe(decks * CARDS_PER_DECK);
+        expect(shoe.endRound()).toBe(true);
+        expectFreshShoe(shoe, decks, 0);
+      });
+    }
   });
 });

@@ -643,6 +643,47 @@ describe('J3: the preference list is walked down to the first legal action', () 
       expect(recommend(table, situationOf(hand('10', '9', '5'), '6', { hand: { state } }))).toBeNull();
     }
   });
+
+  /**
+   * No verdict, no counted decision. SPEC 7's accuracy denominator.
+   *
+   * `observe`'s contract is that its verdict is `null` exactly when `recommend`
+   * is, "so a hand with no decision in it produces no verdict and no counted
+   * decision". Both halves of that were asserted nowhere: the tests above stop
+   * at `recommend`, so `compare`'s null passthrough and `observe`'s untouched
+   * return were executed by nothing in the suite. A drift there corrupts every
+   * accuracy figure and SPEC 9's accuracy milestone in the same direction, by
+   * inflating the denominator with decisions the coach never had an opinion on.
+   *
+   * The record is compared by identity rather than by value, because the claim
+   * is that nothing was recorded at all and a `toEqual` would also pass on a
+   * fresh record that happened to hold the same counts.
+   */
+  it('counts no decision on a hand it has no opinion about, in either coached mode', () => {
+    const splitAces = { hand: { fromSplit: true, fromSplitAces: true } };
+    const situation = situationOf(hand('A', '5'), '6', splitAces);
+    expect(recommend(table, situation)).toBeNull();
+    expect(compare(table, situation, 'stand')).toBeNull();
+
+    const counted = recordDecision(NO_DECISIONS, true);
+    expect(counted.lifetime.decisions).toBe(1);
+    for (const mode of ['hint', 'review'] as const) {
+      const observation = observe(mode, counted, table, situation, 'stand');
+      expect(observation.verdict).toBeNull();
+      expect(observation.record, `${mode} counted a decision it had no opinion about`).toBe(counted);
+      expect(observation.record.lifetime.decisions).toBe(1);
+      expect(observation.record.session.decisions).toBe(1);
+    }
+
+    // The control: the same call on a hand the coach does have an opinion about
+    // returns a verdict and does move the record, so the assertions above are
+    // about the null path rather than about `observe` never counting anything.
+    const live = situationOf(hand('10', '6'), '10');
+    const opinionated = observe('review', counted, table, live, 'stand');
+    expect(opinionated.verdict).not.toBeNull();
+    expect(opinionated.record).not.toBe(counted);
+    expect(opinionated.record.lifetime.decisions).toBe(2);
+  });
 });
 
 // ---------------------------------------------------------------------------

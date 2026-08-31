@@ -46,7 +46,7 @@ import { describe, expect, it } from 'vitest';
 
 import { stripComments as withoutComments } from './support/source-scan';
 
-import type { Rank } from '../../src/core/cards';
+import type { Card, Rank } from '../../src/core/cards';
 import { card } from '../../src/core/cards';
 import type { PhaseKind } from '../../src/core/types';
 import {
@@ -84,8 +84,13 @@ import {
 } from '../../src/render/animate';
 import { CHIP_GEOMETRY } from '../../src/render/chips';
 import {
+  SCENE_GEOMETRY,
   createPlaySurface,
   easeStep,
+  fanCardWidth,
+  fanFor,
+  handLayout,
+  naturalCardWidth,
   type Easing,
   type PlaySurface,
   type SceneState,
@@ -432,6 +437,78 @@ describe('E9: the machine itself runs to the scaled schedule', () => {
     const durations = (speed: Speed): number =>
       [...phaseDurations(PEEK_NO_NATURAL, speed).values()].reduce((sum, value) => sum + value, 0);
     expect(durations('fast')).toBeLessThan(durations('normal'));
+  });
+
+  /**
+   * What one clamped frame can pay for across a mid-phase Speed change.
+   *
+   * SPEC 14 makes Speed immediate, mid-round included, and `setSpeed` leaves the
+   * accumulator alone on purpose, so a phase already half spent stays half
+   * spent. `timedStep` re-multiplies the duration on every drain iteration,
+   * which means an accumulator banked against the Normal interval can be spent
+   * against the Fast one: the widest case is `dealing`, where a Normal-sized
+   * bank plus QUALITY-BAR 7's 0.25 s ceiling pays for three of SPEC 4.3's four
+   * opening cards in a single frame.
+   *
+   * That is not a defect and nothing here proposes bounding it: no outcome
+   * moves, the sequence of states is unchanged, and `src/ui/cues.ts` counts card
+   * growth per frame rather than flagging one arrival, so a three-card frame
+   * emits three cues rather than losing two. What was missing is the number. The
+   * bound was emergent, and the two steady-speed controls beside it are what
+   * make it a bound rather than an observation: at either speed held still, one
+   * clamped frame lands at most two.
+   */
+  describe('E9 armour: a mid-phase Speed change widens the per-frame step burst', () => {
+    const onTable = (table: Table): number => {
+      const readout = table.readout();
+      return (
+        readout.hands.reduce((count, hand) => count + hand.cards.length, 0) +
+        readout.dealerVisible.length +
+        readout.dealerConcealed
+      );
+    };
+
+    const dealing = (speed: Speed): Table => {
+      const table = createTable({ shoe: scriptedShoe(PEEK_NO_NATURAL), speed });
+      table.apply({ kind: 'start' });
+      table.apply({ kind: 'tapChip', chip: WAGER });
+      table.apply({ kind: 'deal' });
+      expect(table.readout().phase.kind).toBe('dealing');
+      return table;
+    };
+
+    it('lands three opening cards in one clamped frame after a Normal to Fast switch', () => {
+      const table = dealing('normal');
+      const banked = TIMINGS.dealInterval - STEP;
+      table.update(banked);
+      expect(table.readout().elapsed).toBeCloseTo(banked, 10);
+      expect(onTable(table)).toBe(0);
+
+      table.setSpeed('fast');
+      const scaled = TIMINGS.dealInterval * FAST_SPEED_MULTIPLIER;
+      expect(scaled).toBeCloseTo(0.132, 10);
+      // One frame, at QUALITY-BAR 7's ceiling. `(banked + 0.25) / scaled` pays
+      // three times, and the fourth card is what the phase has left to deal.
+      table.update(0.25);
+      expect(Math.floor((banked + 0.25) / scaled)).toBe(3);
+      expect(onTable(table)).toBe(3);
+    });
+
+    for (const speed of SPEEDS) {
+      it(`lands at most two in one clamped frame at a steady ${speed}, the control`, () => {
+        const table = dealing(speed);
+        let worst = 0;
+        let previous = 0;
+        for (let frame = 0; frame < 20 && table.readout().phase.kind === 'dealing'; frame += 1) {
+          table.update(0.25);
+          const now = onTable(table);
+          worst = Math.max(worst, now - previous);
+          previous = now;
+        }
+        expect(previous, 'the deal really ran').toBeGreaterThan(0);
+        expect(worst, `${speed} steady state`).toBeLessThanOrEqual(2);
+      });
+    }
   });
 });
 
@@ -1151,6 +1228,120 @@ describe('E6 armour: the hole card flips through zero width', () => {
       expect(value, `widening at ${String(step)}`).toBeGreaterThanOrEqual(previous);
       previous = value;
     }
+  });
+});
+
+/**
+ * The flip's wiring, as opposed to its curve.
+ *
+ * Everything above pins `flipScale` and `flipShowsFace` as pure functions, and
+ * nothing anywhere asserted that the scene ever calls them: that a reveal starts
+ * a flip at all, that the card it scales is the hole card and not one of the
+ * player's, that a new round concealing again cancels one in flight, or that
+ * reduced motion costs no flip. The whole of `trackFlip` and the scaled path of
+ * `withFlip` were executed by no test in either suite, and a mutation of the
+ * hole-card index or of the "was concealed" guard was detected by nothing.
+ *
+ * The measurement is the transform stream. `withFlip` wraps the card's draws in
+ * `translate(centre) / scale(w, 1) / translate(-centre)`, so a horizontal scale
+ * whose argument is not 1 is a card mid-flip and the translate before it names
+ * the centre it turned about. SPEC 4.3 fixes which card that is: the dealer's
+ * second.
+ */
+describe('E6 armour: the flip is wired to the hole card and to the reveal', () => {
+  /** Every horizontal scale in one frame, with the centre it was taken about. */
+  function scaled(
+    entries: readonly RecordedEntry[],
+  ): { readonly scale: number; readonly centre: number }[] {
+    const found: { scale: number; centre: number }[] = [];
+    for (let index = 0; index < entries.length; index += 1) {
+      const entry = entries[index];
+      if (entry?.kind !== 'call' || entry.op !== 'scale' || Number(entry.args[0]) === 1) {
+        continue;
+      }
+      const before = entries[index - 1];
+      found.push({
+        scale: Number(entry.args[0]),
+        centre:
+          before?.kind === 'call' && before.op === 'translate' ? Number(before.args[0]) : Number.NaN,
+      });
+    }
+    return found;
+  }
+
+  const DEALER: readonly Card[] = [card('A', 'spades'), card('10', 'hearts')];
+
+  /** The dealer's row, with `concealed` cards face down behind the up card. */
+  const dealt = (concealed: number, reduced = false): SceneState =>
+    scene({
+      dealer: concealed > 0 ? [DEALER[0] as Card] : [...DEALER],
+      dealerConcealed: concealed,
+      motion: motionOf(reduced),
+    });
+
+  /** Where the scene lays the dealer's two cards on an 800 px surface. */
+  function dealerCentres(): number[] {
+    const natural = naturalCardWidth(800);
+    const width = fanCardWidth([{ count: 2, room: 800 }], natural);
+    const fan = fanFor(2, 800, width, natural);
+    return handLayout([...DEALER], 400, 450 * SCENE_GEOMETRY.dealerY, fan, 2).map(
+      (spec) => spec.x + spec.width / 2,
+    );
+  }
+
+  it('scales exactly one card through the reveal, and it is the hole card', () => {
+    const { surface, recording } = recordingSurface();
+    surface.render(dealt(1), 0);
+    surface.render(dealt(1), 1);
+    // The machine stops concealing: the flip starts on this frame.
+    surface.render(dealt(0), 1 / 60);
+
+    const centres = dealerCentres();
+    const widths: number[] = [];
+    for (let frame = 0; frame < 20; frame += 1) {
+      recording.entries.length = 0;
+      surface.render(dealt(0), 1 / 60);
+      for (const turn of scaled(recording.entries)) {
+        widths.push(turn.scale);
+        expect(turn.centre, 'the flip scaled a card that is not the hole card').toBeCloseTo(
+          centres[1] ?? 0,
+          6,
+        );
+        expect(turn.scale).toBeGreaterThan(0);
+        expect(turn.scale).toBeLessThan(1);
+      }
+    }
+    expect(widths.length, 'no frame drew a card under a scale').toBeGreaterThan(5);
+    // It really does pass through zero: the narrowest reading is the
+    // floating-point image of `cos(pi / 2)`.
+    expect(Math.min(...widths)).toBeLessThan(0.1);
+  });
+
+  it('cancels a flip in flight when the next round conceals again', () => {
+    const { surface, recording } = recordingSurface();
+    surface.render(dealt(1), 0);
+    surface.render(dealt(0), 1 / 60);
+    surface.render(dealt(0), 1 / 60);
+    expect(surface.tweensInFlight(), 'nothing was flipping to cancel').toBeGreaterThan(0);
+
+    // A new round deals a hole card again, mid-flip.
+    recording.entries.length = 0;
+    surface.render(dealt(1), 1 / 60);
+    expect(scaled(recording.entries), 'the cancelled flip kept scaling').toEqual([]);
+    recording.entries.length = 0;
+    surface.render(dealt(1), 1 / 60);
+    expect(scaled(recording.entries)).toEqual([]);
+  });
+
+  it('costs no scale and no tween under reduced motion', () => {
+    const { surface, recording } = recordingSurface();
+    surface.render(dealt(1, true), 0);
+    for (let frame = 0; frame < 20; frame += 1) {
+      recording.entries.length = 0;
+      surface.render(dealt(0, true), 1 / 60);
+      expect(scaled(recording.entries), 'reduced motion turned a card').toEqual([]);
+    }
+    expect(surface.tweensInFlight()).toBe(0);
   });
 });
 

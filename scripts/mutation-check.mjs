@@ -434,6 +434,25 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The evasion the rule cannot see. `core-boundary/no-forbidden-imports`
+    // decides by the text of the specifier, so a module whose own path names
+    // neither layer carries both into `core/`'s graph silently, and
+    // `src/storage/document.ts` imports `../ui/audio`, `../ui/motion` and
+    // `../ui/theme` today. Only the transitive-closure test catches this; the
+    // whole lint gate stays green on it.
+    item: 'M3',
+    name: 'a core module reaches ui/ through the storage document, two hops out',
+    file: 'src/core/statistics.ts',
+    find:
+      "import type { Rung } from './settlement';\n" +
+      "import type { CoachAccuracy, CoachRecord } from './strategy';",
+    replace:
+      "import type { Rung } from './settlement';\n" +
+      "import type { GameDocument } from '../storage/document';\n" +
+      "import type { CoachAccuracy, CoachRecord } from './strategy';",
+    detectedBy: UNIT,
+  },
+  {
     item: 'M3',
     name: 'the rule stops limiting itself to core/ and reports everywhere',
     file: 'tools/eslint-plugin-core-boundary/index.js',
@@ -662,6 +681,18 @@ const EDITS = [
     file: 'src/core/rng.ts',
     find: '    const derived = splitSeed(a, b, c, d, splits);',
     replace: '    const derived = nextUint32();',
+    detectedBy: UNIT,
+  },
+  {
+    // The seed reduction is on the live path of every launch: the shipped page
+    // seeds from `Date.now()`, which is always above 2^32. A reduction that
+    // kept a different set of bits would still be deterministic and would still
+    // pass every same-seed and adjacent-seed assertion.
+    item: 'B2',
+    name: 'the seed is folded to 16 bits instead of read modulo 2^32',
+    file: 'src/core/rng.ts',
+    find: '  let walked = seed >>> 0;',
+    replace: '  let walked = Math.abs(seed) % 65536;',
     detectedBy: UNIT,
   },
   {
@@ -1392,7 +1423,7 @@ const EDITS = [
     item: 'J2',
     name: 'a corrupt persisted mark is accepted instead of refused',
     file: 'src/core/wallet.ts',
-    find: '  if (!Number.isInteger(carried) || carried < STARTING_CHIPS) {',
+    find: '  if (!Number.isSafeInteger(carried) || carried < STARTING_CHIPS) {',
     replace: '  if (!Number.isFinite(carried)) {',
     detectedBy: UNIT,
   },
@@ -1767,6 +1798,20 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The coupling the drain's narrow discard rests on: `drain` discards the
+    // rest of the queue only when its OWN accepted intent moved the phase, so a
+    // stale press survives an `update`-driven transition. Nothing goes wrong
+    // because every intent that can be accepted while leaving the phase
+    // identical is legal only where no timer runs. This mutation breaks that
+    // coupling from the phase side, in a timed phase no other entry touches.
+    item: 'C2',
+    name: 'a phase-preserving control goes live in a timed phase, arming the stale-press hazard',
+    file: 'src/core/table.ts',
+    find: '  reveal: Object.freeze<IntentKind[]>([]),',
+    replace: "  reveal: Object.freeze<IntentKind[]>(['tapChip']),",
+    detectedBy: UNIT,
+  },
+  {
     item: 'C2',
     name: 'the phase gate is removed and every action reaches the layer beneath',
     file: 'src/core/table.ts',
@@ -1874,6 +1919,26 @@ const EDITS = [
     file: 'src/core/table.ts',
     find: '  function queue(intent: Intent): void {\n    queued.push(intent);\n  }',
     replace: '  function queue(intent: Intent): void {\n    apply(intent);\n  }',
+    detectedBy: UNIT,
+  },
+  {
+    // The two bet controls the shipped wallet can never refuse. Both arms were
+    // dead to the sweep until an injected wallet drove them, which is what
+    // makes these two entries worth having: a machine that swallowed a bet
+    // refusal would look identical against `createWallet`.
+    item: 'C2',
+    name: 'Clear reports an acceptance whatever the wallet answered',
+    file: 'src/core/table.ts',
+    find: "        return result.ok ? accepted('clear') : refused('clear', 'wallet', result.reason);",
+    replace: "        void result;\n        return accepted('clear');",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'C2',
+    name: 'Max reports an acceptance whatever the wallet answered',
+    file: 'src/core/table.ts',
+    find: "        return result.ok ? accepted('max') : refused('max', 'wallet', result.reason);",
+    replace: "        void result;\n        return accepted('max');",
     detectedBy: UNIT,
   },
   {
@@ -3037,6 +3102,22 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The sibling of the entry above, on the other null path. SPEC 7's accuracy
+    // denominator counts decisions the coach had an opinion about, so a hand it
+    // has nothing to say on must leave the record alone rather than record a
+    // miss. Counting it as `false` is the flattering-in-reverse direction and
+    // would move every accuracy figure and SPEC 9's accuracy milestone.
+    item: 'J3',
+    name: 'a hand the coach has no opinion about is counted as a decision it got wrong',
+    file: 'src/core/strategy.ts',
+    find:
+      '  if (verdict === null) {\n' + '    return Object.freeze({ record, verdict: null });\n  }',
+    replace:
+      '  if (verdict === null) {\n' +
+      '    return Object.freeze({ record: recordDecision(record, false), verdict: null });\n  }',
+    detectedBy: UNIT,
+  },
+  {
     item: 'J3',
     name: 'the accuracy percentage reads zero before the first decision',
     file: 'src/core/strategy.ts',
@@ -3983,6 +4064,26 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The other two pass-throughs of the one function that names the platform.
+    // A read that always answers `null` makes every reload look like a first
+    // launch, which SPEC 13 is the whole of; both were covered in the browser
+    // tier only, which is the tier a unit sweep cannot see.
+    item: 'I3',
+    name: 'the adapter reads nothing back, so every reload looks like a first launch',
+    file: 'src/storage/store.ts',
+    find: '      return storage.getItem(key);',
+    replace: '      void key;\n      return null;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'the adapter never removes, so Reset all data leaves the document standing',
+    file: 'src/storage/store.ts',
+    find: '      storage.removeItem(key);',
+    replace: '      void key;',
+    detectedBy: UNIT,
+  },
+  {
     item: 'I3',
     name: 'an empty storage property is adapted instead of refused',
     file: 'src/storage/store.ts',
@@ -4147,6 +4248,19 @@ const EDITS = [
     file: 'src/core/shoe.ts',
     find: '    if (dealt >= stack.length) {\n      rebuild();\n    }',
     replace: '    if (dealt > stack.length) {\n      rebuild();\n    }',
+    detectedBy: UNIT,
+  },
+  {
+    // The rebuild puts the cut card at the top, which is the only reason the
+    // next `endRound` reshuffles rather than dealing on from a short stack.
+    // `Math.max(cutAt, 0)` is a no-op on a fresh shoe and leaves the old cut
+    // in place after a rebuild, which is exactly the state the boundary is
+    // supposed to repay.
+    item: 'B5',
+    name: 'the rebuild leaves the old cut card in place, so the boundary never repays the reshuffle',
+    file: 'src/core/shoe.ts',
+    find: '    cutAt = 0;',
+    replace: '    cutAt = Math.max(cutAt, 0);',
     detectedBy: UNIT,
   },
   {
@@ -4706,6 +4820,25 @@ const EDITS = [
     file: 'src/render/animate.ts',
     find: '  return clampProgress(progress) >= DONE / 2;',
     replace: '  return clampProgress(progress) >= DONE / 4;',
+    detectedBy: UNIT,
+  },
+  {
+    // The wiring rather than the curve. Every entry above breaks what a flip
+    // looks like; these two break whether the scene flips the right card at
+    // all, which was graded by nothing until the reveal was driven end to end.
+    item: 'E6',
+    name: 'the reveal turns the dealer up card instead of the hole card',
+    file: 'src/render/scene.ts',
+    find: '              flipAt === null ? null : { index: HOLE_CARD, progress: flipAt },',
+    replace: '              flipAt === null ? null : { index: 0, progress: flipAt },',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E6',
+    name: 'the flip restarts on every frame instead of only when the reveal arrives',
+    file: 'src/render/scene.ts',
+    find: '    if (was > 0 && state.dealer.length > HOLE_CARD) {',
+    replace: '    if (state.dealer.length > HOLE_CARD) {',
     detectedBy: UNIT,
   },
   {
@@ -6107,6 +6240,11 @@ const EDITS = [
     detectedBy: ONBOARDING,
   },
   {
+    // Second detector, verified by hand: the 50,000-round soak now stages a
+    // house-rule record at the betting screen and, one turn in forty, in the
+    // middle of a player turn, and its audit fails outright if a stage becomes
+    // the record in force anywhere but an accepted deal. `house-rules-staging`
+    // remains the first and the narrower one; both files run under UNIT.
     item: 'I5',
     name: 'a staged rule record applies the moment it is staged',
     file: 'src/core/table.ts',
@@ -6115,6 +6253,9 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // Second detector, verified by hand, as above: the soak's shoe invariant
+    // requires the shoe in play to deal the deck count the record in force
+    // names, so a rebuild that stops firing is caught on the first deck flip.
     item: 'I5',
     name: 'a deck-count change keeps dealing from the old shoe',
     file: 'src/core/table.ts',
@@ -7065,7 +7206,24 @@ function runEdit(mutation) {
     );
   }
   try {
-    writeFileSync(path, original.replace(mutation.find, mutation.replace));
+    // **The replacement is a function, so `$` in a `replace` value is literal.**
+    // `String.prototype.replace` interprets `$&`, `` $` ``, `$'`, `$$` and
+    // `$<name>` in a string replacement, so an entry whose `replace` carried one
+    // would write something other than its own text into the source and the
+    // ledger line would then name a mutation that never ran. The failure is
+    // quiet in the interesting direction: if the mangled text still breaks the
+    // property, the entry is recorded detected and the sweep is one entry less
+    // honest than it says it is. A function replacement disables the whole
+    // mechanism rather than asking every future entry to escape correctly.
+    //
+    // Byte-identical for every entry in this file today: a scan of the whole
+    // ledger for `$&`, `` $` ``, `$'`, `$$`, `$<` and `$1` to `$9` finds one
+    // occurrence, `'$5 a hand'`, and that is an ADDITION's `content`, written
+    // by `runAddition` below and never passed through `replace`.
+    writeFileSync(
+      path,
+      original.replace(mutation.find, () => mutation.replace),
+    );
     record(mutation, !passes(mutation.detectedBy));
   } finally {
     writeFileSync(path, original);

@@ -891,7 +891,19 @@ function pulseLayer(rings: readonly PulseRing[], tokens: SurfaceTokens): ScenePa
 /** The play surface: a sized canvas, a cached felt, and one frame entry point. */
 export interface PlaySurface {
   readonly surface: Surface;
-  /** The spec the felt is currently baked from. For a drift check and a test. */
+  /**
+   * The spec the felt is currently baked from, frozen.
+   *
+   * **There is no drift-check consumer, and there is not meant to be one any
+   * more.** This was the composition root's door for detecting a size or
+   * device-pixel-ratio change and asking for a rebake; the `BJ-22` bake cache
+   * took that job over and answers it per frame from the wanted spec, so
+   * `main.ts` does not call this and the only reader is `felt-cache.test.ts`.
+   * It stays because reading what the felt was baked from is a fair question to
+   * be able to ask, and it is frozen at the bake because the object it hands
+   * back is the cache's own key: an edit to it would silently make every
+   * subsequent frame miss the cache and pay for a bake.
+   */
   feltSpec(): FeltSpec;
   /** Resize the backing store. The felt rebakes on the next frame. */
   resize(sizing: SurfaceSizing): void;
@@ -1032,16 +1044,16 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
   let inFlight = 0;
   let rendered: SceneState | null = null;
   let resized = false;
-  let fanReading: FanReading = {
+  let fanReading: FanReading = Object.freeze({
     cardWidth: 0,
     naturalCardWidth: 0,
     pitch: 0,
     pitchRatio: 0,
-    regimes: [],
+    regimes: Object.freeze([]),
     overflow: 0,
     dealerTop: 0,
     handTop: 0,
-  };
+  });
 
   /** The grain pair for one colour and scale, baked at most once for each. */
   function grainFor(wanted: GrainSpec): GrainTiles {
@@ -1206,16 +1218,21 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
         height * SCENE_GEOMETRY.handY,
         dealerRowTop + cardHeight(cardWidth),
       );
-      fanReading = {
+      // Frozen here rather than copied at the getter, which is the cheapest
+      // form: the record is rebuilt whole on every frame anyway, so freezing it
+      // at the assignment costs one call a frame and no copy. `fan()` was the
+      // one readout in the project that handed out live internal state, and it
+      // is the surface item `E8`'s fan-floor evidence travels on.
+      fanReading = Object.freeze({
         cardWidth,
         naturalCardWidth: natural,
         pitch: handFan.pitch,
         pitchRatio: handFan.pitchRatio,
-        regimes: resolved.map((fan) => fan.regime),
+        regimes: Object.freeze(resolved.map((fan) => fan.regime)),
         overflow: resolved.reduce((worst, fan) => Math.max(worst, fan.overflow), 0),
         dealerTop: dealerRowTop,
         handTop: playerRowTop,
-      };
+      });
       const chipRadius = width * SCENE_GEOMETRY.chipX;
       const arcLift = height * SCENE_GEOMETRY.arcLiftY;
       const shoe: Point = {

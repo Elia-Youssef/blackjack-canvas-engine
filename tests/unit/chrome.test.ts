@@ -261,6 +261,10 @@ describe('a hand is laid out centred, and grows without moving off centre', () =
 
   it('overlaps the cards by the geometry step and no more', () => {
     const laid = handLayout(four, 400, 100, naturalFan(100, 4), 4);
+    // The population first, as the neighbouring test does: every assertion here
+    // is inside the loop, so a `handLayout` that returned nothing would run the
+    // body zero times and report a green test that graded no card at all.
+    expect(laid).toHaveLength(four.length);
     const step = 100 * SCENE_GEOMETRY.cardStep;
     for (let index = 1; index < laid.length; index += 1) {
       expect((laid[index]?.x ?? 0) - (laid[index - 1]?.x ?? 0)).toBeCloseTo(step, 6);

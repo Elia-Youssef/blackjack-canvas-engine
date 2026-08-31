@@ -609,6 +609,15 @@ test.describe('D4: the focus indicator', () => {
     // `outline: none` on any one of them shows up here.
     await atBettingScreen(page);
     const expected = await controlsInDomOrder(page);
+    // The population before the sweep, exactly as the tab-order test above does
+    // it and for the reason BJ-16's review made a Blocker of: every assertion
+    // below is inside the loop, and `controlsInDomOrder` filters on `hidden`,
+    // `offsetParent` and `tabIndex`, so a layout change that made the row
+    // invisible to it would run the body zero times and report a green sweep
+    // over no control at all.
+    for (const key of SCREEN_CONTROLS['betting'] ?? []) {
+      expect(expected, `${key} is not on the screen this sweep measures`).toContain(key);
+    }
 
     for (const key of expected) {
       expect(await focusByTab(page, key), `${key} is not reachable by Tab`).toBe(true);

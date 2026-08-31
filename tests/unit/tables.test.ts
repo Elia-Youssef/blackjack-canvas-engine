@@ -164,6 +164,26 @@ const MARK_BEFORE_SPLIT = 2450;
  */
 const COMMITTED_READING_PEAK = 2550;
 
+/**
+ * SPEC 4.6's split limit, transcribed rather than imported.
+ *
+ * `MAX_SPLITS` is private to `src/core/table.ts`, and importing it here would
+ * be the wrong direction anyway: the figure below is what SPEC 4.6 says, and
+ * `tests/unit/split.test.ts` carries the same transcription and drives the real
+ * machine to `MAX_SPLITS + 1` hands with it, so the transcription is already
+ * pinned to the code somewhere that a divergence fails loudly.
+ */
+const SPEC_MAX_SPLITS = 3;
+
+/**
+ * How many rounds of maximum winning it would take to leave the safe integers.
+ *
+ * A billion is not a threshold anybody will approach; it is a floor chosen far
+ * enough above any reachable play that only a structural change to the table
+ * set or the split limit can breach it.
+ */
+const SAFE_ROUNDS_FLOOR = 1e9;
+
 // ---------------------------------------------------------------------------
 // The predicates this file reads out of SPEC 6, and the controls
 // ---------------------------------------------------------------------------
@@ -315,6 +335,47 @@ describe('J1: three tables exist with the specified minimums, maximums and thres
     expect(unlockedTables(2500).map((table) => table.id)).toEqual(['bronze', 'silver']);
     expect(unlockedTables(9999).map((table) => table.id)).toEqual(['bronze', 'silver']);
     expect(unlockedTables(10000).map((table) => table.id)).toEqual(['bronze', 'silver', 'gold']);
+  });
+
+  /**
+   * Why SPEC 6 states no maximum balance, written down where it can rot loudly.
+   *
+   * Nothing anywhere caps the bankroll, and nothing needs to, but the argument
+   * for that had never been recorded and so could not fail. It is this: the
+   * initial wager is capped at the table maximum however rich the player is, at
+   * most `MAX_SPLITS + 1` hands can be in play, and each of them may double
+   * once, so the largest net gain any single round can produce is
+   * `hands x 2 x maximum` and growth is additive rather than multiplicative.
+   * Dividing `Number.MAX_SAFE_INTEGER` by that ceiling gives the number of
+   * consecutive maximum-win rounds it would take to leave the exactly
+   * representable integers, and the assertion is that the number is absurd.
+   *
+   * The reading it protects is the one the money math rests on everywhere: every
+   * chip figure in this game is an exact integer, and `settleHand`, `recordBest`
+   * and SPEC 13's persisted mark all assume so without saying it. A table set or
+   * a split limit that broke this would break that silently.
+   */
+  it('needs no balance maximum, because the per-round ceiling puts one absurdly far off', () => {
+    const hands = SPEC_MAX_SPLITS + 1;
+    const richest = Math.max(...TABLES.map((limits) => limits.maximum));
+    // Every hand doubled and every one of them winning 1:1.
+    const perRound = hands * 2 * richest;
+    expect(perRound).toBe(16_000);
+
+    const rounds = Math.floor(Number.MAX_SAFE_INTEGER / perRound);
+    expect(rounds).toBeGreaterThan(SAFE_ROUNDS_FLOOR);
+    // For the record rather than as a threshold: 562 billion rounds, which at
+    // an optimistic four seconds a round and no losing round ever is 71,000
+    // years of continuous play.
+    expect(rounds).toBe(562_949_953_421);
+
+    // And the starting bankroll is a safe integer to begin with, which is the
+    // other end of the same claim.
+    expect(Number.isSafeInteger(STARTING_CHIPS)).toBe(true);
+    for (const limits of TABLES) {
+      expect(Number.isSafeInteger(limits.maximum)).toBe(true);
+      expect(Number.isSafeInteger(limits.unlocksAt)).toBe(true);
+    }
   });
 });
 

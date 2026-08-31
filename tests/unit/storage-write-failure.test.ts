@@ -153,14 +153,20 @@ describe('I3: a SecurityError on the property access falls back to memory', () =
     expect(() => probe.store.write(STORAGE_KEY, '{}')).not.toThrow();
   });
 
-  it('reports a store that answers as durable', () => {
+  it('reports a store that answers as durable, and passes all three calls through', () => {
     const backing = new Map<string, string>();
+    const calls: string[] = [];
     const storage: StorageLike = {
-      getItem: (key) => backing.get(key) ?? null,
+      getItem: (key) => {
+        calls.push('getItem');
+        return backing.get(key) ?? null;
+      },
       setItem: (key, value) => {
+        calls.push('setItem');
         backing.set(key, value);
       },
       removeItem: (key) => {
+        calls.push('removeItem');
         backing.delete(key);
       },
     };
@@ -170,6 +176,24 @@ describe('I3: a SecurityError on the property access falls back to memory', () =
 
     probe.store.write(STORAGE_KEY, 'through the adapter');
     expect(backing.get(STORAGE_KEY)).toBe('through the adapter');
+
+    // **All three pass-throughs, not just the write.** `adaptStorage` is the one
+    // place in the codebase that names the platform, and only its `setItem` arm
+    // had ever been driven by a unit test or broken by a mutation entry: a
+    // `getItem` that always answered `null` would make every reload look like a
+    // first launch, and a `removeItem` that did nothing would make Reset all
+    // data leave the document exactly where it was. Both are covered in the
+    // browser tier, which is precisely the shape the `BJ-20` sweep-miss lesson
+    // names, an entry family only one tier can see.
+    expect(probe.store.read(STORAGE_KEY)).toBe('through the adapter');
+    expect(probe.store.read('js-games.blackjack.absent')).toBeNull();
+    probe.store.remove(STORAGE_KEY);
+    expect(backing.has(STORAGE_KEY)).toBe(false);
+    expect(probe.store.read(STORAGE_KEY)).toBeNull();
+
+    // The count is the control: a read that answered out of a cache of its own
+    // rather than out of the platform would pass everything above.
+    expect(calls).toEqual(['setItem', 'getItem', 'getItem', 'removeItem', 'getItem']);
   });
 
   it('reports a refusal raised by the platform store, through the real adapter', () => {
@@ -575,6 +599,45 @@ describe('I3: no bare catch, and the scanner can see one', () => {
       );
     }
     expect(handlers).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Two tabs on the one namespaced key, pinned as the design it is.
+ *
+ * SPEC 13 and QUALITY-BAR section 8 say nothing about a second tab, so this is
+ * not a graded criterion; it is a behaviour a player can reach, and the choice
+ * between accepting it and merging the monotone fields at the write is recorded
+ * in `persistence.ts`'s header. The pin is here so the decision cannot change by
+ * accident: the day someone puts a re-read on the save path, this goes red and
+ * says which sentence they are editing.
+ *
+ * Torn reads are deliberately not part of the claim. `setItem` and `getItem`
+ * are atomic per key and the document is one key, so what is at stake is which
+ * whole document wins, not a half-written one.
+ */
+describe('SPEC 13: one key, one document, and the last writer wins', () => {
+  it('lets a stale tab overwrite what the other tab achieved, which is the chosen design', () => {
+    const store = createMemoryStore();
+    // Both tabs boot on the same empty document, which is the realistic case:
+    // a second tab opened while the first is mid-session.
+    const tabA = createPersistence({ store, durable: true, failure: null });
+    const tabB = createPersistence({ store, durable: true, failure: null });
+
+    tabA.update({ bestBalance: 42_000, howToPlaySeen: true });
+    expect(loadDocument(store).document.bestBalance).toBe(42_000);
+
+    // Tab B writes anything at all: a settings toggle, a round boundary, or the
+    // pagehide save `main.ts` wires to `onHidden`. It carries its own boot-time
+    // document, so tab A's mark goes.
+    tabB.update({ howToPlaySeen: true });
+    expect(loadDocument(store).document.bestBalance).toBe(STARTING_CHIPS);
+
+    // The other half of the same design: tab A's own view is unaffected, because
+    // the in-memory document is authoritative and nothing re-reads.
+    expect(tabA.document().bestBalance).toBe(42_000);
+    tabA.update({ howToPlaySeen: true });
+    expect(loadDocument(store).document.bestBalance).toBe(42_000);
   });
 });
 

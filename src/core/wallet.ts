@@ -52,6 +52,19 @@
  * and otherwise the natural pays `wager x 3 / 2`, both of which exceed any
  * possible shortfall.
  *
+ * **There is no maximum balance, and none is needed.** SPEC 6 states none, this
+ * module enforces none, and the argument for that is arithmetic rather than
+ * taste: the initial wager is capped at the table maximum however rich the
+ * player is, at most four hands can be in play, and each may double once, so a
+ * single round can add at most `4 x 2 x 2000` chips and the growth is additive
+ * rather than multiplicative. Leaving `Number.MAX_SAFE_INTEGER` therefore takes
+ * over five hundred billion consecutive maximum-win rounds. That matters because
+ * every chip figure here is an exact integer and the whole file assumes so:
+ * `tests/unit/tables.test.ts` asserts the bound off `TABLES` so a table retune
+ * that broke it fails loudly instead of quietly making the assumption false.
+ * `createWallet`'s guard below reads `Number.isSafeInteger` for the same reason,
+ * which is also what `src/storage/document.ts` says about the persisted mark.
+ *
  * **A rejected bet changes nothing.** SPEC 4.11: a chip tap that would carry the
  * wager above `min(tableMax, chips)` is rejected with a reason, never silently
  * clamped, and Deal below the table minimum is blocked, never raised to it. Only
@@ -183,6 +196,10 @@ export const LOWEST_TABLE: TableLimits = firstTable();
 function firstTable(): TableLimits {
   const first = TABLES[0];
   if (first === undefined) {
+    // Deliberately unpinned. `TABLES` is a frozen three-row literal in this
+    // file, so this arm is `noUncheckedIndexedAccess` asking for a reading of a
+    // list that cannot be empty; there is no construction that reaches it and a
+    // test would only assert that the literal has rows.
     throw new RangeError('SPEC 6 configures three tables and the list is empty');
   }
   return first;
@@ -300,6 +317,10 @@ export function launchTable(persisted: TableId, bestBalance: number): LaunchChoi
     return Object.freeze({ table: persisted, fromFallback: false });
   }
   const fallback = highestEnterableTable(bestBalance, STARTING_CHIPS);
+  // The `null` arm is deliberately unpinned and unreachable: this call asks the
+  // question at `STARTING_CHIPS`, and Bronze's minimum is far below it, so the
+  // search always finds at least Bronze. It stays as the total-function belt
+  // that keeps `launchTable` from having to answer `null` itself.
   return Object.freeze({
     table: fallback === null ? LOWEST_TABLE.id : fallback.id,
     fromFallback: true,
@@ -657,7 +678,7 @@ export interface WalletOptions {
  */
 export function createWallet(options: WalletOptions = {}): Wallet {
   const carried = options.bestBalance ?? STARTING_CHIPS;
-  if (!Number.isInteger(carried) || carried < STARTING_CHIPS) {
+  if (!Number.isSafeInteger(carried) || carried < STARTING_CHIPS) {
     throw new RangeError(
       `a persisted best balance is a whole number of chips at or above ${String(STARTING_CHIPS)}; ` +
         `${String(carried)} is not`,

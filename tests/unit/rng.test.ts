@@ -120,6 +120,30 @@ describe('the generator is seeded and reproducible', () => {
     expect(draws(createRng(0), 8)).not.toEqual(draws(createRng(-1), 8));
   });
 
+  /**
+   * The documented reduction: `createRng`'s contract says the seed is read
+   * modulo 2^32, so `1` and `1 + 2^32` are one stream.
+   *
+   * This is on the live path of every real launch rather than an edge: the
+   * shipped page seeds from `Date.now()`, which has been above 2^32 since 1970
+   * plus fifty days, so the canonical form is the one the game never supplies.
+   * The four cases below are the whole contract, and the last one is the
+   * shipped seed itself.
+   */
+  it('reads the seed modulo 2^32, which is what the shipped page relies on', () => {
+    expect(draws(createRng(1), 32)).toEqual(draws(createRng(1 + 2 ** 32), 32));
+    expect(draws(createRng(-1), 32)).toEqual(draws(createRng(2 ** 32 - 1), 32));
+
+    // A seed with no low 32 bits collapses onto zero, negative zero included.
+    expect(draws(createRng(2 ** 53), 32)).toEqual(draws(createRng(0), 32));
+    expect(draws(createRng(-0), 32)).toEqual(draws(createRng(0), 32));
+
+    const now = Date.now();
+    expect(Number.isInteger(now)).toBe(true);
+    expect(now).toBeGreaterThan(2 ** 32);
+    expect(draws(createRng(now), 8)).toEqual(draws(createRng(now >>> 0), 8));
+  });
+
   it('does not fall into a short cycle', () => {
     const seen = new Set(draws(createRng(31337), 20_000));
     // 20,000 draws from 2^32 values collide about 46 times by chance, so

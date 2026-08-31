@@ -234,6 +234,37 @@ describe('BJ-22: the felt bakes once per distinct size, not once per screen', ()
     expect(surface.feltSpec().width).toBe(800);
   });
 
+  /**
+   * The spec handed out by `feltSpec()` is the cache's own key.
+   *
+   * `needsRebake(entry.spec, wanted)` decides whether the next frame pays for a
+   * bake, and `feltSpec()` returns that very object, so before it was frozen a
+   * four-byte edit from outside made the cache miss on every subsequent frame
+   * and pay a bake the `BJ-22` measurement put at 176 ms, against item `H4`'s
+   * 50 ms ceiling. Nothing in the shipped page calls `feltSpec()` at all, which
+   * is why this was armour rather than a live defect; the interface invites the
+   * call, so the armour is the pin.
+   */
+  it('hands out a frozen spec, so nothing outside can poison the cache with it', () => {
+    const { surface, bakes } = harness();
+    surface.render(scene(), 1 / 60);
+    expect(bakes()).toBe(1);
+
+    const spec = surface.feltSpec();
+    expect(Object.isFrozen(spec)).toBe(true);
+    // The attack, which the freeze turns into a no-op in loose mode and a throw
+    // in the strict mode this file runs under. Either way the width is intact.
+    expect(() => {
+      (spec as { width: number }).width = 12_345;
+    }).toThrow(TypeError);
+    expect(surface.feltSpec().width).toBe(BETTING.width);
+
+    // The regression itself: an identical second frame still hits the cache.
+    surface.render(scene(), 1 / 60);
+    surface.render(scene(), 1 / 60);
+    expect(bakes(), 'an identical frame paid for a bake').toBe(1);
+  });
+
   it('reads the cache through `needsRebake` and not a second copy of the rule', () => {
     // `needsRebake` is documented as "the whole of the caching rule". A cache
     // keyed on a string would be a second encoding of it, free to drift out

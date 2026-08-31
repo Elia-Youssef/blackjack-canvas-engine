@@ -43,6 +43,20 @@
  *      inconsistent even when neither is corrupt, and `launchTable` is the
  *      function SPEC 13 gives for exactly that.
  *
+ * **Two tabs on the one key are last-writer-wins on whole documents, and that
+ * is the chosen design rather than an oversight.** Each tab loads the document
+ * once at construction and holds it in memory as authoritative, and every save
+ * writes the whole of it, so a second tab that merely goes hidden writes the
+ * document it booted with over whatever the first tab has since achieved. SPEC
+ * 13 and QUALITY-BAR section 8 are silent on more than one tab, and section 8's
+ * own framing is that persistence is best-effort: nothing a player would be
+ * upset to lose may be gated on storage surviving. The alternative, re-reading
+ * on the write path to merge the monotone fields, buys back the unlocks at the
+ * cost of putting a read on every save and giving the document two authorities,
+ * which is the design this file exists not to have.
+ * `tests/unit/storage-write-failure.test.ts` pins the behaviour as the decision
+ * it is, so a change to it is deliberate rather than accidental.
+ *
  * **The chip balance is not here, and cannot be.** SPEC 13 does not persist one,
  * `GameDocument` has no field for it, and the wallet this file builds starts at
  * `STARTING_CHIPS` because that is what `createWallet` does. Item `I4` at

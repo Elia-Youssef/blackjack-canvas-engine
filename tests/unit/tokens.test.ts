@@ -46,10 +46,28 @@ import {
   SURFACE,
   duration,
 } from '../../src/render/tokens';
+import {
+  CHIP_DENOMINATIONS as WALLET_CHIP_DENOMINATIONS,
+  WAGER_GRID,
+} from '../../src/core/wallet';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CSS = readFileSync(join(PROJECT_ROOT, 'src', 'ui', 'tokens.css'), 'utf8');
 const CONTRACT = readFileSync(join(PROJECT_ROOT, 'tests', 'reference', 'design-contract.md'), 'utf8');
+
+/**
+ * The wager grid `src/render/chips.ts` refuses against, read out of its source.
+ *
+ * That module is a leaf with no `core/` import by design, so SPEC 4.11's grid
+ * is a literal in its guard. Reading the literal rather than transcribing it
+ * means the agreement assertion below moves with the guard instead of quietly
+ * agreeing with a number nobody edits any more.
+ */
+const CHIPS_GRID_LITERAL = Number(
+  /wager % (\d+) !== 0/.exec(
+    withoutComments(readFileSync(join(PROJECT_ROOT, 'src', 'render', 'chips.ts'), 'utf8')),
+  )?.[1] ?? Number.NaN,
+);
 
 /** The text of one numbered section of a markdown file. */
 function section(markdown: string, heading: string): string {
@@ -252,11 +270,75 @@ describe('E1: the spec is the only source of colour', () => {
     expect(FELT.gold).toBe(SURFACE.feltGold);
   });
 
+  /**
+   * Two tokens, one hex, and three places that rely on it silently.
+   *
+   * `src/render/card.ts:376` fills the whole card in `cardMargin` and says why
+   * in a comment: the face is the same hex by SPEC 16, so the light boundary
+   * against the felt is the whole outline rather than a ring around a separate
+   * fill. `scripts/report/contrast.mjs:358` makes the same substitution without
+   * a comment, which is what puts the G2 audit's two `rank-*-on-face` rows on
+   * `cardMargin`. Nothing read `cardFace` at all, and nothing failed if SPEC 16
+   * ever gave the two different values.
+   *
+   * The assertion is here rather than a second fill in `card.ts`: filling the
+   * face region separately would add a draw and could move antialiased pixels
+   * under the zero-threshold visual baselines, which is a real cost for no
+   * present gain. The day the contract separates them, this goes red at the two
+   * sites that must change instead of the game quietly painting the wrong face
+   * and the audit quietly measuring the wrong pair.
+   */
+  it('keeps the card face and the card margin one hex, which card.ts and the audit both assume', () => {
+    expect(SURFACE.cardFace).toBe(SURFACE.cardMargin);
+    expect(HIGH_CONTRAST_SURFACE.cardFace).toBe(HIGH_CONTRAST_SURFACE.cardMargin);
+    // Both sets, from the spec side rather than from the record, so a table
+    // that separated them would fail here even if the record still agreed.
+    expect(PLAY.get('--card-face')).toBe(PLAY.get('--card-margin'));
+    expect(FORCED.get('--card-face')).toBe(FORCED.get('--card-margin'));
+  });
+
   it('carries the same chips in both forms', () => {
     expect(CHIP_DENOMINATIONS).toEqual([...CHIPS.keys()]);
     for (const [denomination, { fill }] of CHIPS) {
       expect(declared(`--chip-${String(denomination)}-fill`)).toBe(fill);
       expect(CHIP_FILL[denomination as keyof typeof CHIP_FILL]).toBe(fill);
+    }
+  });
+
+  /**
+   * The denomination set is a SPEC 4.11 game rule and is declared twice.
+   *
+   * `src/core/wallet.ts` owns it as the money rule, `src/render/tokens.ts`
+   * re-declares it for the rack layout, and `src/render/chips.ts` decomposes a
+   * player's real wager against the second one. Each copy is pinned separately,
+   * to a different transcription of a different spec section: the render copy to
+   * SPEC 16's scraped chip table above, the wallet copy to a hand-written
+   * transcription of SPEC 4.11 in `tests/unit/wallet.test.ts`. No test file
+   * imported both, the two types are structurally identical so no compile error
+   * can arise at the seam, and `wagerToChips` takes a plain `number`, so nothing
+   * anywhere compared the two answers.
+   *
+   * The cure is this agreement test rather than an import, deliberately, for the
+   * same reason the `tokens.css` / `tokens.ts` duo is never merged:
+   * `src/render/tokens.ts` has no imports at all and is the leaf the shared
+   * engine extraction wants, so making it read `core/` to satisfy a test would
+   * cost more than the test does. What it protects is SPEC 4.11's own standing
+   * warning: do not add a chip denomination without re-deriving everything that
+   * rests on the grid, which is the 3:2 natural, the insurance stake, the 2:1
+   * insurance payout and the surrender return.
+   */
+  it('declares one denomination set, whichever module is asked', () => {
+    expect([...CHIP_DENOMINATIONS]).toEqual([...WALLET_CHIP_DENOMINATIONS]);
+
+    // The grid `render/chips.ts` refuses a wager against is SPEC 4.11's, which
+    // `wallet.ts` owns as `WAGER_GRID`, and it is spelled as a literal 10 there
+    // for the same leaf reason. Both readings are asserted equal, and the
+    // smallest denomination is what makes the grid the grid.
+    expect(WAGER_GRID).toBe(10);
+    expect(Math.min(...WALLET_CHIP_DENOMINATIONS)).toBe(WAGER_GRID);
+    expect(CHIPS_GRID_LITERAL).toBe(WAGER_GRID);
+    for (const denomination of CHIP_DENOMINATIONS) {
+      expect(denomination % WAGER_GRID, `${String(denomination)} is off the grid`).toBe(0);
     }
   });
 
