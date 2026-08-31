@@ -27,7 +27,17 @@
  * event is dispatched for real, so the page's listener, the platform's event
  * machinery and the loop's stop are all exercised. `pagehide`, the other hook
  * QUALITY-BAR section 7 names, is driven the same way and asserted never to
- * restart: a page that left is not a page that hid.
+ * restart on a visible event: a page that left is not a page that hid.
+ *
+ * **The third hook is the one route back.** The same section says "`pageshow`
+ * with `event.persisted` restores from bfcache without a reload", and a real
+ * back/forward-cache revival cannot be produced by a test: the browser decides
+ * what it caches, and Playwright's own navigation would reload rather than
+ * revive. What can be produced is the event the platform delivers on that
+ * route, carrying the flag the rule turns on, and the two arms below drive it
+ * with the flag set and with it clear. That is the seam the shipped handler
+ * reads, and the negative arm is what keeps the positive one from being a loop
+ * that restarts on any `pageshow` at all.
  *
  * **Routes.** The state is the machine's, so the harness boots the page; the
  * pause and the resume are the shipped loop's own behaviour, with nothing
@@ -135,6 +145,37 @@ async function firePageHide(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Fire the `pageshow` the section also names, with `persisted` set or clear.
+ *
+ * The event is built with the platform's own constructor where the engine has
+ * one, and on a generic `Event` with the property defined where it has not.
+ * Which route ran is returned so the test can say so, and the flag is read
+ * back off the event before it is dispatched, because an event whose
+ * `persisted` came out `undefined` would be the negative arm wearing the
+ * positive arm's name and would pass for the wrong reason.
+ */
+async function firePageShow(page: Page, persisted: boolean): Promise<string> {
+  return page.evaluate((wanted) => {
+    let event: Event;
+    let route: string;
+    if (typeof PageTransitionEvent === 'function') {
+      event = new PageTransitionEvent('pageshow', { persisted: wanted });
+      route = 'PageTransitionEvent';
+    } else {
+      event = new Event('pageshow');
+      Object.defineProperty(event, 'persisted', { value: wanted, configurable: true });
+      route = 'defineProperty';
+    }
+    const read = (event as PageTransitionEvent).persisted;
+    if (read !== wanted) {
+      throw new Error(`the pageshow event reads persisted=${String(read)}, wanted ${String(wanted)}`);
+    }
+    window.dispatchEvent(event);
+    return route;
+  }, persisted);
+}
+
 test.describe('C7: hiding the tab', () => {
   test('pauses the deal mid-count and holds the whole state while hidden', async ({ page }) => {
     await bootGame(page, {});
@@ -223,5 +264,81 @@ test.describe('C7: hiding the tab', () => {
     await showTab(page);
     await page.waitForTimeout(200);
     await expect(await frozenState(page), 'the page that left stays stopped').toEqual(left);
+  });
+
+  test('a persisted pageshow brings it back, because bfcache revives without a load', async ({
+    page,
+  }) => {
+    await bootGame(page, {});
+    await waitForPhase(page, 'start');
+    await control(page, 'start').click();
+    await waitForPhase(page, 'betting');
+    await chip(page, 50).click();
+    await control(page, 'deal').click();
+    await waitForPhase(page, 'dealing');
+
+    await firePageHide(page);
+    const left = await frozenState(page);
+    await page.waitForTimeout(HIDDEN_FOR_MS);
+    await expect(await frozenState(page), 'the page that left stopped first').toEqual(left);
+
+    const route = await firePageShow(page, true);
+    expect(['PageTransitionEvent', 'defineProperty'], 'the revival event was never built').toContain(
+      route,
+    );
+
+    // Frames are running again, and the proof is the accumulator the whole
+    // spec is measured on: it moved, under the machine's own pacing, from the
+    // number the page was put away at.
+    await page.waitForTimeout(HIDDEN_FOR_MS);
+    const revived = await frozenState(page);
+    expect(revived['elapsed'] as number, 'the revived page ran no frame').toBeGreaterThan(
+      left['elapsed'] as number,
+    );
+
+    // And it is the same round rather than a new one: the deal it was stopped
+    // mid-count in runs to its result, exactly as the hidden tab's does.
+    for (let step = 0; step < 300; step += 1) {
+      const phase = (await readout(page)).phase.kind;
+      if (phase === 'roundResult') {
+        break;
+      }
+      if (phase === 'insurance') {
+        await page.locator('[data-control="decline-insurance"]').click();
+        await page.waitForTimeout(100);
+        continue;
+      }
+      if (phase === 'playerTurn') {
+        await page.locator('[data-action="stand"]').click();
+        await page.waitForTimeout(100);
+        continue;
+      }
+      await page.waitForTimeout(100);
+    }
+    await waitForPhase(page, 'roundResult');
+    expect((await readout(page)).rounds, 'exactly the one round, once').toBe(1);
+  });
+
+  test('a pageshow without persisted is a fresh load, and restarts nothing', async ({ page }) => {
+    await bootGame(page, {});
+    await waitForPhase(page, 'start');
+    await control(page, 'start').click();
+    await waitForPhase(page, 'betting');
+    await chip(page, 50).click();
+    await control(page, 'deal').click();
+    await waitForPhase(page, 'dealing');
+
+    await firePageHide(page);
+    const left = await frozenState(page);
+
+    const route = await firePageShow(page, false);
+    expect(['PageTransitionEvent', 'defineProperty'], 'the load event was never built').toContain(
+      route,
+    );
+    await page.waitForTimeout(HIDDEN_FOR_MS);
+    // A `pageshow` with no `persisted` is the platform announcing a load, and
+    // a load is the boot's business: this loop has nothing to restore and
+    // restores nothing.
+    await expect(await frozenState(page), 'a load was read as a revival').toEqual(left);
   });
 });

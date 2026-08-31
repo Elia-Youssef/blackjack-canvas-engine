@@ -142,7 +142,7 @@ describe('D1: input is one handler path', () => {
       }
     }
 
-    // Twelve listeners in the whole product, and each one is somewhere its
+    // Thirteen listeners in the whole product, and each one is somewhere its
     // criterion can be read against: the activation, the keyboard, and the media
     // query that carries the reduced-motion preference are `D1`'s three. The
     // three `BJ-19` added are the audio engine's, and none is an activation
@@ -154,7 +154,16 @@ describe('D1: input is one handler path', () => {
     // the page rather than an input from a player. `BJ-20` added the loop's
     // pair, and they are the same kind of observation: QUALITY-BAR section 7
     // pauses the loop on a hidden tab and writes the document on `pagehide`,
-    // neither of which is an input a player made. `BJ-20` also added the
+    // neither of which is an input a player made. The loop's `pageshow` is the
+    // third of that same class and was added by the fix for audit finding
+    // `Z7-1`: it is the page announcing that it has been handed back from the
+    // back/forward cache, which no player did and no control produced, and it
+    // is QUALITY-BAR section 7's own named restore mechanism, "`pageshow` with
+    // `event.persisted` restores from bfcache without a reload". The section
+    // named all three hooks from the start; the product listened for two of
+    // them, so a page revived from the cache without a preceding hidden moment
+    // came back with its loop stopped for good. It sits beside `pagehide` on
+    // the same target and is taken off beside it in `dispose`. `BJ-20` also added the
     // volume slider's two, and neither is an activation either: `input` is a
     // continuous control reporting its own movement under the player's hand,
     // moving the gain live and uncommitted, and the slider's `change` is the
@@ -187,6 +196,7 @@ describe('D1: input is one handler path', () => {
       'keydown',
       'keydown',
       'pagehide',
+      'pageshow',
       'pointerdown',
       'unhandledrejection',
       'visibilitychange',
