@@ -38,11 +38,40 @@ jobs:
           PULL_REQUEST_BODY: ${{ github.event.pull_request.body }}
         run: node scripts/check-repository-record.mjs
 
+  visual-baselines:
+    name: Visual baselines
+    needs: repository-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container:
+      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      options: --ipc=host
+    steps:
+      - name: Check out the proposed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compare every key state against its committed baseline
+        run: npx playwright test --project=chromium --no-deps visual.spec.ts
+
+      - name: Upload the differences on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: visual-differences
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
   blackjack:
     name: Blackjack gates
     needs: repository-policy
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 60
     steps:
       - name: Check out the proposed commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,11 +99,41 @@ jobs:
       - name: Run unit tests
         run: npm run test
 
-      - name: Run browser tests
-        run: npm run test:browser
-
       - name: Verify deterministic production builds
         run: npm run verify:build
+
+      - name: Build the measurement bundle
+        run: npm run build
+
+      - name: Measure frame performance
+        run: npm run report:perf
+
+      - name: Run browser tests
+        run: npm run test:browser -- --ignore-snapshots
+
+      - name: Measure the bundle size
+        run: npm run report:bundle-size
+
+      - name: Audit rendered contrast
+        run: npm run report:contrast
+
+      - name: Measure touch targets
+        run: npm run report:touch-targets
+
+      - name: Measure load metrics with Lighthouse
+        # The npm script installs the pinned tool with --no-save first. See
+        # section 5: recording it in the lock fails both provenance gates on a
+        # transitive package name.
+        run: npm run report:lighthouse
+
+      - name: Upload the measurement reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: measurement-reports
+          path: artifacts/reports/
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Upload browser diagnostics on failure
         if: failure()
@@ -86,3 +145,41 @@ jobs:
             test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  memory-soak:
+    name: Memory soak
+    needs: repository-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 50
+    steps:
+      - name: Check out the proposed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20.19.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install the browser engine
+        run: npx playwright install --with-deps chromium
+
+      - name: Build
+        run: npm run build
+
+      - name: Play for thirty minutes and take three heap snapshots
+        run: npm run report:memory
+
+      - name: Upload the memory report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: memory-report
+          path: artifacts/reports/memory.md
+          if-no-files-found: error
+          retention-days: 30

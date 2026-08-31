@@ -207,6 +207,73 @@ async function systemPalette(page: Page): Promise<readonly string[]> {
  * an engine that silently ignores the request produces a skip with a reason
  * rather than a green run that measured nothing.
  */
+/**
+ * How many distinct colours a line across the felt may hold and still be flat.
+ *
+ * Not one. The felt is drawn on a canvas with antialiased edges and a rounded
+ * corner, and the sampled row crosses the rail on both sides, so a genuinely
+ * flat fill still measures a handful of colours. The standard felt measures in
+ * the hundreds: the grain quantises into sixteen alpha bands over a radial
+ * vignette, so every cell along the row is its own shade. The two readings are
+ * three orders of magnitude apart, which is why one threshold separates them
+ * and why the spec measures both rather than asserting the flat one alone.
+ */
+const FLAT_FELT_CEILING = 12;
+
+/** SPEC 16's forced-colors bronze, `#0B2C1F`, as the sampler reports a pixel. */
+const HIGH_CONTRAST_BRONZE_RGB = '11,44,31';
+
+/** One reading of the baked felt: how varied it is, and what it mostly is. */
+interface FeltSample {
+  readonly distinct: number;
+  readonly commonest: string;
+}
+
+/**
+ * Sample one row of the **baked felt canvas**, straight out of its backing
+ * store.
+ *
+ * The felt is its own static canvas under the transparent animated scene, so a
+ * row through its middle is table and nothing else: no card, no chip and no
+ * moving thing can be on it. Read back with `getImageData` rather than through
+ * a screenshot, because what is being graded is what the renderer drew and not
+ * what the compositor did with it afterwards.
+ */
+async function feltSample(page: Page): Promise<FeltSample> {
+  return page.evaluate(() => {
+    // The felt stack holds one canvas per baked felt from `BJ-22`'s fix
+    // round, and exactly one of them is without `hidden`: that is the one on
+    // screen, and reading any other would grade a table nobody can see.
+    const canvas = document.querySelector('canvas.bj-surface-felt:not([hidden])');
+    if (!(canvas instanceof HTMLCanvasElement)) {
+      throw new Error('no felt canvas on this page');
+    }
+    const ctx = canvas.getContext('2d');
+    if (ctx === null) {
+      throw new Error('the felt canvas returned no 2d context');
+    }
+    const row = Math.floor(canvas.height / 2);
+    const { data } = ctx.getImageData(0, row, canvas.width, 1);
+    const counts = new Map<string, number>();
+    for (let index = 0; index < data.length; index += 4) {
+      if ((data[index + 3] ?? 0) < 255) {
+        continue;
+      }
+      const key = `${String(data[index])},${String(data[index + 1])},${String(data[index + 2])}`;
+      counts.set(key, (counts.get(key) ?? 0) + 1);
+    }
+    let commonest = '';
+    let best = -1;
+    for (const [key, count] of counts) {
+      if (count > best) {
+        commonest = key;
+        best = count;
+      }
+    }
+    return { distinct: counts.size, commonest };
+  });
+}
+
 async function forceColours(page: Page, browserName: string): Promise<void> {
   await page.emulateMedia({ forcedColors: 'active' }).catch(() => {
     // The engine has no forced-colors emulation at all. The check below turns
@@ -405,24 +472,44 @@ test.describe('G9: the play surface selects its palette through the media query'
     expect(probe.forcedColors).toBe(true);
   });
 
-  test('selects a palette, and reports the park rather than pretending', async ({
+  test('selects the high-contrast set and spends it on the felt', async ({
     page,
     browserName,
   }) => {
     await bootGame(page, {});
     await waitForPhase(page, 'start');
+
+    // Before, so the reading below is shown to be able to tell the two sets
+    // apart. The standard felt is a gradient with grain over it, which is many
+    // distinct colours along any line across the table.
+    const textured = await feltSample(page);
+    expect(textured.distinct, 'the standard felt is not textured').toBeGreaterThan(
+      FLAT_FELT_CEILING,
+    );
+    expect((await accessibilityProbe(page)).palette.flatFelt).toBe(false);
+
     await forceColours(page, browserName);
     await expect(shell(page)).toHaveAttribute('data-forced-colors', 'active');
 
     const probe = await accessibilityProbe(page);
-    // The selection ran and answered. The answer today is the fallback, because
-    // SPEC 16 defines no high-contrast play-surface set and no colour may be
-    // invented in the code; the reason is carried rather than hidden, so this
-    // assertion tells a reader which of the two states the build is in. When the
-    // sheet gains the table, `tests/unit/forced-colors.test.ts` fails first and
-    // sends its author to the park in `src/render/tokens.ts`.
-    expect(probe.palette.name).toBe('standard-fallback');
-    expect(probe.palette.reason).toBe('unspecified-high-contrast-set');
+    // `BJ-22` closed item `G9`'s third clause: SPEC 16 gained the forced-colors
+    // play-surface table, `src/render/tokens.ts` carries it, and the renderer
+    // draws from whichever set the query selected. The probe says which set;
+    // the pixels below say it reached the canvas, which is the half a probe
+    // alone could not prove.
+    expect(probe.palette.name).toBe('high-contrast');
+    expect(probe.palette.flatFelt).toBe(true);
+
+    const flat = await feltSample(page);
+    // SPEC 16: "the gradient and the grain are suppressed under this set,
+    // because subtle texture is what high contrast exists to remove, and the
+    // audit measures the flat fill".
+    expect(flat.distinct, 'the high-contrast felt is still textured').toBeLessThanOrEqual(
+      FLAT_FELT_CEILING,
+    );
+    // And it is the set SPEC 16 names, not merely a flatter version of the old
+    // one: the bronze felt's own forced-colors hex is what the fill measures.
+    expect(flat.commonest).toBe(HIGH_CONTRAST_BRONZE_RGB);
   });
 
   test('follows the query back when it is turned off again', async ({ page, browserName }) => {

@@ -252,6 +252,36 @@ body {
   display: block;
 }
 
+/* **The felt stack holds one canvas per baked felt, and shows one of them.**
+ * `BJ-22`'s fix round: `src/render/scene.ts` caches its bakes and
+ * `createFeltLayer` gives each one a canvas of its own, because copying a baked
+ * canvas onto a shared one measured 21 to 32 ms the first time each source was
+ * copied against 1 to 2 ms to bake straight onto the canvas being shown. The
+ * rule above sets `display: block` on every one of them, which outranks the
+ * browser's own default rule for `[hidden]`, so the hidden ones need saying
+ * twice.
+ * `canvas.bj-surface-felt:not([hidden])` is the one on screen. */
+.bj-surface-felt[hidden] {
+  display: none;
+}
+
+/* **The animated scene is positioned too, and that one word is a shipped defect
+ * fixed at `BJ-22`.** The baked felt below is `position: absolute`, and CSS
+ * paints positioned descendants of a stacking context after every in-flow one,
+ * whatever the source order: an in-flow `.bj-surface` therefore painted
+ * underneath an opaque felt, so the shipped page drew every card, every chip and
+ * every win pulse into a canvas nobody could see. It was found by `BJ-22`'s
+ * first visual capture and it had been true since `BJ-15` split the felt onto
+ * its own canvas: the browser gate reads the canvas back with `getImageData`,
+ * which reports what the renderer drew rather than what the compositor showed,
+ * so 15,912 opaque pixels were being measured on a surface that rendered as an
+ * empty table. Making this element positioned as well puts source order back in
+ * charge, and source order is felt first, scene second. `tests/browser/visual
+ * .spec.ts` is what stops it coming back. */
+.bj-surface {
+  position: relative;
+}
+
 .bj-surface-felt {
   position: absolute;
   inset: 0;
@@ -272,6 +302,24 @@ body {
   /* See `.bj-top` above: the grid column is sized from this row's min-content,
    * and the chip tray's is a row of chips that will not shrink. */
   min-width: 0;
+}
+
+/* The five timed screens carry only their status line, so this row used to
+ * collapse from the 76 px action-row height to 24 px. At the 1280 x 800
+ * reference viewport that made the play surface jump from 1029 x 579 to
+ * 1121 x 631 and back, reallocating both canvas backing stores on the first
+ * deal. Under QUALITY-BAR section 2's 4x throttle that compositor commit was
+ * the repeatable 71-74 ms task that breached H4, and the larger transient
+ * surface lifted H7 app work above 8 ms. Keep the quiet phases at the height
+ * the neighbouring betting and player-turn screens already use: one minimum
+ * target plus the spacing-scale remainder, with no new dimension literal.
+ * The row may still grow where a breakpoint or translated status needs it. */
+.bj-shell[data-phase='dealing'] .bj-controls,
+.bj-shell[data-phase='peek'] .bj-controls,
+.bj-shell[data-phase='reveal'] .bj-controls,
+.bj-shell[data-phase='dealerTurn'] .bj-controls,
+.bj-shell[data-phase='settling'] .bj-controls {
+  min-height: calc(var(--target-min) + var(--space-6));
 }
 
 /* The play surface takes a height of its own rather than a share, once the shell
@@ -518,12 +566,21 @@ body {
 }
 
 /* The volume slider, which is the one control in the panel the platform draws
- * the shape of. Its accent takes the theme's own accent so it is never a
- * foreign object in either palette, and its thumb keeps the touch target the
- * buttons keep through the token the focus ring's width already carries. */
+ * the shape of. Its accent takes the theme's own accent so it is never a foreign
+ * object in either palette, and its box keeps the touch target every button in
+ * the panel keeps.
+ *
+ * **`--target-min`, and the token it replaced is a defect `BJ-22` measured.**
+ * This rule carried `min-height: var(--focus-ring-width)` from `BJ-20`, which is
+ * `--border-thin`, which is 2 px: the comment beside it claimed the slider "keeps
+ * the touch target the buttons keep" and the value said the opposite. The
+ * platform's own default won, and item `D3`'s report measured the control at
+ * 256 x 16 CSS pixels against a floor of 44. Nothing else in the suite could see
+ * it, because every other reading of this panel is of its 23 named controls
+ * rather than of their boxes. */
 .bj-volume {
   accent-color: var(--bj-accent);
-  min-height: var(--focus-ring-width);
+  min-height: var(--target-min);
   flex: 1 1 calc(var(--space-8) * 2.5);
 }
 

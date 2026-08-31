@@ -40,8 +40,8 @@ import {
   CHIP_DENOMINATIONS,
   CHIP_FILL,
   CHIP_GLYPH,
-  CHIP_RING,
   type ChipDenomination,
+  type Hex,
 } from './tokens';
 import { font, SANS_FAMILY } from './surface';
 
@@ -130,16 +130,23 @@ export function chipStackLayout(spec: ChipStackSpec): readonly ChipPlacement[] {
   }));
 }
 
-function drawChip(ctx: CanvasRenderingContext2D, placement: ChipPlacement, radius: number): void {
+function drawChip(
+  ctx: CanvasRenderingContext2D,
+  placement: ChipPlacement,
+  radius: number,
+  ring: Hex,
+): void {
   const g = CHIP_GEOMETRY;
 
-  // The fill carries identity only; the ring carries the boundary.
+  // The fill carries identity only; the ring carries the boundary. The fills are
+  // the same in both SPEC 16 sets, deliberately: identity is the one thing a
+  // high-contrast set must not flatten, and the ring is what changes with it.
   ctx.fillStyle = CHIP_FILL[placement.denomination];
   ctx.beginPath();
   ctx.arc(placement.x, placement.y, radius, 0, 2 * Math.PI);
   ctx.fill();
 
-  ctx.strokeStyle = CHIP_RING;
+  ctx.strokeStyle = ring;
   ctx.lineWidth = g.ring * radius;
   ctx.beginPath();
   ctx.arc(placement.x, placement.y, radius * (1 - g.ring / 2), 0, 2 * Math.PI);
@@ -160,9 +167,13 @@ function drawChip(ctx: CanvasRenderingContext2D, placement: ChipPlacement, radiu
  * The stack's shapes: every chip, bottom up, so each chip overlaps the sliver
  * of the one below and the top chip is whole. Runs in the shape pass.
  */
-export function drawChipStackShapes(ctx: CanvasRenderingContext2D, spec: ChipStackSpec): void {
+export function drawChipStackShapes(
+  ctx: CanvasRenderingContext2D,
+  spec: ChipStackSpec,
+  ring: Hex,
+): void {
   for (const placement of chipStackLayout(spec)) {
-    drawChip(ctx, placement, spec.radius);
+    drawChip(ctx, placement, spec.radius, ring);
   }
 }
 

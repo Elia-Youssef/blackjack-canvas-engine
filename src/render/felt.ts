@@ -21,9 +21,24 @@
  * offscreen canvas object, because creating one is a platform concern and this
  * module runs headless under test.
  *
+ * **The grain is a tile, and that is a measured decision.** `BJ-22`'s fix round
+ * measured the first form of it, one path segment per 4 px cell over the whole
+ * felt: 44,398 segments on a 1121 x 631 table, and a bake that took 176 ms on
+ * the shipped page under QUALITY-BAR section 2's 4x throttle, against item
+ * `H4`'s 50 ms ceiling for any one task. Three controls separated the cost:
+ * with the grain suppressed entirely the same run reported **zero** long tasks
+ * and a 33.3 ms worst frame; with the blend modes replaced by `source-over` and
+ * every segment kept it reported 131 ms; with two whole-felt blend passes and
+ * no segments at all it reported zero again. So the segments are the cost and
+ * the blending is not. `bakeGrainTiles` pays that cost once, over one
+ * `noiseTileCells` square, and a bake blits the square across the table under
+ * the two blend operations: 4,096 segments once, and about thirty `drawImage`
+ * calls per bake. The texture repeats every `noiseTileCells` cells, which at
+ * this alpha ceiling is what "subtle noise" already looks like.
+ *
  * **Deterministic to the byte.** The grain is a hash of cell coordinates from
  * a fixed seed: the same spec bakes the same pixels on every run, which is
- * what the BJ-22 visual baselines will diff, and no `Math.random` appears
+ * what the BJ-22 visual baselines diff, and no `Math.random` appears
  * anywhere under `src/render/` (scanned by `tests/unit/render-surface.test.ts`).
  * The vignette and the grain are the felt's own colour composited over itself
  * with `multiply` and `screen`, so no colour exists here beyond the SPEC 16
@@ -37,7 +52,14 @@
  * through and the rail is the boundary against whatever the theme paints.
  */
 
-import { BORDER, FELT, SPACE, SURFACE, type FeltName, type Hex } from './tokens';
+import {
+  BORDER,
+  feltColour,
+  SPACE,
+  type FeltName,
+  type Hex,
+  type SelectedPalette,
+} from './tokens';
 import {
   beginShapePass,
   beginTextPass,
@@ -65,6 +87,16 @@ export interface FeltSpec {
   readonly height: number;
   /** The backing-store scale the bake renders at. QUALITY-BAR 1. */
   readonly dpr: number;
+  /**
+   * The play-surface set this bake paints in. Item `G9`, `BJ-22`.
+   *
+   * Part of the spec rather than a parameter beside it, because the baked
+   * pixels are only valid for the set they were baked from: `needsRebake` in
+   * `scene.ts` compares specs, and a palette outside the spec would leave a
+   * high-contrast frame blitting a standard-palette felt until something else
+   * happened to drift.
+   */
+  readonly palette: SelectedPalette;
 }
 
 /**
@@ -100,6 +132,15 @@ export const FELT_GEOMETRY = Object.freeze({
   noiseCell: SPACE[1],
   /** Alpha bands used to batch the deterministic cells into canvas paths. */
   noiseSteps: 8,
+  /**
+   * The grain tile's side, **in cells**. A count and not a length, which is why
+   * it is not a token: the one absolute length in the grain is `noiseCell`
+   * above, and the tile is that many of them. 64 cells is 256 CSS pixels, which
+   * repeats between four and five times across the widest table this game
+   * draws and costs 4,096 segments to bake, a fifth of what one 1121 x 631
+   * felt cost per bake before it.
+   */
+  noiseTileCells: 64,
 } as const);
 
 /**
@@ -211,15 +252,55 @@ function drawVignette(ctx: CanvasRenderingContext2D, spec: FeltSpec, frame: Felt
   ctx.globalCompositeOperation = 'source-over';
 }
 
-function drawGrain(ctx: CanvasRenderingContext2D, spec: FeltSpec, frame: FeltFrame, felt: Hex): void {
+/** What one grain tile pair was baked from, so a cache can compare two. */
+export interface GrainSpec {
+  /** The felt colour every cell is drawn in. The grain invents no colour. */
+  readonly felt: Hex;
+  /** The backing-store scale the tiles are rasterised at. */
+  readonly dpr: number;
+}
+
+/**
+ * The baked grain: one square of cells that darken and one of cells that
+ * lighten, tiled across a felt under `multiply` and `screen` respectively.
+ *
+ * Two squares rather than one, because a cell's direction is a blend operation
+ * and a single blit carries exactly one. Every cell appears in exactly one of
+ * them, so the pair holds `noiseTileCells` squared cells between them and not
+ * twice that.
+ */
+export interface GrainTiles {
+  readonly darken: SurfaceCanvas;
+  readonly lighten: SurfaceCanvas;
+  /** The logical side of each tile, in CSS pixels. */
+  readonly side: number;
+  readonly spec: GrainSpec;
+}
+
+/** Whether a baked grain pair still matches what a bake wants. */
+export function sameGrain(current: GrainSpec, next: GrainSpec): boolean {
+  return current.felt === next.felt && current.dpr === next.dpr;
+}
+
+/**
+ * Bake the grain once, into two caller-supplied canvases.
+ *
+ * The caller owns the canvas objects for the reason this file's header gives:
+ * creating one is a platform concern and this module runs headless under test.
+ * `scene.ts` holds the cache in front of this, so a session bakes one pair per
+ * felt colour and backing-store scale rather than one per table size.
+ */
+export function bakeGrainTiles(makeCanvas: () => SurfaceCanvas, spec: GrainSpec): GrainTiles {
   const g = FELT_GEOMETRY;
   const cell = g.noiseCell;
-  const columns = Math.ceil(spec.width / cell);
-  const rows = Math.ceil(spec.height / cell);
+  const side = g.noiseTileCells * cell;
+  const sizing = { width: side, height: side, dpr: spec.dpr };
+  const darken = createSurface(makeCanvas(), sizing);
+  const lighten = createSurface(makeCanvas(), sizing);
   const buckets: number[][] = Array.from({ length: g.noiseSteps * 2 }, () => []);
 
-  for (let row = 0; row < rows; row += 1) {
-    for (let column = 0; column < columns; column += 1) {
+  for (let row = 0; row < g.noiseTileCells; row += 1) {
+    for (let column = 0; column < g.noiseTileCells; column += 1) {
       const value = grain(column, row);
       const strength = Math.abs(value - 0.5) * 2;
       const level = Math.max(1, Math.ceil(strength * g.noiseSteps)) - 1;
@@ -228,25 +309,52 @@ function drawGrain(ctx: CanvasRenderingContext2D, spec: FeltSpec, frame: FeltFra
     }
   }
 
-  ctx.save();
-  tablePath(ctx, frame);
-  ctx.clip();
-  ctx.fillStyle = felt;
   for (const [index, bucket] of buckets.entries()) {
     if (bucket.length === 0) {
       continue;
     }
     // One hash still decides both the direction and strength of every cell.
-    // Quantising that subtle strength into eight bands lets the rasteriser
-    // paint sixteen paths instead of changing blend state tens of thousands
-    // of times on a large or high-density surface.
-    ctx.globalCompositeOperation = index < g.noiseSteps ? 'multiply' : 'screen';
-    ctx.globalAlpha = g.noiseAlpha * ((index % g.noiseSteps) + 1) / g.noiseSteps;
-    ctx.beginPath();
+    // The direction picks the square, and quantising the subtle strength into
+    // eight bands makes each square eight paths rather than one per cell. The
+    // alpha lives in the baked pixels, so a blit needs no `globalAlpha`.
+    const target = index < g.noiseSteps ? darken : lighten;
+    target.ctx.fillStyle = spec.felt;
+    target.ctx.globalAlpha = (g.noiseAlpha * ((index % g.noiseSteps) + 1)) / g.noiseSteps;
+    target.ctx.beginPath();
     for (let offset = 0; offset < bucket.length; offset += 2) {
-      ctx.rect(bucket[offset] ?? 0, bucket[offset + 1] ?? 0, cell, cell);
+      target.ctx.rect(bucket[offset] ?? 0, bucket[offset + 1] ?? 0, cell, cell);
     }
-    ctx.fill();
+    target.ctx.fill();
+  }
+  darken.ctx.globalAlpha = 1;
+  lighten.ctx.globalAlpha = 1;
+
+  return { darken: darken.canvas, lighten: lighten.canvas, side, spec };
+}
+
+function drawGrain(
+  ctx: CanvasRenderingContext2D,
+  spec: FeltSpec,
+  frame: FeltFrame,
+  tiles: GrainTiles,
+): void {
+  const { side } = tiles;
+  ctx.save();
+  tablePath(ctx, frame);
+  ctx.clip();
+  for (const [tile, operation] of [
+    [tiles.darken, 'multiply'],
+    [tiles.lighten, 'screen'],
+  ] as const) {
+    ctx.globalCompositeOperation = operation;
+    for (let y = 0; y < spec.height; y += side) {
+      for (let x = 0; x < spec.width; x += side) {
+        // The same seam `drawShapes` documents below: a real canvas satisfies
+        // both the structural type this module tests against and the platform
+        // type `drawImage` demands.
+        ctx.drawImage(tile as unknown as CanvasImageSource, x, y, side, side);
+      }
+    }
   }
   ctx.restore();
 }
@@ -255,7 +363,7 @@ function drawBand(ctx: CanvasRenderingContext2D, spec: FeltSpec): void {
   const g = FELT_GEOMETRY;
   const left = g.bandInsetX * spec.width;
   const right = spec.width - g.bandInsetX * spec.width;
-  ctx.strokeStyle = SURFACE.print;
+  ctx.strokeStyle = spec.palette.surface.print;
   ctx.lineWidth = BORDER.hair;
   for (const y of [g.bandTopY * spec.height, g.bandBottomY * spec.height]) {
     ctx.beginPath();
@@ -265,8 +373,8 @@ function drawBand(ctx: CanvasRenderingContext2D, spec: FeltSpec): void {
   }
 }
 
-function drawRail(ctx: CanvasRenderingContext2D, frame: FeltFrame): void {
-  ctx.strokeStyle = SURFACE.rail;
+function drawRail(ctx: CanvasRenderingContext2D, frame: FeltFrame, rail: Hex): void {
+  ctx.strokeStyle = rail;
   ctx.lineWidth = frame.railWidth;
   tablePath(ctx, frame);
   ctx.stroke();
@@ -278,7 +386,7 @@ function drawPrint(ctx: CanvasRenderingContext2D, spec: FeltSpec): void {
   const centre = spec.width / 2;
   const [insurance, natural, stand, limits] = feltPrint(spec.limits);
 
-  ctx.fillStyle = SURFACE.print;
+  ctx.fillStyle = spec.palette.surface.print;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
 
@@ -305,22 +413,38 @@ function drawPrint(ctx: CanvasRenderingContext2D, spec: FeltSpec): void {
  * text, each with its state set explicitly, because the offscreen is a canvas
  * like any other and inherits nothing either.
  */
-export function bakeFelt(canvas: SurfaceCanvas, spec: FeltSpec): FeltLayer {
-  const felt = FELT[spec.felt];
+export function bakeFelt(canvas: SurfaceCanvas, spec: FeltSpec, grain: GrainTiles): FeltLayer {
+  const tokens = spec.palette.surface;
+  const felt = feltColour(tokens, spec.felt);
   const surface = createSurface(canvas, { width: spec.width, height: spec.height, dpr: spec.dpr });
   const frame = frameOf(spec);
   const { ctx } = surface;
 
   surface.clear();
-  beginShapePass(ctx);
+  beginShapePass(ctx, tokens);
   drawGround(ctx, frame, felt);
-  drawVignette(ctx, spec, frame, felt);
-  drawGrain(ctx, spec, frame, felt);
+  // **The flat felt is the high-contrast set's own behaviour**, and the two
+  // suppressed passes are named by SPEC 16's forced-colors subsection: "the
+  // gradient and the grain are suppressed under this set, because subtle
+  // texture is what high contrast exists to remove, and the audit measures the
+  // flat fill". The ground, the band, the rail and the print are unchanged, so
+  // what the set removes is texture and never information.
+  if (!spec.palette.flatFelt) {
+    // A pair baked for another colour or another backing-store scale would
+    // tile the wrong texture at the wrong resolution and nothing downstream
+    // would say so, which is exactly the failure a cache in front of a bake
+    // invites. It refuses instead.
+    if (!sameGrain(grain.spec, { felt, dpr: spec.dpr })) {
+      throw new Error('felt: the grain tiles were baked for another colour or backing-store scale');
+    }
+    drawVignette(ctx, spec, frame, felt);
+    drawGrain(ctx, spec, frame, grain);
+  }
   drawBand(ctx, spec);
-  drawRail(ctx, frame);
+  drawRail(ctx, frame, tokens.rail);
   endPass(ctx);
 
-  beginTextPass(ctx);
+  beginTextPass(ctx, tokens);
   drawPrint(ctx, spec);
   endPass(ctx);
 

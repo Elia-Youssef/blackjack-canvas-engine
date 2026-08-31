@@ -143,7 +143,7 @@ describe('the frame: two ordered passes, state set explicitly at each top', () =
           ctx.fillText('second', 0, 0);
         },
       },
-    ]);
+    ], SURFACE);
     return made;
   }
 
@@ -224,9 +224,9 @@ describe('the frame: two ordered passes, state set explicitly at each top', () =
 
   it('balances every begin with an end, so passes cannot leak state', () => {
     const recording = createRecordingContext();
-    beginShapePass(recording.ctx);
+    beginShapePass(recording.ctx, SURFACE);
     endPass(recording.ctx);
-    beginTextPass(recording.ctx);
+    beginTextPass(recording.ctx, SURFACE);
     endPass(recording.ctx);
     expect(recording.calls('save')).toHaveLength(2);
     expect(recording.calls('restore')).toHaveLength(2);
