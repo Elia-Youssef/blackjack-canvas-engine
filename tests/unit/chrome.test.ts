@@ -429,20 +429,72 @@ class FakePage extends EventTarget {
   leave(): void {
     this.dispatchEvent(new Event('pagehide'));
   }
+
+  /**
+   * The back/forward cache handing the page back, or a fresh load arriving.
+   *
+   * `persisted` is the only thing that distinguishes the two, and it is
+   * `PageTransitionEvent`'s field rather than `Event`'s, so it is defined on
+   * the event this runner can build. That is the same shape the platform
+   * delivers as far as the handler is concerned: it reads one property off the
+   * event it was handed, and this one answers.
+   */
+  revive(persisted: boolean): void {
+    const event = new Event('pageshow');
+    Object.defineProperty(event, 'persisted', { value: persisted, configurable: true });
+    this.dispatchEvent(event);
+  }
+}
+
+/**
+ * The same page with its listener bookkeeping visible.
+ *
+ * `dispose`'s contract is that nothing of the loop's is left bound, and from
+ * outside the loop that is a claim about the target rather than about
+ * behaviour: a handler that was never removed is still attached whether or not
+ * any flag would let it act, and it would answer for a game that no longer
+ * exists. So the names are recorded as they are bound and unbound.
+ */
+class WatchedPage extends FakePage {
+  readonly added: string[] = [];
+  readonly removed: string[] = [];
+
+  override addEventListener(type: string, listener: EventListenerOrEventListenerObject | null): void {
+    this.added.push(type);
+    super.addEventListener(type, listener);
+  }
+
+  override removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+  ): void {
+    this.removed.push(type);
+    super.removeEventListener(type, listener);
+  }
 }
 
 describe('a hidden tab pauses the loop and a visible one resumes it', () => {
-  /** The manual scheduler the existing loop tests above use. */
+  /**
+   * The manual scheduler the existing loop tests above use, plus a count.
+   *
+   * The count is how a double start is read here. Handing the scheduler a
+   * second callback would only replace the first, so the frames a test
+   * observes look the same either way; what a second run actually costs is a
+   * second `schedule`, and that is the number the revival arms below pin.
+   */
   function manual(): {
     schedule: (callback: (timestamp: number) => void) => number;
     cancel: (handle: number) => void;
     tick: (timestamp: number) => void;
+    scheduled: () => number;
   } {
     let pending: ((timestamp: number) => void) | null = null;
     let next = 1;
+    let scheduled = 0;
     return {
       schedule(callback): number {
         pending = callback;
+        scheduled += 1;
         return next++;
       },
       cancel(): void {
@@ -453,6 +505,7 @@ describe('a hidden tab pauses the loop and a visible one resumes it', () => {
         pending = null;
         callback?.(timestamp);
       },
+      scheduled: () => scheduled,
     };
   }
 
@@ -547,6 +600,156 @@ describe('a hidden tab pauses the loop and a visible one resumes it', () => {
     page.hide();
     page.show();
     expect(writes, 'a disposed game does not write').toBe(0);
+    expect(loop.running(), 'a disposed game stays stopped').toBe(false);
+  });
+
+  // -------------------------------------------------------------------------
+  // The back/forward cache. QUALITY-BAR section 7: "`pageshow` with
+  // `event.persisted` restores from bfcache without a reload."
+  //
+  // The four arms are the whole of the rule, and the two negative ones carry
+  // it: a restart on a `pageshow` without `persisted` would be this loop
+  // second-guessing a fresh load the boot already owns, and a restart of a
+  // stop that was not `pagehide`'s would undo somebody else's decision. The
+  // third is the ordinary exit ordering, where the hide fires first and the
+  // revival must find nothing to do, because the resume already belongs to the
+  // visibility path.
+  // -------------------------------------------------------------------------
+
+  it('restarts on a persisted pageshow, because a revived page is never loaded', () => {
+    const clock = manual();
+    const page = new FakePage();
+    const deltas: number[] = [];
+    let writes = 0;
+    const loop = createFrameLoop({
+      onFrame: (dt) => deltas.push(dt),
+      schedule: clock.schedule,
+      cancel: clock.cancel,
+      visibility: page,
+      page: page,
+      onHidden: () => {
+        writes += 1;
+      },
+    });
+
+    loop.start();
+    clock.tick(1000);
+    page.leave();
+    clock.tick(2000);
+    expect(deltas, 'the page that left ran no frame after it left').toEqual([0]);
+    expect(loop.running()).toBe(false);
+
+    page.revive(true);
+    clock.tick(3000);
+    // Back, and back as a fresh run: the revived frame reports zero rather
+    // than the interval the page spent in the cache, which is the same clause
+    // the visibility resume above is held to.
+    expect(deltas, 'the revival resumed the loop').toEqual([0, 0]);
+    expect(loop.running()).toBe(true);
+    expect(writes, 'the revival wrote nothing; only the way out writes').toBe(1);
+  });
+
+  it('ignores a pageshow that is not persisted, because that is a fresh load', () => {
+    const clock = manual();
+    const page = new FakePage();
+    let frames = 0;
+    const loop = createFrameLoop({
+      onFrame: () => {
+        frames += 1;
+      },
+      schedule: clock.schedule,
+      cancel: clock.cancel,
+      visibility: page,
+      page: page,
+    });
+
+    loop.start();
+    clock.tick(1000);
+    page.leave();
+    page.revive(false);
+    clock.tick(2000);
+
+    expect(frames, 'a load is not a revival, and did not restart the loop').toBe(1);
+    expect(loop.running()).toBe(false);
+  });
+
+  it('leaves the ordinary exit ordering to the visibility path, and starts once', () => {
+    const clock = manual();
+    const page = new FakePage();
+    let frames = 0;
+    let writes = 0;
+    const loop = createFrameLoop({
+      onFrame: () => {
+        frames += 1;
+      },
+      schedule: clock.schedule,
+      cancel: clock.cancel,
+      visibility: page,
+      page: page,
+      onHidden: () => {
+        writes += 1;
+      },
+    });
+
+    loop.start();
+    clock.tick(1000);
+    // The ordering a browser actually produces on the way out: hidden first,
+    // then `pagehide`, which finds the loop already stopped and does nothing
+    // at all. The flag must not arm on that path, or the revival below would
+    // start a loop the visibility resume has already started.
+    page.hide();
+    page.leave();
+    expect(writes, 'the hide wrote, and the pagehide behind it had nothing to stop').toBe(1);
+
+    // So the revival has nothing to restore, and the page is still hidden: a
+    // loop started here would be animating a tab nobody can see, which is the
+    // whole of what the pause was for.
+    page.revive(true);
+    expect(loop.running(), 'a pagehide that stopped nothing armed the revival').toBe(false);
+
+    page.show();
+    expect(loop.running(), 'the visibility path owns this resume').toBe(true);
+    const afterResume = clock.scheduled();
+
+    page.revive(true);
+    expect(clock.scheduled(), 'the revival started a second run').toBe(afterResume);
+
+    clock.tick(2000);
+    expect(frames, 'exactly one loop is running, so exactly one frame ran').toBe(2);
+  });
+
+  it('takes the pageshow listener off on dispose, so a revival finds nothing', () => {
+    const clock = manual();
+    const page = new WatchedPage();
+    let frames = 0;
+    const loop = createFrameLoop({
+      onFrame: () => {
+        frames += 1;
+      },
+      schedule: clock.schedule,
+      cancel: clock.cancel,
+      visibility: page,
+      page: page,
+    });
+    expect([...page.added].sort(), 'the three the loop binds').toEqual([
+      'pagehide',
+      'pageshow',
+      'visibilitychange',
+    ]);
+
+    loop.start();
+    clock.tick(1000);
+    loop.dispose();
+    expect([...page.removed].sort(), 'dispose left a listener bound').toEqual([
+      'pagehide',
+      'pageshow',
+      'visibilitychange',
+    ]);
+
+    page.leave();
+    page.revive(true);
+    clock.tick(2000);
+    expect(frames, 'a disposed game does not come back from the cache').toBe(1);
     expect(loop.running(), 'a disposed game stays stopped').toBe(false);
   });
 });

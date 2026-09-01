@@ -77,7 +77,10 @@ export interface FrameLoopOptions {
    * `null` where there is none. `BJ-20`, item `C7`.
    */
   readonly visibility?: VisibilityTarget | null;
-  /** Where `pagehide` is read. Defaults to the page's `window`, or `null`. */
+  /**
+   * Where `pagehide` and `pageshow` are read. Defaults to the page's `window`,
+   * or `null`.
+   */
   readonly page?: PageTarget | null;
   /**
    * Called when the page goes hidden, or is being unloaded, while the loop is
@@ -119,6 +122,17 @@ export function createFrameLoop(options: FrameLoopOptions): FrameLoop {
    * stays stopped when the tab comes back.
    */
   let pausedByVisibility = false;
+  /**
+   * Whether the loop stopped because `pagehide` put the page away.
+   *
+   * The flag is `pausedByVisibility`'s twin and is read the same way: only the
+   * handler that performed a stop may undo it. It is set in the one arm of
+   * `onPageHide` that actually stops a running loop, so a `pagehide` that
+   * found the loop already stopped, which is what the ordinary exit ordering
+   * produces, leaves it false and leaves the resume to the visibility path
+   * that owns it.
+   */
+  let stoppedByPageHide = false;
 
   function frame(timestamp: number): void {
     // Scheduled again first, so a throw from `onFrame` stops the loop rather
@@ -133,6 +147,10 @@ export function createFrameLoop(options: FrameLoopOptions): FrameLoop {
   }
 
   function start(): void {
+    // Cleared before the guard, so the flag can never outlive the stop it
+    // describes: whoever starts the loop, the previous `pagehide` has been
+    // answered and a later `pageshow` has nothing left to restore.
+    stoppedByPageHide = false;
     if (handle !== null) {
       return;
     }
@@ -181,19 +199,61 @@ export function createFrameLoop(options: FrameLoopOptions): FrameLoop {
 
   /**
    * QUALITY-BAR section 7: the write also happens on `pagehide`, which fires
-   * where `visibilitychange` does not, and never restarts anything, because
+   * where `visibilitychange` does not, and restarts nothing itself, because
    * the page is leaving rather than hiding.
+   *
+   * The one route back is `onPageShow` below, and it is the platform's own
+   * word rather than this handler's: a page that left is gone, and a page the
+   * back/forward cache revives says so on the event it is revived by. What
+   * this handler owes that one is the flag, set here and only here, so the
+   * revival can tell its own stop from anybody else's.
    */
   function onPageHide(): void {
     if (handle !== null) {
       pausedByVisibility = false;
+      stoppedByPageHide = true;
       stop();
       options.onHidden?.();
     }
   }
 
+  /**
+   * QUALITY-BAR section 7: `pageshow` with `event.persisted` restores from
+   * bfcache without a reload.
+   *
+   * It is `onPageHide`'s other half, and the page it answers is one nothing
+   * else would ever start again. A page put into the back/forward cache is
+   * stopped by `pagehide` and revived without a load, so the boot that starts
+   * a loop on a fresh page does not run, and no `visibilitychange` is owed on
+   * that route either: the tab was never hidden, it was put away whole.
+   *
+   * Both halves of the revival are required before anything restarts.
+   * `persisted` is the platform saying the page came back rather than arrived,
+   * and a `pageshow` without it is a fresh load, which is the boot's business
+   * and not this loop's. The flag is this loop saying the stop was `pagehide`'s
+   * own, so a loop stopped by `dispose`, by a replaced shell or by the
+   * visibility pause stays the business of whoever stopped it. That is the
+   * same reading `pausedByVisibility` carries above, and it is what keeps the
+   * ordinary exit ordering single: a page that hid before it left resumes
+   * through the visibility path, and this one finds nothing to do.
+   */
+  function onPageShow(event: Event): void {
+    // `persisted` belongs to `PageTransitionEvent` and is absent from a plain
+    // `Event`, so the read is a cast and the comparison is to `true` rather
+    // than a truthiness test: an event carrying no such field is a load.
+    if ((event as PageTransitionEvent).persisted !== true) {
+      return;
+    }
+    if (!stoppedByPageHide) {
+      return;
+    }
+    stoppedByPageHide = false;
+    start();
+  }
+
   visibilityTarget?.addEventListener('visibilitychange', onVisibility);
   pageTarget?.addEventListener('pagehide', onPageHide);
+  pageTarget?.addEventListener('pageshow', onPageShow);
 
   return {
     start,
@@ -201,9 +261,11 @@ export function createFrameLoop(options: FrameLoopOptions): FrameLoop {
     running: () => handle !== null,
     dispose(): void {
       pausedByVisibility = false;
+      stoppedByPageHide = false;
       stop();
       visibilityTarget?.removeEventListener('visibilitychange', onVisibility);
       pageTarget?.removeEventListener('pagehide', onPageHide);
+      pageTarget?.removeEventListener('pageshow', onPageShow);
     },
   };
 }

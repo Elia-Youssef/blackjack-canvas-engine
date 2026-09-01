@@ -152,7 +152,25 @@ export default defineConfig({
     modulePreload: { polyfill: false },
     assetsInlineLimit: 0,
   },
+  // The preview server the browser gate is served by. Nothing here reaches the
+  // bundle: `build` above is the whole of what `npm run verify:build`
+  // fingerprints, and these three keys only decide where the built tree is
+  // handed out.
+  //
+  // **`host` is pinned to `127.0.0.1`, and it is a correctness pin rather than
+  // a preference.** Left unset, the preview binds whatever `localhost` resolves
+  // to on the machine, which on Windows is the IPv6 loopback: the server then
+  // listens on `[::1]:4173` and leaves `127.0.0.1:4173` free for anything else
+  // to bind, and `strictPort` cannot refuse a collision it never sees. That is
+  // not hypothetical. On 2026-08-31 an unrelated project's preview server sat
+  // on the IPv4 loopback at the same port while this one held the IPv6 side;
+  // `localhost` resolves per client, so a browser could be served either
+  // product, and a full firefox run came back with dozens of failures whose
+  // page snapshots were somebody else's application. One stack, named by
+  // address, makes that collision an `EADDRINUSE` on startup instead: loud, at
+  // the start, before any test is graded.
   preview: {
+    host: '127.0.0.1',
     port: 4173,
     strictPort: true,
   },

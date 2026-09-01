@@ -1,7 +1,26 @@
 import { defineConfig, devices } from '@playwright/test';
 
 const PORT = 4173;
-const BASE_URL = `http://localhost:${String(PORT)}`;
+/**
+ * The one address the gate speaks, on both sides of the wire.
+ *
+ * **`127.0.0.1` rather than `localhost`, deliberately.** `localhost` is a name
+ * with two answers, `::1` and `127.0.0.1`, and which one a client picks is the
+ * client's business: a server that binds one stack and a browser that dials the
+ * other do not meet, and worse, a foreign server on the stack ours left free
+ * answers in its place. Both happened here on 2026-08-31, in the same run: the
+ * preview bound `[::1]:4173` while another project's server held
+ * `127.0.0.1:4173`, and a full firefox run came back with page snapshots of
+ * somebody else's product. `vite.config.ts` pins the bind to the same address
+ * with `strictPort`, so a collision is now a refusal at startup rather than two
+ * servers sharing a name.
+ *
+ * This value is read twice, by `use.baseURL` and by `webServer.url`, so the
+ * side that serves and the side that dials cannot come apart. CI is unaffected
+ * in semantics: the runners resolve `127.0.0.1` to the same loopback they
+ * always used, and the workers, the reuse rule and the timeouts are untouched.
+ */
+const BASE_URL = `http://127.0.0.1:${String(PORT)}`;
 const isCI = process.env['CI'] !== undefined;
 
 /**

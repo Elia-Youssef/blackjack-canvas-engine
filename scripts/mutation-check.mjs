@@ -51,7 +51,12 @@
  * browser-only sentence dropped and the reduced-motion selector silenced. The
  * unit entries under those break the rule-staging boundary, the shoe rebuild,
  * the hidden-tab write and the setting's resolution rule where the unit suite
- * is the gate that watches them.
+ * is the gate that watches them. Four more sit with them, added by the fix for
+ * audit finding `Z7-1`, which built the third hook QUALITY-BAR section 7 names
+ * and the product had never listened for: they break each half of the
+ * back/forward-cache restore in turn, the flag that says whose stop it was,
+ * the restart itself, the `persisted` reading that separates a revival from a
+ * load, and the removal that keeps a disposed game from answering one.
  *
  * The `BJ-18` block breaks the accessibility layer. Its edits take an
  * accessible name off a control and put an unparseable ARIA state on another,
@@ -6415,6 +6420,77 @@ const EDITS = [
     file: 'src/ui/loop.ts',
     find: 'pausedByVisibility = true;\n        stop();\n        options.onHidden?.();',
     replace: 'pausedByVisibility = true;\n        stop();',
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // Audit finding `Z7-1`: the back/forward cache. QUALITY-BAR section 7 names
+  // three hooks and the product listened for two, so a page revived from the
+  // cache without a preceding hidden moment came back with its loop stopped
+  // for good. The five below break the restore in each of the five places it
+  // can be broken: the flag that says whose stop it was never arming, that
+  // same flag armed where no stop happened, the restart itself, the
+  // `persisted` reading that separates a revival from a load, and the
+  // disposal. They are split across the two gates deliberately: the two
+  // arming entries and the disposal are pinned by `tests/unit/chrome.test.ts`,
+  // which is what `UNIT` means here, and the restart and the `persisted`
+  // reading by the shipped page's own revival, which only `visibility.spec.ts`
+  // watches.
+  //
+  // The labels stay `C7`, on this file's standing rule that an entry names the
+  // item the property belongs to rather than the part that wrote it: the item
+  // is the one whose criterion is a page that stops and comes back.
+  // ------------------------------------------------------------------
+  {
+    item: 'C7',
+    name: 'the pagehide stop stops claiming itself, so nothing is left to revive',
+    file: 'src/ui/loop.ts',
+    find: '      stoppedByPageHide = true;',
+    replace: '      stoppedByPageHide = false;',
+    detectedBy: UNIT,
+  },
+  {
+    // The flag has to be set where the stop happens and nowhere else. Armed on
+    // the ordinary exit ordering, where the tab hid first and this handler
+    // found nothing running, it would hand the resume to a revival that has
+    // nothing to restore, and the loop would come back on a page that is still
+    // hidden.
+    item: 'C7',
+    name: 'the pagehide claims a stop it did not perform',
+    file: 'src/ui/loop.ts',
+    find: '    if (handle !== null) {\n      pausedByVisibility = false;\n      stoppedByPageHide = true;',
+    replace:
+      '    stoppedByPageHide = true;\n    if (handle !== null) {\n      pausedByVisibility = false;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'C7',
+    name: 'the revived page clears the flag and never starts the loop again',
+    file: 'src/ui/loop.ts',
+    find: '    stoppedByPageHide = false;\n    start();',
+    replace: '    stoppedByPageHide = false;',
+    detectedBy: VISIBILITY,
+  },
+  {
+    item: 'C7',
+    name: 'any pageshow restarts the loop, cached or freshly loaded',
+    file: 'src/ui/loop.ts',
+    find: '    if ((event as PageTransitionEvent).persisted !== true) {',
+    replace: '    if (false) {',
+    detectedBy: VISIBILITY,
+  },
+  {
+    // The one of the four whose damage is invisible to behaviour: `dispose`
+    // clears the flag as well, so a disposed loop with the listener still
+    // bound restarts nothing today. What it does is answer for a game that no
+    // longer exists, which is the same hazard the `visibilitychange` removal
+    // beside it was written for, and the assertion that catches it reads the
+    // target rather than the loop.
+    item: 'C7',
+    name: 'dispose leaves the pageshow listener bound to a game that is gone',
+    file: 'src/ui/loop.ts',
+    find: "      pageTarget?.removeEventListener('pageshow', onPageShow);",
+    replace: '      void onPageShow;',
     detectedBy: UNIT,
   },
   {
