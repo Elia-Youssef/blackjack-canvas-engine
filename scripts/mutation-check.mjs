@@ -11,8 +11,21 @@
  * and `D6` at BJ-17, `G1`, `G3`, `G4`, `G5`, `G6`, `G8`, `G9` and `G10`
  * at BJ-18, `K1`, `K2`, `K3` and `K5` at BJ-19, `C1`, `C3`, `C4`, `C6`,
  * `C7`, `E2`, `I4`, `I5`, `J4` and `J7` at BJ-20, and `M2`, `M4`, `A5`, `L1`,
- * `L2`, `L3` and `L5` at BJ-21, and `E8`, `G9`, `G2`, `D3`, `H1` to `H5` and
- * `H7` at BJ-22.
+ * `L2`, `L3` and `L5` at BJ-21, `E8`, `G9`, `G2`, `D3`, `H1` to `H5` and
+ * `H7` at BJ-22, and `A3` at BJ-23.
+ *
+ * The `BJ-23` block breaks the browser matrix itself, which is the one gate in
+ * this file whose subject is the harness rather than the product: item `A3`
+ * names five projects, and every way of not having five leaves the suite
+ * green. Its four edits drop each channel in turn so a project runs the
+ * bundled engine under an installed browser's name, narrow one project's spec
+ * set so "the full suite" quietly means less, and rename a project so a job
+ * that asks for it selects nothing. All four are read by
+ * `tests/unit/browser-matrix.test.ts`, because a composition can only be
+ * graded by something that reads it rather than obeys it. A fifth entry sits
+ * with them under `C4`: the bust-out screen's cache key, whose `BJ-20` entry
+ * the sweep found undetected because one bust-out cannot ask a cache a second
+ * question, now required red by the two-bust-out journey `BJ-23` hunted.
  *
  * The `BJ-21` block breaks the resilience, locale and compliance layer. Its
  * edits hand the frame to the loop unwrapped and take each of the boundary's
@@ -365,6 +378,20 @@ const VISUAL = browserGate('visual.spec.ts');
 // its own. Its detector was written with it and works; AUDIT-1 widened the spec
 // and gave the rule the entry the rest of this file's gated rules all have.
 const SURFACE_STABILITY = browserGate('surface-stability.spec.ts');
+
+// BJ-23's one browser gate. Item `A3`'s evidence is the five-project run
+// itself rather than a spec file, so its entries are required red by the matrix
+// census under `npm run test`, which is the only thing that can see a project
+// that stopped existing. This gate is the **second** bust-out: the rebuild
+// coupling `BJ-20`'s sweep recorded as unobservable from one, whose entry sat
+// open until a journey existed that reaches the screen twice.
+const DOUBLE_BUST = browserGate('double-bust.spec.ts');
+// The demonstration capture route, whose entry belongs to `E3` on the standing
+// treatment for Demonstration items: the entry proves the armour under the
+// item can fail rather than the item itself, exactly as `E3`, `E4`, `E5`, `E6`,
+// `F4`, `D6` and `G4` are already handled. Five sheets load a seeded game
+// through that route, and the review found it serving an unseeded one.
+const CAPTURE_ROUTE = browserGate('capture-route.spec.ts');
 
 /**
  * One measurement report, as a gate. `BJ-22`.
@@ -7199,6 +7226,88 @@ const EDITS = [
     find: '.bj-surface {\n  position: relative;\n}',
     replace: '.bj-surface {\n  position: static;\n}',
     detectedBy: VISUAL,
+  },
+
+  // ------------------------------------------------------------------
+  // BJ-23. Item `A3`'s five-project matrix, and the second bust-out.
+  // ------------------------------------------------------------------
+  //
+  // **Four of the five break the config rather than the product, and that is
+  // what item `A3` is.** Its criterion is a claim about which browsers the
+  // suite runs on, and every way of failing it leaves the suite green: a
+  // project deleted runs fewer tests, a channel dropped runs the bundled
+  // engine under an installed browser's name, an exclusion added makes "the
+  // full suite" mean less than it says, and a project renamed makes a CI job
+  // that asks for it select nothing at all. None of those fails anything on
+  // its own, which is why `tests/unit/browser-matrix.test.ts` exists and why
+  // these four name `UNIT`: the unit suite is the only gate that can read the
+  // composition rather than obey it.
+  //
+  // The fifth is the coupling `BJ-20` left open. Its `C4` entry was pointed at
+  // this cache key, the sweep found it undetected, and the reason was
+  // structural rather than a weak spec: the cache starts empty, so one
+  // bust-out builds its list whatever the key says. `double-bust.spec.ts`
+  // reaches the screen twice with two different offers, and the constant key
+  // below leaves a Drop to Silver button in front of a player sitting at
+  // Silver.
+  {
+    item: 'A3',
+    name: 'the Edge channel is dropped, so the project runs the bundled engine under Edge\'s name',
+    file: 'playwright.config.ts',
+    find: "      use: { ...DESKTOP_FRAMING, channel: 'msedge' },",
+    replace: '      use: { ...DESKTOP_FRAMING },',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'A3',
+    name: 'the Chrome channel is dropped, so four of the five projects are one browser',
+    file: 'playwright.config.ts',
+    find: "      use: { ...DESKTOP_FRAMING, channel: 'chrome' },",
+    replace: '      use: { ...DESKTOP_FRAMING },',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'A3',
+    name: 'a channel quietly stops running one of the suite\'s specs',
+    file: 'playwright.config.ts',
+    find: "      name: 'chrome',\n      testIgnore: [TIMING_SPEC, VISUAL_SPEC],",
+    replace: "      name: 'chrome',\n      testIgnore: [TIMING_SPEC, VISUAL_SPEC, /axe\\.spec\\.ts/],",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'A3',
+    name: 'the fifth project is renamed, so a job that asks for it selects no tests',
+    file: 'playwright.config.ts',
+    find: "      name: 'msedge',",
+    replace: "      name: 'msedge-stable',",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'C4',
+    name: 'the bust-out screen caches its lower tables under a key that never moves',
+    file: 'src/ui/components/screens.ts',
+    find: "      const key = offer.lowerTables.join(',');",
+    replace: "      const key = 'lower-tables';",
+    detectedBy: DOUBLE_BUST,
+  },
+  {
+    // The defect the `BJ-23` review found, put back. Classic scripts run at the
+    // parser, the shipped page's module script is deferred by specification, so
+    // without `defer` the boot script boots the harness first and the shipped
+    // chunk then boots a second composition root over the same mount point. The
+    // page a capture would record is an unseeded default while
+    // `window.__bjGame` answers correctly for the orphan, which is why nothing
+    // that asked the API could see it.
+    item: 'E3',
+    name: 'the capture page loads its scripts before the game, and records an unseeded one',
+    file: 'scripts/capture/serve.mjs',
+    find:
+      '    `    <script defer src=".${support}"></script>\\n` +\n' +
+      '    `    <script defer src=".${ROUTES.boot}"></script>\\n`;',
+    replace:
+      '    `    <script src=".${support}"></script>\\n` +\n' +
+      '    `    <script src=".${ROUTES.boot}"></script>\\n`;',
+    detectedBy: CAPTURE_ROUTE,
   },
 ];
 

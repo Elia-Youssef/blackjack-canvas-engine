@@ -21,6 +21,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "verify:build": "node scripts/check-determinism.mjs",
+    "capture:serve": "node scripts/capture/serve.mjs",
     "report:bundle-size": "node scripts/report/bundle-size.mjs",
     "report:touch-targets": "node scripts/report/touch-targets.mjs",
     "report:contrast": "node scripts/report/contrast.mjs",

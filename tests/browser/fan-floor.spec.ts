@@ -36,6 +36,8 @@ import { differingSplit, FLOW_WAGER } from './support/flow-seeds';
 import {
   bootGame,
   control,
+  motionProbe,
+  PHASE_TIMEOUT,
   resizeTo,
   settle,
   surfaceMetrics,
@@ -125,7 +127,42 @@ async function cardBox(page: Page): Promise<CardBox> {
   };
 }
 
-/** Boot a seeded round and stop at the player's decision. */
+/**
+ * Wait until the play surface has finished moving, then let a frame draw.
+ *
+ * **A phase is not a picture, and this file measures pictures.** SPEC 10's
+ * `playerTurn` arrives when the machine hands the decision over; the cards it
+ * dealt are still travelling, because `BJ-14`'s tweens live on the render side
+ * and are driven by the frame loop rather than by the phase. `settle`'s three
+ * frames are about 50 ms and a deal's arc is hundreds, so on a loaded machine
+ * the screenshot below can catch the dealer's hole card mid-arc, entering from
+ * the top edge of the surface. Its margin is the same `#F6F3EC` the scan
+ * matches, so the measured band starts at y = 0 instead of at the dealer's row
+ * and the assertion fails by exactly the distance the row sits from the top:
+ * 53.32 at wide, 34.48 at medium, 31.88 at portrait. Deterministic magnitudes,
+ * intermittently reached, which is the signature of a race rather than of
+ * noise.
+ *
+ * That was found at `BJ-23` by saving the failing screenshot: the picture shows
+ * a face-down card half off the top edge while the player's row is already in
+ * place. The cure is to ask the renderer rather than to wait longer.
+ * `tweensInFlight` is `BJ-14`'s own probe, the same number
+ * `reduced-motion.spec.ts` reads, and it is zero exactly when nothing is
+ * moving. Nothing about the product changed: the fan floor was never violated
+ * in any of these runs, and `src/` is untouched.
+ *
+ * No ledger entry, deliberately: an entry earns its place where a gate could be
+ * removed with nothing failing, and removing this wait reddens this spec rather
+ * than silencing it, so the entry would guard a door that already has an alarm.
+ */
+async function stillScene(page: Page): Promise<void> {
+  await expect
+    .poll(async () => (await motionProbe(page)).tweensInFlight, { timeout: PHASE_TIMEOUT })
+    .toBe(0);
+  await settle(page);
+}
+
+/** Boot a seeded round and stop at the player's decision, with the scene still. */
 async function atPlayerTurn(page: Page, seed: number): Promise<void> {
   await bootGame(page, { seed });
   await waitForPhase(page, 'start');
@@ -134,7 +171,7 @@ async function atPlayerTurn(page: Page, seed: number): Promise<void> {
   await page.locator(`[data-chip="${String(FLOW_WAGER)}"]`).click();
   await control(page, 'deal').click();
   await waitForPhase(page, 'playerTurn');
-  await settle(page);
+  await stillScene(page);
 }
 
 test.describe('E8: the fan floor holds at every breakpoint', () => {
@@ -145,6 +182,10 @@ test.describe('E8: the fan floor holds at every breakpoint', () => {
       await page.setViewportSize({ width, height });
       await atPlayerTurn(page, differingSplit().seed);
       await resizeTo(page, width, height);
+      // Again after the resize, because a re-plan re-places every card and the
+      // three assertions below read the probe, the canvas box and the composite
+      // as one state.
+      await stillScene(page);
 
       const probe = await layoutProbe(page);
       const metrics = await surfaceMetrics(page);
