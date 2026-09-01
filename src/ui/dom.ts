@@ -98,7 +98,7 @@ export function button(
 }
 
 /** Whether a control is currently greyed out. See `setDisabled`. */
-export function unavailable(node: Element): boolean {
+function unavailable(node: Element): boolean {
   return node.getAttribute('aria-disabled') === 'true';
 }
 

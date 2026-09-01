@@ -46,6 +46,7 @@ import {
   round2,
   startPreview,
   table,
+  verdict,
 } from './support.mjs';
 
 const PORT = 4182;
@@ -448,7 +449,7 @@ async function main() {
               `page \`${tokens.ground}\``,
               `rail ${railRatio === null ? '-' : String(round2(railRatio))}:1, felt ${feltRatio === null ? '-' : String(round2(feltRatio))}:1`,
               `>= ${String(entry.ratio)}:1`,
-              ok ? 'PASS' : '**FAIL**',
+              verdict(ok),
             ]);
             continue;
           }
@@ -486,7 +487,7 @@ async function main() {
             `\`${worst}\``,
             `${String(round2(worstRatio))}:1`,
             `>= ${String(entry.ratio)}:1`,
-            ok ? 'PASS' : '**FAIL**',
+            verdict(ok),
           ]);
         }
         }
@@ -602,7 +603,7 @@ async function main() {
           `\`${pair.background}\``,
           `${String(round2(pair.ratio))}:1`,
           `>= ${String(entry.ratio)}:1`,
-          ok ? 'PASS' : '**FAIL**',
+          verdict(ok),
         ]);
       }
     }
@@ -692,14 +693,14 @@ async function main() {
       [
         ['Play-surface rows measured', String(canvasRows.length), '-', '-'],
         ['Chrome rows measured', String(chromeRows.length), '-', '-'],
-        ['Rows below threshold', String(belowThreshold), '0', belowThreshold === 0 ? 'PASS' : '**FAIL**'],
+        ['Rows below threshold', String(belowThreshold), '0', verdict(belowThreshold === 0)],
         ['Can-see control reported', `${String(controlRatio)}:1`, `< ${String(TEXT_RATIO)}:1`,
-          controlSaw ? 'PASS' : '**FAIL**'],
+          verdict(controlSaw)],
         ['Can-see control pair', `\`${controlInk}\` on \`${controlBackground}\``,
           `\`${PLANTED_INK}\` on \`${PLANTED_BACKGROUND}\``,
-          controlInk === PLANTED_INK && controlBackground === PLANTED_BACKGROUND ? 'PASS' : '**FAIL**'],
+          verdict(controlInk === PLANTED_INK && controlBackground === PLANTED_BACKGROUND)],
         ['Can-see control ratio', `${String(controlRatio)}:1`, `${String(PLANTED_RATIO)}:1 exactly`,
-          controlRatio === PLANTED_RATIO ? 'PASS' : '**FAIL**'],
+          verdict(controlRatio === PLANTED_RATIO)],
       ],
     ),
     '',

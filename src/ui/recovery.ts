@@ -59,10 +59,8 @@
  */
 
 import { button, el } from './dom';
+import { type PageTarget, pageDocument } from './platform';
 import { recoveryMessage, recoveryReloadLabel, recoveryTitle } from './text';
-
-/** Where the two page-level events are read. `null` where there is no page. */
-type PageTarget = EventTarget;
 
 /** The id the panel's heading carries, so the panel can be named by it. */
 const TITLE_ID = 'bj-recovery-title';
@@ -106,24 +104,12 @@ export interface ErrorBoundary {
   failures(): number;
 }
 
-/**
- * The page's `document`, or `null` where there is none to read.
- *
- * The same reading `src/ui/loop.ts` makes, for the same reason: a host with no
- * document has no window to listen on, and the boundary there is the `run`
- * wrapper alone rather than nothing at all.
- */
-function platformDocument(): Document | null {
-  if (typeof document === 'undefined') {
-    return null;
-  }
-  return document;
-}
-
 /** Install a boundary. Nothing is mounted until something fails. */
 export function createErrorBoundary(options: ErrorBoundaryOptions): ErrorBoundary {
+  // A host with no document has no window to listen on, and the boundary there
+  // is the `run` wrapper alone rather than nothing at all.
   const pageTarget: PageTarget | null =
-    options.page === undefined ? (platformDocument()?.defaultView ?? null) : options.page;
+    options.page === undefined ? (pageDocument()?.defaultView ?? null) : options.page;
   const reload =
     options.reload ??
     ((): void => {

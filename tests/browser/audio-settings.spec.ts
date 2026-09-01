@@ -37,6 +37,7 @@
 import { expect, test } from '@playwright/test';
 
 import type { BreakpointName } from '../../src/ui/breakpoints';
+import { settleRound } from './support/flow';
 import {
   atShippedBetting,
   audioProbe,
@@ -50,26 +51,6 @@ import {
 
 /** The mute control, by the attribute every census names it with. */
 const MUTE = '[data-control="mute"]';
-
-/** Answer every screen that waits for the player until the round settles. */
-async function settleRound(page: import('@playwright/test').Page): Promise<void> {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const phase = (await page.locator('.bj-shell').getAttribute('data-phase')) ?? '';
-    if (phase === 'roundResult') {
-      return;
-    }
-    if (phase === 'insurance') {
-      await control(page, 'decline-insurance').click({ timeout: 2000 }).catch(() => undefined);
-      continue;
-    }
-    if (phase === 'playerTurn') {
-      await page.locator('[data-action="stand"]').click({ timeout: 2000 }).catch(() => undefined);
-      continue;
-    }
-    await page.waitForTimeout(150);
-  }
-  throw new Error('the round never settled');
-}
 
 /**
  * One viewport per breakpoint the clause is unscoped by.

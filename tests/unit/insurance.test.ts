@@ -48,12 +48,13 @@ import { describe, expect, it } from 'vitest';
 
 import type { Rank } from '../../src/core/cards';
 import { RANKS } from '../../src/core/cards';
-import type { IntentResult, Table, TableOptions, TableReadout } from '../../src/core/table';
+import type { Table, TableOptions, TableReadout } from '../../src/core/table';
 import { createTable } from '../../src/core/table';
 import type { InsuranceResult, PhaseKind } from '../../src/core/types';
 import type { TableLimits, Wallet } from '../../src/core/wallet';
 import { createWallet, tableLimits } from '../../src/core/wallet';
 
+import { acceptResult as accept, bounded } from './support/drive';
 import { scriptedShoe } from './support/stacked-shoe';
 
 // ---------------------------------------------------------------------------
@@ -82,26 +83,9 @@ const TICK = 0.25;
 /** Bounded, for the reason `wallet.test.ts` gives: a stall must fail loudly. */
 const LOOP_LIMIT = 500;
 
-function bounded(label: string): () => void {
-  let turns = 0;
-  return () => {
-    turns += 1;
-    if (turns > LOOP_LIMIT) {
-      throw new RangeError(`${label} did not finish inside ${String(LOOP_LIMIT)} turns`);
-    }
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Driving the machine
 // ---------------------------------------------------------------------------
-
-function accept(result: IntentResult): IntentResult {
-  if (!result.ok) {
-    throw new Error(`${result.kind} was refused by ${result.layer} as ${result.reason}`);
-  }
-  return result;
-}
 
 /**
  * Drive a whole round, answering SPEC 4.7's offer as told, and keep every
@@ -113,7 +97,7 @@ function accept(result: IntentResult): IntentResult {
  */
 function walk(table: Table, answer: 'takeInsurance' | 'declineInsurance'): readonly TableReadout[] {
   const seen: TableReadout[] = [table.readout()];
-  const turn = bounded('walking one round to the round result');
+  const turn = bounded('walking one round to the round result', LOOP_LIMIT);
   while (table.readout().phase.kind !== 'roundResult') {
     turn();
     const state = table.readout();
@@ -144,7 +128,7 @@ function walk(table: Table, answer: 'takeInsurance' | 'declineInsurance'): reado
 
 /** Drive as far as SPEC 4.7's decision point, which SPEC 4.7 gives no timer. */
 function toOffer(table: Table): Table {
-  const turn = bounded('driving the machine to the insurance offer');
+  const turn = bounded('driving the machine to the insurance offer', LOOP_LIMIT);
   while (table.readout().phase.kind !== 'insurance') {
     turn();
     const state = table.readout();
@@ -170,7 +154,7 @@ function toOffer(table: Table): Table {
 function walletAt(target: number): Wallet {
   const wallet = createWallet();
   const bronze: TableLimits = tableLimits('bronze');
-  const turn = bounded(`draining a wallet to ${String(target)}`);
+  const turn = bounded(`draining a wallet to ${String(target)}`, LOOP_LIMIT);
   while (wallet.readout().chips > target) {
     turn();
     const wager = Math.min(bronze.maximum, wallet.readout().chips - target);
@@ -314,7 +298,7 @@ describe('B11: the offer is made on a dealer Ace and on nothing else', () => {
     accept(table.apply({ kind: 'start' }));
     accept(table.apply({ kind: 'tapChip', chip: ROUND_WAGER }));
     accept(table.apply({ kind: 'deal' }));
-    const turn = bounded('driving past the offer');
+    const turn = bounded('driving past the offer', LOOP_LIMIT);
     while (table.readout().phase.kind !== 'playerTurn') {
       turn();
       if (table.readout().phase.kind === 'insurance') {
@@ -359,7 +343,7 @@ describe('B11: the offer is made on a dealer Ace and on nothing else', () => {
       accept(table.apply({ kind: 'start' }));
       accept(table.apply({ kind: 'tapChip', chip: wager }));
       accept(table.apply({ kind: 'deal' }));
-      const turn = bounded('driving to the offer');
+      const turn = bounded('driving to the offer', LOOP_LIMIT);
       while (table.readout().phase.kind !== 'insurance') {
         turn();
         table.update(TICK);

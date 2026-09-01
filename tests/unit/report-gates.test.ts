@@ -123,6 +123,26 @@ describe('BJ-22: every measured threshold is the one the documents state', () =>
     expect(constantIn(PERF, 'SAMPLE_MS')).toBe(60_000);
   });
 
+  it('gates H4 on the worst run and not on the median of three', () => {
+    // **The statistic, not only the threshold.** `LONG_TASK` above pins the
+    // 50 ms; this pins what 50 ms is compared against. The row reported the
+    // median of three per-run maxima from the day the script was written, so
+    // `[52, 48, 48]` passed a row whose own words are "no task exceeds 50 ms",
+    // and that triple is the exact shape of the compositor residual this
+    // build's report documents and CI watches. The disclosure lived in a
+    // comment and in the report's prose and in no gate.
+    expect(PERF, 'the H4 row does not gate on the worst run').toContain(
+      '`<= ${String(LONG_TASK)} ms`, worstAnyRun <= LONG_TASK],',
+    );
+    expect(PERF, 'the median is gating again').not.toContain(
+      '`<= ${String(LONG_TASK)} ms`, results.worstTask <= LONG_TASK],',
+    );
+    // The median is still reported, because dropping it would trade one
+    // partial view of three runs for another.
+    expect(PERF).toContain("'`H4` worst task, median of the three runs',");
+    expect(PERF).toContain("'informational, not gated',");
+  });
+
   it('pins the touch-target floor and its clearance', () => {
     expect(constantIn(TARGETS, 'MIN_SIDE')).toBe(stated('touch-target-px'));
     expect(constantIn(TARGETS, 'MIN_CLEARANCE')).toBe(stated('touch-clearance-px'));
@@ -182,6 +202,13 @@ describe('BJ-22: a sampler that measures nothing is a failure and not a silence'
     ['touch-targets.mjs', TARGETS, 'targets were measured, so the census found almost nothing'],
     ['bundle-size.mjs', BUNDLE, 'the build emitted no files, so there is nothing to measure'],
     ['bundle-size.mjs', BUNDLE, 'no JavaScript was counted, so the sampler is measuring nothing'],
+    // AUDIT-1: the exclusion is an explicit set, and a file that is in neither
+    // the page nor that set is a shipped byte nobody measured. Without this
+    // breach the residual reading counted only what the HTML named, and 218 KB
+    // gzipped of eagerly fetched chunk was demonstrated invisible to both
+    // ceilings while the report printed PASS with headroom.
+    ['bundle-size.mjs', BUNDLE, '  if (unaccounted.length > 0) {'],
+    ['bundle-size.mjs', BUNDLE, 'emitted but neither named by the page nor listed as not fetched'],
     ['perf.mjs', PERF, 'the long-task observer never attached, so H4 measured nothing'],
     ['perf.mjs', PERF, 'frames were sampled, so the sampler saw almost nothing'],
     ['perf.mjs', PERF, '    if (entry.rounds < MIN_ROUNDS) {'],

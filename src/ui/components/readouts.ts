@@ -231,11 +231,19 @@ export function createReadouts(): Component {
   /**
    * The breakpoint the disclosure was last set from.
    *
-   * The open state is written **on a change of breakpoint and never otherwise**,
-   * so a player who opens the disclosure at `portrait` keeps it open: a sync
-   * step that wrote it every frame would close it under their finger. It is the
-   * same rule every other writer in the chrome follows, applied to a property a
-   * person can also change.
+   * The open state is written **on a change of what the breakpoint decides, and
+   * never otherwise**, so a player who opens the disclosure at `portrait` keeps
+   * it open: a sync step that wrote it every frame would close it under their
+   * finger. It is the same rule every other writer in the chrome follows,
+   * applied to a property a person can also change.
+   *
+   * **The policy, not the name.** `compact` and `portrait` are two names for
+   * one disclosure policy, and below 768 px it is the orientation alone that
+   * decides between them, so keying the write on the name closed the
+   * disclosure on a device rotation while nothing about what the player could
+   * see had moved. `showsEveryReadout` is the whole of what this component
+   * reads off the breakpoint, so a change it does not answer differently is not
+   * a change this writer has anything to say about.
    */
   let appliedBreakpoint: BreakpointName | null = null;
 
@@ -253,7 +261,14 @@ export function createReadouts(): Component {
       counting.to = target;
       counting.age = 0;
     } else {
-      counting.age = Math.min(counting.age + dt, state.motion.seconds('balanceCountUp'));
+      // The same guard `scene.ts`'s `advance` carries, for the same reason:
+      // only `table.update` clamps its delta, and a non-finite one written into
+      // an age stays there for ever, because `Math.min(NaN, span)` is `NaN` and
+      // nothing resets the count. The balance would then stop moving for the
+      // rest of the session. A large delta is still allowed to saturate, which
+      // is how a resume lands the count on its target.
+      const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
+      counting.age = Math.min(counting.age + step, state.motion.seconds('balanceCountUp'));
     }
     counting.shown = countUp(
       counting.from,
@@ -267,10 +282,11 @@ export function createReadouts(): Component {
     root,
     update(state: ChromeState, dt: number): void {
       const { breakpoint } = state.layout;
-      if (breakpoint !== appliedBreakpoint) {
-        appliedBreakpoint = breakpoint;
-        more.open = showsEveryReadout(breakpoint);
+      const wanted = showsEveryReadout(breakpoint);
+      if (appliedBreakpoint === null || wanted !== showsEveryReadout(appliedBreakpoint)) {
+        more.open = wanted;
       }
+      appliedBreakpoint = breakpoint;
       for (const row of ROWS) {
         const node = values.get(row.key);
         if (node !== undefined) {

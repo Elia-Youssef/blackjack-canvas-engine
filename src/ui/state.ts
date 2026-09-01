@@ -111,8 +111,17 @@ export interface ChromeState {
   readonly statistics: StatisticsReadout;
   /** SPEC 8's last 50 rounds, newest first. */
   readonly history: History;
-  /** SPEC 9's awarded milestones, in award order. */
+  /** SPEC 9's awarded milestones, in award order. The whole standing list. */
   readonly milestones: readonly MilestoneId[];
+  /**
+   * SPEC 9's milestones **this frame** awarded, in award order. Usually empty.
+   *
+   * The standing list above answers "has this been awarded"; this one answers
+   * "was it awarded just now", which is the announcer's question and the audio
+   * cue's. Both come from the list `observeRound` returns rather than from a
+   * difference of two records taken in the chrome.
+   */
+  readonly awarded: readonly MilestoneId[];
   /** SPEC 7's coach mode. `off` shows nothing and counts nothing. */
   readonly coachMode: CoachMode;
   /**
@@ -201,6 +210,23 @@ export interface ChromeState {
    * the clause the item exists for.
    */
   readonly hint: CoachAction | null;
+  /**
+   * Whether the store this session opened will actually carry. QUALITY-BAR
+   * section 8's last clause, and `AUDIT-1`.
+   *
+   * `storage/store.ts` answers `durable: false` on the arm where the probe was
+   * refused, which is a browser with site data blocked or a private mode that
+   * throws on write, and `persistence.ts` runs a memory fallback behind it so
+   * the session plays normally and carries nothing. The whole apparatus was
+   * built and tested at `BJ-11` and read by nothing, so Settings stated "stored
+   * in this browser only" in the one session where nothing is stored at all.
+   *
+   * Read **once, at boot**, rather than per frame, because that is when the
+   * probe ran: a per-frame read would invite the panel to change its mind
+   * mid-session on an answer that cannot move. The graded SPEC 14 sentence is
+   * untouched; this decides whether a second, sibling note sits under it.
+   */
+  readonly durable: boolean;
 }
 
 /**

@@ -151,7 +151,16 @@ export function isDeckCount(value: number): value is DeckCount {
   return DECK_COUNTS.some((count) => count === value);
 }
 
-function assertDeckCount(value: number): void {
+/**
+ * Refuse a deck count SPEC 4.1 does not configure, in SPEC 4.1's own words.
+ *
+ * Exported because `table.ts` has to ask the same question at the same moment
+ * the caller can still do something about it: `setRules` stages a record that
+ * `createShoe` will not accept until three phases later, by which time
+ * `wallet.commitInitial` has spent the wager. One sentence, one owner; a second
+ * spelling of it in the machine would be the drift the whole module avoids.
+ */
+export function assertDeckCount(value: number): void {
   if (!isDeckCount(value)) {
     throw new RangeError(
       `SPEC 4.1 configures 6 or 8 decks; ${String(value)} is not a shoe size this game deals`,

@@ -102,6 +102,22 @@ export function errorName(error: unknown): string {
   return error instanceof Error ? error.name : 'NonError';
 }
 
+/**
+ * An object with readable fields, which is the only shape a stored document or
+ * a stored envelope has.
+ *
+ * Here, beside `errorName`, because both halves of the read path need it and
+ * this file is the one they already share: `migrations.ts` reads envelopes and
+ * `document.ts` reads payloads, and two private copies of one three-clause test
+ * are two places for the array case to be forgotten. The array clause is the
+ * load-bearing one: `typeof []` is `'object'`, so a stored `[]` would otherwise
+ * present itself as a record with no fields and be salvaged into a document of
+ * defaults rather than refused.
+ */
+export function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
 function messageOf(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -147,7 +163,7 @@ export function createMemoryStore(): KeyValueStore {
 }
 
 /** Wrap a platform `Storage` as a `KeyValueStore`. It does not catch: see above. */
-export function adaptStorage(storage: StorageLike): KeyValueStore {
+function adaptStorage(storage: StorageLike): KeyValueStore {
   return Object.freeze({
     read(key: string): string | null {
       return storage.getItem(key);

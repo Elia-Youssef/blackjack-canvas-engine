@@ -39,6 +39,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 
+import { settleRound } from './support/flow';
 import { chip, control, waitForPhase } from './support/game';
 
 /** The wrapper's record, as the init script publishes it on the page. */
@@ -166,26 +167,6 @@ function installThrowingContext(page: Page) {
     }
     Object.defineProperty(window, 'AudioContext', { value: NoAudio });
   });
-}
-
-/** Answer every screen that waits for the player until the round settles. */
-async function settleRound(page: Page): Promise<void> {
-  for (let attempt = 0; attempt < 60; attempt += 1) {
-    const phase = (await page.locator('.bj-shell').getAttribute('data-phase')) ?? '';
-    if (phase === 'roundResult') {
-      return;
-    }
-    if (phase === 'insurance') {
-      await control(page, 'decline-insurance').click({ timeout: 2000 }).catch(() => undefined);
-      continue;
-    }
-    if (phase === 'playerTurn') {
-      await page.locator('[data-action="stand"]').click({ timeout: 2000 }).catch(() => undefined);
-      continue;
-    }
-    await page.waitForTimeout(150);
-  }
-  throw new Error('the round never settled');
 }
 
 /** Bet, deal, stand, and reach the round result, pressing only real controls. */

@@ -44,6 +44,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 
+import { expectWager } from './support/flow';
 import { splitSeed } from './support/action-seeds';
 import {
   SCREEN_CONTROLS,
@@ -58,10 +59,8 @@ import {
   bootGame,
   control,
   notice,
-  numberIn,
   openShippedPage,
   readout,
-  readoutValue,
   resizeTo,
   settle,
   shell,
@@ -74,17 +73,6 @@ const MIN_INDICATOR_CONTRAST = 3;
 
 /** How far outside a control's box the ring is looked for, in CSS pixels. */
 const RING_MARGIN = 8;
-
-/** The wager on SPEC 11's readout, as a number. */
-async function wagerOf(page: Page): Promise<number> {
-  return numberIn(readoutValue(page, 'wager'));
-}
-
-async function expectWager(page: Page, wager: number): Promise<void> {
-  await expect
-    .poll(async () => wagerOf(page), { message: `the wager readout reaches ${String(wager)}` })
-    .toBe(wager);
-}
 
 /** Reach the betting screen on the shipped page, with nothing injected. */
 async function atBettingScreen(page: Page): Promise<void> {
@@ -425,6 +413,46 @@ test.describe('D4: closing an overlay restores focus', () => {
       'data-open-overlay=howToPlay',
     );
   });
+
+  test('and a switch from one panel straight to another is an open, not neither', async ({
+    page,
+  }) => {
+    // The three openers sit in the top bar, outside the host, and nothing
+    // disables them while a panel is up: `pulls focus back when it is put on a
+    // control behind the panel` above proves a background control is pressable
+    // with a panel open, and these three are background controls. So two
+    // presses put a second panel behind the same host with no close in
+    // between, and the sync step has to treat that as an arrival: the panel
+    // takes focus, and Close goes back to the opener the player last pressed
+    // rather than to the one they left behind.
+    await atBettingScreen(page);
+    await page.locator('[data-open-overlay="settings"]').focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('[data-overlay-host="true"]')).toBeVisible();
+    await settle(page);
+    expect((await focusedStop(page)).key, 'the first panel took focus').toBe(
+      'data-overlay-host=true',
+    );
+
+    // Straight to the second, with the first still open.
+    await page.locator('[data-open-overlay="howToPlay"]').focus();
+    await page.keyboard.press('Enter');
+    await settle(page);
+    await expect(page.locator('[data-overlay-host="true"]')).toHaveAttribute(
+      'data-open',
+      'howToPlay',
+    );
+    expect((await focusedStop(page)).key, 'the second panel never took focus').toBe(
+      'data-overlay-host=true',
+    );
+
+    await page.keyboard.press('Escape');
+    await expect(page.locator('[data-overlay-host="true"]')).toBeHidden();
+    await settle(page);
+    expect((await focusedStop(page)).key, 'the close restored to the panel already left').toBe(
+      'data-open-overlay=howToPlay',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -621,6 +649,15 @@ test.describe('D4: the focus indicator', () => {
     // `outline: none` on any one of them shows up here.
     await atBettingScreen(page);
     const expected = await controlsInDomOrder(page);
+    // The population before the sweep, exactly as the tab-order test above does
+    // it and for the reason BJ-16's review made a Blocker of: every assertion
+    // below is inside the loop, and `controlsInDomOrder` filters on `hidden`,
+    // `offsetParent` and `tabIndex`, so a layout change that made the row
+    // invisible to it would run the body zero times and report a green sweep
+    // over no control at all.
+    for (const key of SCREEN_CONTROLS['betting'] ?? []) {
+      expect(expected, `${key} is not on the screen this sweep measures`).toContain(key);
+    }
 
     for (const key of expected) {
       expect(await focusByTab(page, key), `${key} is not reachable by Tab`).toBe(true);

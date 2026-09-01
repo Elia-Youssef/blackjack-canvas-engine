@@ -79,6 +79,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { stripComments as code } from './support/source-scan';
+
 import { feltPrint } from '../../src/render/felt';
 import {
   chips,
@@ -143,7 +145,10 @@ interface LocaleCase {
   readonly loss: string;
   readonly nothing: string;
   readonly half: string;
+  /** `percentOfHundred(92.5)`, which truncates: the coach's reading. */
   readonly accuracy: string;
+  /** `percent(0.925)`, which rounds: every other share in the chrome. */
+  readonly roundedShare: string;
 }
 
 const CASES: readonly LocaleCase[] = [
@@ -155,7 +160,8 @@ const CASES: readonly LocaleCase[] = [
     loss: '-50',
     nothing: '0',
     half: '50%',
-    accuracy: '93%',
+    accuracy: '92%',
+    roundedShare: '93%',
   },
   {
     // The grouping separator is a full stop and the percent sign is preceded by
@@ -168,7 +174,8 @@ const CASES: readonly LocaleCase[] = [
     loss: '-50',
     nothing: '0',
     half: '50\u00a0%',
-    accuracy: '93\u00a0%',
+    accuracy: '92\u00a0%',
+    roundedShare: '93\u00a0%',
   },
   {
     // Arabic-Indic digits, U+066C as the thousands separator, U+066A as the
@@ -182,7 +189,8 @@ const CASES: readonly LocaleCase[] = [
     loss: '\u061c-\u0665\u0660',
     nothing: '\u0660',
     half: '\u0665\u0660\u066a\u061c',
-    accuracy: '\u0669\u0663\u066a\u061c',
+    accuracy: '\u0669\u0662\u066a\u061c',
+    roundedShare: '\u0669\u0663\u066a\u061c',
   },
 ];
 
@@ -209,10 +217,16 @@ describe('M2: every formatter, under every locale the item names', () => {
       it('renders a percentage from a fraction and from a hundred alike', () => {
         expect(formatters.percent(0.5)).toBe(expected.half);
         expect(formatters.percentOfHundred(92.5)).toBe(expected.accuracy);
+        expect(formatters.percent(0.925)).toBe(expected.roundedShare);
         // The two entry points are one formatter with one division between
         // them, which is why the coach's accuracy cannot come out at 0.9
         // percent: 92.5 out of a hundred and 0.925 as a fraction are one value.
-        expect(formatters.percentOfHundred(92.5)).toBe(formatters.percent(0.925));
+        // They part on the rounding alone, deliberately: `percentOfHundred`
+        // truncates, because the figure it renders is compared against a
+        // milestone threshold by an exact integer inequality and a rounded
+        // reading printed that threshold back to players who had not met it.
+        expect(formatters.percentOfHundred(92.5)).toBe(formatters.percent(0.92));
+        expect(formatters.percentOfHundred(92.5)).not.toBe(formatters.percent(0.925));
       });
 
       it('rounds to whole chips and whole percentages, and never to a fraction', () => {
@@ -220,7 +234,7 @@ describe('M2: every formatter, under every locale the item names', () => {
         // fraction reaching a formatter is a defect upstream. What is asserted
         // is that the formatter does not invent decimal places of its own.
         expect(formatters.chips(10)).not.toMatch(/[.,]\d\d/);
-        expect(formatters.percent(0.925)).toBe(expected.accuracy);
+        expect(formatters.percent(0.925)).toBe(expected.roundedShare);
       });
     });
   }
@@ -297,11 +311,6 @@ function sourcesUnder(...segments: readonly string[]): readonly SourceFile[] {
   };
   walk(root);
   return files;
-}
-
-/** Source with its comments removed, so a scan reads code and not prose. */
-function code(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
 }
 
 /**
@@ -488,6 +497,126 @@ function intlNames(text: string): readonly string[] {
   return [...code(text).matchAll(/\bIntl\b/g)].map((match) => match[0]);
 }
 
+// ---------------------------------------------------------------------------
+// The DOM-text census, statement-scoped
+// ---------------------------------------------------------------------------
+
+/**
+ * The four ways a string becomes DOM text in this chrome, and where in each of
+ * them the text sits.
+ *
+ * `skip` is how many arguments to walk past before the one that is rendered:
+ * `setText(node, text)` puts it second, `button(label, onPress, options)` puts
+ * it first, and the two property forms put it straight after the token.
+ *
+ * **`button(` is here because it is a writer.** `src/ui/dom.ts` assigns the
+ * first argument to `textContent`, so a label is DOM text in exactly the sense
+ * this census is about, and it is the form the two live offenders this scan was
+ * widened to catch were written in.
+ */
+const TEXT_WRITERS: readonly { readonly token: RegExp; readonly skip: number }[] = [
+  { token: /\btext:/g, skip: 0 },
+  { token: /\bsetText\(/g, skip: 1 },
+  { token: /\btextContent\s*=/g, skip: 0 },
+  { token: /\bbutton\(/g, skip: 0 },
+];
+
+/**
+ * The source of the one argument or property value that starts at `start`,
+ * after `skip` earlier arguments.
+ *
+ * **Why a walker and not a line.** The census this replaces tested the writer
+ * token and the raw number on one physical line, so the identical write walked
+ * past it the moment prettier wrapped the call, which is the shape six shipped
+ * `src/ui/` sites already use. Widening it to a whole statement instead would
+ * have been the other error: a `button(label, onPress, { attributes: { 'data-x':
+ * String(n) } })` writes no number into text and spells one into an attribute
+ * three arguments later, and a statement-scoped regex cannot tell those apart.
+ * So the scan reads the argument, which is what actually becomes text.
+ *
+ * Quoted literals are stepped over whole, because a comma or a brace inside one
+ * is not punctuation. Template literals are copied rather than skipped, because
+ * `` `${String(count)} decks` `` is precisely the write being hunted, and their
+ * own commas cannot end the argument while the walk is inside one.
+ */
+function argumentAt(text: string, start: number, skip: number): string {
+  let depth = 0;
+  let seen = 0;
+  const out: string[] = [];
+  for (let index = start; index < text.length; index += 1) {
+    const ch = text[index] ?? '';
+    if (ch === "'" || ch === '"') {
+      const closed = closingQuote(text, index, ch);
+      if (seen >= skip) {
+        out.push(text.slice(index, closed + 1));
+      }
+      index = closed;
+      continue;
+    }
+    if (ch === '`') {
+      const closed = closingQuote(text, index, '`');
+      if (seen >= skip) {
+        out.push(text.slice(index, closed + 1));
+      }
+      index = closed;
+      continue;
+    }
+    if (ch === '(' || ch === '[' || ch === '{') {
+      depth += 1;
+    } else if (ch === ')' || ch === ']' || ch === '}') {
+      if (depth === 0) {
+        break;
+      }
+      depth -= 1;
+    } else if (depth === 0 && (ch === ',' || ch === ';')) {
+      if (seen >= skip) {
+        break;
+      }
+      seen += 1;
+      continue;
+    }
+    if (seen >= skip) {
+      out.push(ch);
+    }
+  }
+  return out.join('');
+}
+
+/** The index of the quote that closes the one at `open`, or the end of `text`. */
+function closingQuote(text: string, open: number, quote: string): number {
+  for (let index = open + 1; index < text.length; index += 1) {
+    if (text[index] === '\\') {
+      index += 1;
+      continue;
+    }
+    if (text[index] === quote) {
+      return index;
+    }
+  }
+  return text.length - 1;
+}
+
+/**
+ * Every raw number this source writes into DOM text, however it is wrapped.
+ *
+ * `String(` elsewhere is fine and common: it spells data attributes, element
+ * ids and cache keys, none of which is read by anybody.
+ */
+function domTextOffenders(source: string): string[] {
+  const text = code(source);
+  const offenders: string[] = [];
+  for (const writer of TEXT_WRITERS) {
+    for (const match of text.matchAll(writer.token)) {
+      const start = (match.index ?? 0) + match[0].length;
+      const written = argumentAt(text, start, writer.skip);
+      if (/\bString\(/.test(written)) {
+        offenders.push(`${match[0]}${written.replace(/\s+/g, ' ').trim()}`);
+      }
+    }
+  }
+  return offenders;
+}
+
 describe('M2: the scanners find what they hunt for', () => {
   it('finds a sentence assembled from a literal and an expression', () => {
     expect(assembledStrings("const s = 'You have ' + count + ' chips';")).toHaveLength(2);
@@ -537,6 +666,46 @@ describe('M2: the scanners find what they hunt for', () => {
   it('finds the Intl namespace in code and not in prose', () => {
     expect(intlNames('const f = new Intl.NumberFormat(locales);')).toEqual(['Intl']);
     expect(intlNames('// Intl with no locale reads the host default')).toEqual([]);
+  });
+
+  it('finds a raw number written into DOM text on one line, and wrapped, and as a label', () => {
+    // The control the DOM-text census went without, which is why its reach
+    // defect was invisible: every other scan in this file carries one. Three
+    // shapes, because the scan replaced a line test and the two shapes a line
+    // test cannot see are the ones the chrome actually writes.
+    expect(domTextOffenders('  setText(node, String(count));')).toHaveLength(1);
+    expect(domTextOffenders('  node.textContent = String(count);')).toHaveLength(1);
+    expect(
+      domTextOffenders(['      setText(', '        node,', '        String(count),', '      );'].join('\n')),
+      'a wrapped write walked past the census',
+    ).toHaveLength(1);
+    expect(
+      domTextOffenders(['        text:', '          String(chips),', '      });'].join('\n')),
+      'a wrapped property walked past the census',
+    ).toHaveLength(1);
+    expect(
+      domTextOffenders("    const control = button(\n      `${String(count)} decks`,\n      onPress,\n    );"),
+      'a button label walked past the census',
+    ).toHaveLength(1);
+  });
+
+  it('leaves a raw number alone where it is not text', () => {
+    // The other half, and the reason the scan reads one argument rather than a
+    // whole statement. A data attribute, an element id and a cache key are all
+    // spelled with `String(` and none of them is read by anybody, so a census
+    // that flagged them would have to be argued with rather than fixed.
+    expect(
+      domTextOffenders(
+        "    const control = button(\n      'Deal',\n      onPress,\n      { attributes: { 'data-decks': String(count) } },\n    );",
+      ),
+    ).toEqual([]);
+    expect(domTextOffenders("  setText(node, chips(count)); // key = String(count)")).toEqual([]);
+    expect(
+      domTextOffenders("  el('div', { attributes: { 'data-history': String(index) } });"),
+    ).toEqual([]);
+    // A comma inside the text itself does not end the argument early, or a
+    // sentence with a list in it would hide whatever followed the comma.
+    expect(domTextOffenders("  setText(node, `one, two, ${String(n)}`);")).toHaveLength(1);
   });
 });
 
@@ -591,17 +760,12 @@ describe('M2: every number a player reads goes through the one formatter', () =>
 
   it('writes no raw number into DOM text, anywhere under src/ui/', () => {
     // The chrome's half of the clause. Every number a player reads in the DOM
-    // goes through `format.ts`, so a `String(` on a line that writes text would
-    // be a number rendered in no locale at all. `String(` on other lines is
-    // fine and common: it spells data attributes, element ids and cache keys,
-    // none of which is read by anybody.
-    const writers = /\btext:|setText\(|textContent\s*=/;
+    // goes through `format.ts`, so a `String(` in an argument that becomes text
+    // would be a number rendered in no locale at all.
     const offenders: string[] = [];
     for (const file of sourcesUnder('src', 'ui')) {
-      for (const line of code(file.text).split('\n')) {
-        if (writers.test(line) && /\bString\(/.test(line)) {
-          offenders.push(`${file.path.slice(file.path.lastIndexOf('src/'))}: ${line.trim()}`);
-        }
+      for (const written of domTextOffenders(file.text)) {
+        offenders.push(`${file.path.slice(file.path.lastIndexOf('src/'))}: ${written}`);
       }
     }
     expect(offenders, 'a raw number is written into DOM text').toEqual([]);

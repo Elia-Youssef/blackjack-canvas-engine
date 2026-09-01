@@ -26,7 +26,7 @@ import type { Rung, Outcome } from '../core/settlement';
 import type { CellAddress, CoachAction, PreferenceList } from '../core/strategy';
 import type { RejectionReason } from '../core/table';
 import type { HandInPlay, HandState, InsuranceOffer, Phase, PlayerAction } from '../core/types';
-import type { MilestoneId } from '../core/statistics';
+import type { MilestoneId, ScopeReadout } from '../core/statistics';
 import {
   ACCURACY_DECISIONS,
   ACCURACY_PERCENT,
@@ -36,7 +36,7 @@ import {
 } from '../core/statistics';
 import type { TableId } from '../core/wallet';
 
-import { chips } from './format';
+import { NOTHING_YET, chips, percentOfHundred } from './format';
 
 /**
  * Why the start screen greys a table, when the machine's one word is not enough.
@@ -60,6 +60,27 @@ import { chips } from './format';
 export type ChooserRefusal = 'table-not-unlocked' | 'table-unaffordable';
 
 /**
+ * Why the betting bar greys one chip, which is not why a tap of it is refused.
+ * The chooser precedent above, applied to SPEC 4.11's other doubled meaning.
+ *
+ * SPEC 4.11 distinguishes two things and `src/ui/components/betting.ts`'s
+ * header sets them out: a chip whose **denomination alone** exceeds
+ * `min(tableMax, chips)` can never be wagered at this table and renders
+ * disabled, while a chip whose denomination fits but whose **tap** would carry
+ * the wager past the ceiling stays pressable and is rejected when pressed. The
+ * machine answers `above-ceiling` for the second, correctly, and the greyed
+ * chip is the first: a 500 at Bronze is not "more than the ceiling given what
+ * you have already staked", it is a chip this table has no use for.
+ *
+ * The betting bar held that sentence privately, so the control said one thing
+ * and the mirror, reading the machine's word, said the other, which is the one
+ * place in the product where `src/ui/dom.ts`'s "three surfaces, one sentence"
+ * was false. **The machine's refusal kinds are untouched**: `core/wallet.ts`
+ * still answers one `above-ceiling` and nothing downstream of it branches.
+ */
+export type DenominationRefusal = 'chip-over-ceiling';
+
+/**
  * Everything the chrome has a sentence for: the machine's reasons, and the
  * chooser's two.
  *
@@ -68,15 +89,15 @@ export type ChooserRefusal = 'table-not-unlocked' | 'table-unaffordable';
  * are among them. Widening the parameter keeps every existing caller compiling
  * and keeps the switch below exhaustive over both halves at once.
  */
-export type DisplayReason = RejectionReason | ChooserRefusal;
+export type DisplayReason = RejectionReason | ChooserRefusal | DenominationRefusal;
 
 /**
  * Why an action was refused. SPEC 4.11, SPEC 10 and the availability rules of
  * SPEC 4.5, 4.6, 4.7 and 4.8.
  *
- * Nineteen arms and no default, so a reason added to any of the three layers,
- * or to the chooser's pair, is a compile error here rather than a blank line on
- * screen.
+ * Twenty arms and no default, so a reason added to any of the three layers, or
+ * to either of the two display-only splits, is a compile error here rather than
+ * a blank line on screen.
  */
 export function reasonText(reason: DisplayReason): string {
   switch (reason) {
@@ -117,6 +138,14 @@ export function reasonText(reason: DisplayReason): string {
       return 'That table unlocks at a higher best balance than you have reached.';
     case 'table-unaffordable':
       return 'Your balance is below that table minimum.';
+
+    // The betting bar's one, which is `above-ceiling` split the same way: this
+    // is the chip's own denomination against the table, not the wager the tap
+    // would have built. `This chip` rather than `That` because the sentence is
+    // about the control it is attached to, and a player reading the greyed
+    // list needs to know it is the denomination that is out of range.
+    case 'chip-over-ceiling':
+      return 'This chip is more than the table maximum or your balance allows.';
 
     // The wallet layer. SPEC 4.11's own refusals, and SPEC 4.5 and 4.6's funding.
     case 'no-wager':
@@ -202,7 +231,16 @@ export function playerActionText(action: PlayerAction): string {
   }
 }
 
-/** SPEC 4.5's actions, as the coach names one. */
+/**
+ * SPEC 4.5's actions, as the coach names one.
+ *
+ * **`double` is "Double Down" here and "Double" on the control**, and the split
+ * is deliberate: this is the prose register, following SPEC 4.5's action table,
+ * while `ACTION_LABELS` in `src/ui/availability.ts` is the button register,
+ * following the control row SPEC.md draws. The other four names agree in both
+ * places. Unifying them drops one of the two spec spellings, so it is a
+ * question for whoever owns the spec rather than a tidy-up.
+ */
 export function actionText(action: CoachAction): string {
   switch (action) {
     case 'hit':
@@ -288,6 +326,28 @@ export function milestoneText(milestone: MilestoneId): string {
     case 'survivedAndRecovered':
       return `Survived below ${chips(LOW_WATER_PERCENT)} percent and recovered`;
   }
+}
+
+/**
+ * SPEC 7's running percentage with the denominator it was taken over.
+ *
+ * **A bare percentage is not an honest readout at a small denominator**, which
+ * is the same reason `strategy.accuracy` answers `null` before the first
+ * decision rather than 0 or 100: "100%" over one decision and "100%" over four
+ * hundred are the same three characters, and only one of them means anything.
+ * SPEC 7 asks for all three quantities and the readout now publishes all three,
+ * so this is the sentence that spends them.
+ *
+ * The percentage itself is `percentOfHundred`'s, which truncates, so this can
+ * never read the milestone's own threshold back to a player the milestone has
+ * not awarded.
+ */
+export function accuracyText(scope: ScopeReadout): string {
+  if (scope.accuracy === null) {
+    return NOTHING_YET;
+  }
+  const noun = scope.decisions === 1 ? 'decision' : 'decisions';
+  return `${percentOfHundred(scope.accuracy)} over ${chips(scope.decisions)} ${noun}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -497,6 +557,19 @@ export function documentTitle(phase: Phase): string {
   return `${screenTitle(phase)} - Blackjack`;
 }
 
+/**
+ * SPEC 4.7's side wager, by the name the offer taken gives it.
+ *
+ * One decision, in the file that owns the sentences: the title bar, the
+ * announcement of the result and the printed result panel all describe the same
+ * round, and a rename or a translation pass that reached only one of them would
+ * have a player hearing the round under one name and reading it under another
+ * on the screen that shows both.
+ */
+export function sideWagerText(evenMoney: boolean): string {
+  return evenMoney ? 'Even money' : 'Insurance';
+}
+
 /** The short name of one screen, as the title bar carries it. */
 export function screenTitle(phase: Phase): string {
   switch (phase.kind) {
@@ -509,7 +582,7 @@ export function screenTitle(phase: Phase): string {
     case 'peek':
       return 'Dealer peek';
     case 'insurance':
-      return phase.offer.evenMoney ? 'Even money' : 'Insurance';
+      return sideWagerText(phase.offer.evenMoney);
     case 'playerTurn':
       return 'Your turn';
     case 'reveal':

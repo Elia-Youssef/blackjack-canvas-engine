@@ -36,7 +36,14 @@ import {
   toRoundResult,
   waitForPhase,
 } from './drive.mjs';
-import { environmentRows, finish, round2, startPreview, table } from './support.mjs';
+import {
+  environmentRows,
+  finish,
+  round2,
+  startPreview,
+  table,
+  verdict,
+} from './support.mjs';
 
 /** QUALITY-BAR section 3's two numbers, in CSS pixels. */
 const MIN_SIDE = 44;
@@ -418,7 +425,7 @@ async function main() {
           String(entries.length),
           `${round2(worstSide)} (${worstKey})`,
           Number.isFinite(worstClearance) ? `${round2(worstClearance)} (${clearanceKey})` : 'only target',
-          worstSide >= MIN_SIDE - 0.5 && worstClearance >= MIN_CLEARANCE - 0.5 ? 'PASS' : '**FAIL**',
+          verdict(worstSide >= MIN_SIDE - 0.5 && worstClearance >= MIN_CLEARANCE - 0.5),
         ]);
       }
     }
@@ -453,10 +460,10 @@ async function main() {
       [
         ['Targets measured', String(measured), '-', '-'],
         ['Size breaches', String(failures.filter((row) => row[3] === 'size').length), '0',
-          failures.some((row) => row[3] === 'size') ? '**FAIL**' : 'PASS'],
+          verdict(!failures.some((row) => row[3] === 'size'))],
         ['Clearance breaches', String(failures.filter((row) => row[3] === 'clearance').length), '0',
-          failures.some((row) => row[3] === 'clearance') ? '**FAIL**' : 'PASS'],
-        ['Can-see control reported', controlSaw ? 'yes' : 'no', 'yes', controlSaw ? 'PASS' : '**FAIL**'],
+          verdict(!failures.some((row) => row[3] === 'clearance'))],
+        ['Can-see control reported', controlSaw ? 'yes' : 'no', 'yes', verdict(controlSaw)],
       ],
     ),
     '',

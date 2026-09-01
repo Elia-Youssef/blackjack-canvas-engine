@@ -159,6 +159,27 @@ export function verdict(ok) {
 }
 
 /**
+ * Turn measured rows into table rows, pushing a breach for every failing one.
+ *
+ * The same argument `finish` makes one step later: one place decides, so a
+ * report cannot print a row as failed and forget to breach on it, or breach on
+ * a row it printed as passing. Three reports carried this loop and this map
+ * verbatim, which is two more chances for the pair to come apart.
+ *
+ * The breach sentence is byte-identical to the one those copies produced,
+ * because `tests/unit/report-gates.test.ts` pins several breach messages by
+ * substring.
+ */
+export function resultRows(rows, breaches) {
+  for (const [measure, value, threshold, ok] of rows) {
+    if (!ok) {
+      breaches.push(`${measure}: ${value} against ${threshold}`);
+    }
+  }
+  return rows.map(([measure, value, threshold, ok]) => [measure, value, threshold, verdict(ok)]);
+}
+
+/**
  * Write the report and set the exit code from the rows.
  *
  * One place decides, so no script can report a failure and exit zero. The

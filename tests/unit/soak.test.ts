@@ -33,7 +33,7 @@
  * requires, per round and with strict equality, two failures on an insured
  * round and zero on any other, and over the whole soak
  * `droppingStakeViolations === 2 x insuredRounds`, which on the pinned seeds
- * is 3,900 failures across 1,950 insured rounds.
+ * is 3,904 failures across 1,952 insured rounds.
  *
  * **A second three-term reading is kept beside it, because it is the only one
  * that isolates the fourth term.** Dropping `deferredStake` instead leaves
@@ -53,6 +53,20 @@
  * legitimately returns `-0` at a wager of 0, and `-0 === 0` is true where
  * `Object.is(-0, 0)` is not, so the audit never asserts a zero through the
  * runner's identity matcher.
+ *
+ * **The driver issues the whole intent space, including the seams `BJ-20`
+ * added.** For four parts this audit drove a round and nothing else: it never
+ * chose a table, never changed one, never dropped one at a bust-out, never
+ * staged a house rule and never touched Speed, so SPEC 4.11's movement law was
+ * unaudited across every seam that arrived after `BJ-12`. It issues all six
+ * now, and two invariants come with them. The shoe in play must always deal the
+ * deck count the record in force names, which is what a staged shoe size
+ * rebuilding the shoe at the deal is supposed to guarantee; and SPEC 8's
+ * printed journal must equal a list the audit kept for itself off the accepted
+ * results, so a journal that dropped, duplicated or reordered an entry is a
+ * failure rather than the machine agreeing with itself. SPEC 14's own sentence
+ * is measured over every stage: `rulesMovedOffDeal` is zero, including for the
+ * stages the driver issues in the middle of a player turn.
  *
  * **What this file does not claim.** The shuffle's uniformity is `B2`'s
  * measured band in `tests/unit/shoe.test.ts`; the seeded transcripts are
@@ -75,12 +89,14 @@ import type { Card, Rank } from '../../src/core/cards';
 import { handValue } from '../../src/core/hand';
 import type { Rng } from '../../src/core/rng';
 import { createRng } from '../../src/core/rng';
+import type { HouseRules } from '../../src/core/rules';
+import { houseRules } from '../../src/core/rules';
 import type { DeckCount } from '../../src/core/shoe';
 import { CARDS_PER_DECK, DECK_COUNTS, createShoe, cutCardRange } from '../../src/core/shoe';
-import type { IntentResult, TableOptions, TableReadout } from '../../src/core/table';
+import type { IntentResult, Speed, TableOptions, TableReadout } from '../../src/core/table';
 import { createTable } from '../../src/core/table';
 import type { Intent, PhaseKind, Rung } from '../../src/core/types';
-import type { ChipDenomination, Wallet, WalletReadout } from '../../src/core/wallet';
+import type { ChipDenomination, TableId, Wallet, WalletReadout } from '../../src/core/wallet';
 import { NO_WAGER, STARTING_CHIPS, createWallet, tableLimits } from '../../src/core/wallet';
 
 import { scriptedShoe } from './support/stacked-shoe';
@@ -153,6 +169,44 @@ const ROUND_OP_LIMIT = 400;
 /** SPEC 4.10 has nine rungs, and the soak must reach every one. */
 const ALL_RUNGS: readonly Rung[] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
 
+/**
+ * SPEC 8's journal alphabet, written out rather than imported.
+ *
+ * `table.ts`'s `PLAYER_ACTIONS` is deliberately private, and importing it would
+ * be the wrong thing anyway: the point of the journal invariant below is that
+ * the audit keeps its own list of the intents it saw accepted and compares it
+ * against the one the round printed, so a journal that dropped, duplicated or
+ * reordered an entry is a failure rather than an agreement. Two intents that
+ * SPEC 4.5 does not call actions, and which the printed journal must therefore
+ * never carry, are covered by the same comparison: `deal` and `nextHand` are
+ * accepted every round and are absent from this list.
+ */
+const JOURNALLED: readonly Intent['kind'][] = [
+  'takeInsurance',
+  'declineInsurance',
+  'hit',
+  'stand',
+  'double',
+  'split',
+  'surrender',
+];
+
+/** SPEC 6's three table names, for the driver's seat changes. */
+const TABLE_IDS: readonly TableId[] = ['bronze', 'silver', 'gold'];
+
+/**
+ * How rarely a staged record flips the shoe size.
+ *
+ * Applying a deck flip rebuilds the shoe from a fresh child stream, which puts
+ * penetration back to zero, so a session that flipped often would never reach a
+ * cut card and the reshuffle floor below would silently stop measuring
+ * anything. One flip in eighty staged records keeps flips in the hundreds over
+ * fifty thousand rounds while leaving the shoe alone for long enough that the
+ * cut card still surfaces roughly as often as it did before the driver was
+ * widened. The count of both is asserted at the end.
+ */
+const DECK_FLIP_ODDS = 80;
+
 // ---------------------------------------------------------------------------
 // The audited table: every observation checked, every movement explained
 // ---------------------------------------------------------------------------
@@ -180,6 +234,25 @@ interface Tally {
   resets: number;
   reshuffles: number;
   maxHands: number;
+  /** Accepted `chooseTable`, at the start screen. SPEC 6. */
+  chooses: number;
+  /** Accepted `changeTable`, which leaves the betting screen. SPEC 6 and 10. */
+  tableChanges: number;
+  /** Accepted `dropTable` at the bust-out. SPEC 4.12. */
+  drops: number;
+  /** `setRules` calls the driver made. SPEC 14. */
+  stages: number;
+  /** Staged records that became the rules in force, which SPEC 14 puts at the deal. */
+  stagesApplied: number;
+  /** Applied stages that changed the shoe size, so the shoe was rebuilt. */
+  deckFlips: number;
+  /** `setSpeed` calls the driver made. SPEC 5 and 14. */
+  speedChanges: number;
+  /**
+   * Observations at which the rules in force changed anywhere but an accepted
+   * deal. SPEC 14 says the rules never move mid-round, so this must stay zero.
+   */
+  rulesMovedOffDeal: number;
   /** Failures of `chips + committed - deferredStake`: the criterion's control. */
   droppingStakeViolations: number;
   /** Failures of `chips + committed + insuranceStake`: the fourth term isolated. */
@@ -203,6 +276,14 @@ function emptyTally(): Tally {
     resets: 0,
     reshuffles: 0,
     maxHands: 0,
+    chooses: 0,
+    tableChanges: 0,
+    drops: 0,
+    stages: 0,
+    stagesApplied: 0,
+    deckFlips: 0,
+    speedChanges: 0,
+    rulesMovedOffDeal: 0,
     droppingStakeViolations: 0,
     droppingDeferredViolations: 0,
     rungs: new Set<Rung>(),
@@ -213,6 +294,10 @@ interface Audited {
   state(): TableReadout;
   apply(intent: Intent): IntentResult;
   tick(): void;
+  /** SPEC 14's house-rule staging, audited like every other entry point. */
+  stage(next: HouseRules): void;
+  /** SPEC 5's Speed, audited like every other entry point. */
+  setSpeed(next: Speed): void;
   /** Reconcile SPEC 12's round result against everything the audit tracked. */
   closeRound(): void;
   readonly tally: Tally;
@@ -237,6 +322,13 @@ function auditedTable(options: TableOptions, realShoe: boolean): Audited {
   /** The control counters at the last boundary, for the per-round firing law. */
   let stakeViolationsAtClose = 0;
   let deferredViolationsAtClose = 0;
+  /**
+   * SPEC 8's journal as the audit read it: every accepted intent SPEC 4.5 calls
+   * an action, in acceptance order. Compared against the printed list at the
+   * boundary and cleared there, which is where `clearTable` clears the
+   * machine's own.
+   */
+  const journal: string[] = [];
   const tally = emptyTally();
 
   function fail(message: string): never {
@@ -282,6 +374,16 @@ function auditedTable(options: TableOptions, realShoe: boolean): Audited {
     const shoe = after.shoe;
     if (shoe.rebuilds !== 0) {
       fail('SPEC 4.1: the defensive rebuild fired in play');
+    }
+    // SPEC 14 and 4.1: a staged shoe size is applied by rebuilding the shoe at
+    // the deal, so the record in force and the shoe dealing from it can never
+    // disagree. Nothing asserted this before the driver could stage a deck
+    // change, and a rebuild that was skipped or a record that moved without one
+    // would leave the game dealing a different shoe from the one it prints.
+    if (realShoe && shoe.decks !== after.rules.decks) {
+      fail(
+        `the shoe deals ${String(shoe.decks)} decks under ${String(after.rules.decks)}-deck rules`,
+      );
     }
     if (shoe.remaining !== shoe.stacked - shoe.dealt) {
       fail('the shoe readout does not add up');
@@ -360,9 +462,33 @@ function auditedTable(options: TableOptions, realShoe: boolean): Audited {
     audit(before, after, allowed);
     current = after;
     invariants(after);
+    // SPEC 14: the staged record becomes the record in force at an accepted
+    // deal and at no other moment in the machine's life.
+    if (after.rules !== before.rules) {
+      if (result.ok && intent.kind === 'deal') {
+        tally.stagesApplied += 1;
+        if (after.rules.decks !== before.rules.decks) {
+          tally.deckFlips += 1;
+        }
+      } else {
+        tally.rulesMovedOffDeal += 1;
+      }
+    }
 
     if (result.ok) {
       countAction(intent.kind);
+      if (JOURNALLED.includes(intent.kind)) {
+        journal.push(intent.kind);
+      }
+      if (intent.kind === 'chooseTable') {
+        tally.chooses += 1;
+      }
+      if (intent.kind === 'changeTable') {
+        tally.tableChanges += 1;
+      }
+      if (intent.kind === 'dropTable') {
+        tally.drops += 1;
+      }
       if (intent.kind === 'deal') {
         roundBase = after.shoe.dealt;
         // B5's guarantee at every round start: the cards on hand exceed the
@@ -430,6 +556,46 @@ function auditedTable(options: TableOptions, realShoe: boolean): Audited {
     audit(before, after, allowed);
     current = after;
     invariants(after);
+    if (after.rules !== before.rules) {
+      tally.rulesMovedOffDeal += 1;
+    }
+  }
+
+  /**
+   * SPEC 14's staging, audited. A stage moves no money, so its allowance is
+   * zero, and it must not become the record in force here whatever phase the
+   * round is in: the driver stages at the betting screen and, one time in
+   * forty, in the middle of a player turn.
+   */
+  function stage(next: HouseRules): void {
+    const before = current;
+    table.setRules(next);
+    const after = table.readout();
+    audit(before, after, 0);
+    current = after;
+    invariants(after);
+    if (after.rules !== before.rules) {
+      tally.rulesMovedOffDeal += 1;
+      fail('SPEC 14: setRules applied a record instead of staging it');
+    }
+    tally.stages += 1;
+  }
+
+  /**
+   * SPEC 5's Speed, audited. It multiplies a duration at one consumption site
+   * and touches nothing else, so the allowance is zero here too.
+   */
+  function setSpeed(next: Speed): void {
+    const before = current;
+    table.setSpeed(next);
+    const after = table.readout();
+    audit(before, after, 0);
+    current = after;
+    invariants(after);
+    if (after.rules !== before.rules) {
+      tally.rulesMovedOffDeal += 1;
+    }
+    tally.speedChanges += 1;
   }
 
   function closeRound(): void {
@@ -454,6 +620,18 @@ function auditedTable(options: TableOptions, realShoe: boolean): Audited {
     if (result.hands.length !== state.hands.length) {
       fail('SPEC 12 printed a different number of hands than are on the felt');
     }
+    // SPEC 8: "every action taken", in acceptance order. The audit kept its own
+    // list off the accepted results, so a journal that dropped an entry,
+    // recorded a refused intent, duplicated one, reordered them or carried one
+    // over from the round before is a failure here rather than an agreement
+    // between the machine and itself.
+    if (result.actions.join('>') !== journal.join('>')) {
+      fail(
+        `SPEC 8: the printed journal is [${result.actions.join(',')}] and the audit ` +
+          `recorded [${journal.join(',')}]`,
+      );
+    }
+    journal.length = 0;
     for (const hand of result.hands) {
       tally.rungs.add(hand.rung);
     }
@@ -531,7 +709,7 @@ function auditedTable(options: TableOptions, realShoe: boolean): Audited {
     }
   }
 
-  return { state: (): TableReadout => current, apply, tick, closeRound, tally };
+  return { state: (): TableReadout => current, apply, tick, stage, setSpeed, closeRound, tally };
 }
 
 function mustOk(result: IntentResult): void {
@@ -545,14 +723,108 @@ function mustOk(result: IntentResult): void {
 // ---------------------------------------------------------------------------
 
 /**
+ * A complete house-rule record for SPEC 14's staging.
+ *
+ * **`evenMoney` is deliberately never staged off.** SPEC 4.7 makes the
+ * deferred stake reachable on the even-money path alone, and the fourth-term
+ * isolator below needs deferred rounds in the mix or it proves nothing about
+ * the term it exists for. Every other toggle is driven, weighted so that its
+ * default stays the common case and the soak's action counts do not collapse.
+ *
+ * The record is built through `houseRules` rather than by hand, so it is
+ * complete and frozen the way the shipped composition root's is.
+ */
+function stagedRecord(driver: Rng, current: HouseRules): HouseRules {
+  const flip = driver.nextInt(DECK_FLIP_ODDS) === 0;
+  const decks: DeckCount = flip ? (current.decks === 6 ? 8 : 6) : current.decks;
+  return houseRules({
+    decks,
+    doubleAfterSplit: driver.nextInt(4) > 0,
+    surrender: driver.nextInt(4) > 0,
+    evenMoney: true,
+    splitRule: driver.nextInt(4) > 0 ? 'equalValue' : 'equalRank',
+  });
+}
+
+/**
+ * The two settings SPEC 14 lets a player move without leaving the screen.
+ *
+ * Both were entirely absent from the driven path: the soak audited the identity
+ * across every action a round takes and across none of the seams `BJ-20` added.
+ * A stage moves no money and a Speed change moves nothing at all, so both are
+ * audited at an allowance of zero, and the interesting property is what they do
+ * NOT do: `rulesMovedOffDeal` stays at zero over the whole soak.
+ */
+function driveSettings(audited: Audited, driver: Rng): void {
+  if (driver.nextInt(12) === 0) {
+    audited.stage(stagedRecord(driver, audited.state().rules));
+  }
+  if (driver.nextInt(24) === 0) {
+    audited.setSpeed(driver.nextInt(2) === 0 ? 'fast' : 'normal');
+  }
+}
+
+/**
+ * SPEC 6's start screen: pick a seat, then take it.
+ *
+ * `chooseTable` is refused for a table the mark has not unlocked or the balance
+ * cannot afford, and a refusal is a value the audit has already checked, so the
+ * driver picks freely. `start` uses the same predicate on the same state, so it
+ * cannot refuse a seat `chooseTable` just accepted; the fallback below is the
+ * belt for the case where nothing was chosen and the seat was carried in from a
+ * `changeTable`.
+ */
+function startOnce(audited: Audited, driver: Rng): void {
+  if (driver.nextInt(3) === 0) {
+    const pick = TABLE_IDS[driver.nextInt(TABLE_IDS.length)];
+    if (pick !== undefined) {
+      audited.apply({ kind: 'chooseTable', table: pick });
+    }
+  }
+  if (audited.apply({ kind: 'start' }).ok) {
+    return;
+  }
+  mustOk(audited.apply({ kind: 'chooseTable', table: 'bronze' }));
+  mustOk(audited.apply({ kind: 'start' }));
+}
+
+/**
+ * SPEC 4.12's bust-out: drop to a lower table if one is offered, else reset.
+ *
+ * The drop is attempted first and only sometimes, so both arms are driven: a
+ * drop that is refused because no lower table is affordable falls through to
+ * the reset, which SPEC 4.12 makes always available.
+ */
+function bustOutOnce(audited: Audited, driver: Rng): void {
+  if (driver.nextInt(3) === 0) {
+    const pick = TABLE_IDS[driver.nextInt(TABLE_IDS.length)];
+    if (pick !== undefined && audited.apply({ kind: 'dropTable', table: pick }).ok) {
+      return;
+    }
+  }
+  mustOk(audited.apply({ kind: 'resetBankroll' }));
+}
+
+/**
  * One betting decision. Mostly a tap and a deal; sometimes Max, which is what
  * makes an all-in even-money stake, and with it SPEC 4.7's deferral,
  * reachable; sometimes Repeat or Clear, so the whole control set is on the
  * driven path. A refused control is a value, changes nothing, and the audit
  * has already checked exactly that.
+ *
+ * Since `BJ-20` the betting screen also carries Change Table and is the screen
+ * the Settings panel is opened over, so both ride here: a stage and a Speed
+ * change on any betting frame, and a Change Table only with the board clear,
+ * because a pending wager earns it a refusal rather than a silent clear.
  */
 function betOnce(audited: Audited, driver: Rng): void {
+  driveSettings(audited, driver);
   const state = audited.state();
+  if (state.wallet.wager === NO_WAGER && driver.nextInt(40) === 0) {
+    if (audited.apply({ kind: 'changeTable' }).ok) {
+      return;
+    }
+  }
   const roll = driver.nextInt(20);
   if (state.wallet.wager === NO_WAGER) {
     if (roll === 0) {
@@ -574,6 +846,19 @@ function betOnce(audited: Audited, driver: Rng): void {
   }
   if (roll >= 17) {
     audited.apply({ kind: 'tapChip', chip: 10 });
+    return;
+  }
+  // A seat above Bronze has a minimum the ten-chip line does not reach on its
+  // own, and SPEC 4.11 blocks a deal below it rather than raising it, so the
+  // board is built up to the minimum instead. The tap cannot be refused: a
+  // betting screen is only ever entered with `chips >= minimum`, since
+  // `nextHand` sends anything lower to the bust-out, and the chip is never
+  // larger than what is still owed.
+  const minimum = tableLimits(state.table).minimum;
+  if (state.wallet.wager < minimum) {
+    const owed = minimum - state.wallet.wager;
+    const chip: ChipDenomination = owed >= 500 ? 500 : owed >= 100 ? 100 : owed >= 50 ? 50 : 10;
+    mustOk(audited.apply({ kind: 'tapChip', chip }));
     return;
   }
   mustOk(audited.apply({ kind: 'deal' }));
@@ -600,6 +885,13 @@ function answerOffer(audited: Audited, driver: Rng): void {
  * or never stands proves nothing about half the settlement ladder.
  */
 function actOnce(audited: Audited, driver: Rng): void {
+  // SPEC 14 forbids a rule change from taking effect mid-round, so one turn in
+  // forty stages a record in the middle of one. Nothing may move: the stage is
+  // audited at an allowance of zero and `stage` fails outright if the record it
+  // was handed became the record in force.
+  if (driver.nextInt(40) === 0) {
+    audited.stage(stagedRecord(driver, audited.state().rules));
+  }
   const state = audited.state();
   const phase = state.phase;
   if (phase.kind !== 'playerTurn') {
@@ -666,7 +958,7 @@ describe('H6 and B5: the 50,000-round soak', () => {
         }
         switch (state.phase.kind) {
           case 'start':
-            mustOk(audited.apply({ kind: 'start' }));
+            startOnce(audited, driver);
             break;
           case 'betting':
             betOnce(audited, driver);
@@ -684,7 +976,7 @@ describe('H6 and B5: the 50,000-round soak', () => {
             }
             break;
           case 'bustOut':
-            mustOk(audited.apply({ kind: 'resetBankroll' }));
+            bustOutOnce(audited, driver);
             break;
           default:
             audited.tick();
@@ -724,19 +1016,54 @@ describe('H6 and B5: the 50,000-round soak', () => {
       // held at every observation (or the audit would have thrown). The
       // criterion's three-term form fails on any insured round, and its
       // firing law is exact: twice per insured round, at the take and at the
-      // peek settlement, nowhere else. On the pinned seeds that is 3,900
-      // failures across 1,950 insured rounds. The per-round form of the same
+      // peek settlement, nowhere else. On the pinned seeds that is 3,904
+      // failures across 1,952 insured rounds. The per-round form of the same
       // law has already been enforced at every boundary by `closeRound`.
       expect(tally.droppingStakeViolations).toBe(2 * tally.insuredRounds);
 
       // The fourth-term isolator beside it: dropping `deferredStake` instead
       // fails exactly twice per deferred round, at the take and at the
       // release, and agrees with the four-term law everywhere else. On the
-      // pinned seeds that is 10 failures across 5 deferred rounds; without
+      // pinned seeds that is 12 failures across 6 deferred rounds; without
       // deferred rounds in the mix it would prove nothing, so their presence
       // is asserted rather than assumed.
       expect(tally.deferredRounds, `deferred: ${String(tally.deferredRounds)}`).toBeGreaterThan(0);
       expect(tally.droppingDeferredViolations).toBe(2 * tally.deferredRounds);
+
+      // The seams `BJ-20` added, which the driver above now issues and which
+      // this audit had never seen: SPEC 6's seat changes at both screens that
+      // offer one, SPEC 4.12's drop, SPEC 14's house-rule staging including the
+      // shoe rebuild a deck change performs, and SPEC 5's Speed. Floors again,
+      // comfortably below the pinned-seed counts, with the count in the message.
+      expect(tally.chooses, `chooses: ${String(tally.chooses)}`).toBeGreaterThan(100);
+      expect(
+        tally.tableChanges,
+        `table changes: ${String(tally.tableChanges)}`,
+      ).toBeGreaterThan(100);
+      expect(tally.stages, `stages: ${String(tally.stages)}`).toBeGreaterThan(1_000);
+      expect(
+        tally.stagesApplied,
+        `stages applied: ${String(tally.stagesApplied)}`,
+      ).toBeGreaterThan(1_000);
+      expect(tally.deckFlips, `deck flips: ${String(tally.deckFlips)}`).toBeGreaterThan(10);
+      expect(
+        tally.speedChanges,
+        `speed changes: ${String(tally.speedChanges)}`,
+      ).toBeGreaterThan(500);
+      // SPEC 4.12's drop is rare and that is a property of the game rather than
+      // of the driver: a lower table only exists to drop to once the mark has
+      // unlocked a higher one, which needs the balance to have reached 2,500 at
+      // some point, and the bankroll spends most of a soak nowhere near it. Four
+      // on the pinned seeds. What the floor asserts is that the arm was reached
+      // at all, since a `dropTable` that was only ever refused would leave SPEC
+      // 4.12's other half undriven while the count still looked driven.
+      expect(tally.drops, `drops: ${String(tally.drops)}`).toBeGreaterThan(0);
+
+      // SPEC 14's own sentence, measured over every one of those stages: a
+      // staged record becomes the record in force at an accepted deal and at no
+      // other observation, including the stages the driver issues in the middle
+      // of a player turn.
+      expect(tally.rulesMovedOffDeal).toBe(0);
     },
     300_000,
   );

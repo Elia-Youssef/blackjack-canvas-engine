@@ -41,12 +41,13 @@
 import { describe, expect, it } from 'vitest';
 
 import { card } from '../../src/core/cards';
-import type { ActionContext, IntentResult, Table } from '../../src/core/table';
+import type { ActionContext, Table } from '../../src/core/table';
 import { createTable, doubleRefusal } from '../../src/core/table';
 import type { HandInPlay, HandState } from '../../src/core/types';
 import type { TableLimits, Wallet } from '../../src/core/wallet';
 import { createWallet, tableLimits } from '../../src/core/wallet';
 
+import { acceptResult as accept, bounded } from './support/drive';
 import { scriptedShoe } from './support/stacked-shoe';
 
 // ---------------------------------------------------------------------------
@@ -72,30 +73,13 @@ const TICK = 0.25;
 /** Bounded, for the reason `wallet.test.ts` gives: a stall must fail loudly. */
 const LOOP_LIMIT = 500;
 
-function bounded(label: string): () => void {
-  let turns = 0;
-  return () => {
-    turns += 1;
-    if (turns > LOOP_LIMIT) {
-      throw new RangeError(`${label} did not finish inside ${String(LOOP_LIMIT)} turns`);
-    }
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Driving the machine
 // ---------------------------------------------------------------------------
 
-function accept(result: IntentResult): IntentResult {
-  if (!result.ok) {
-    throw new Error(`${result.kind} was refused by ${result.layer} as ${result.reason}`);
-  }
-  return result;
-}
-
 /** Advance timed phases until the player is asked to act, or the round ends. */
 function toPlayerTurn(table: Table): Table {
-  const turn = bounded('driving the machine to the player turn');
+  const turn = bounded('driving the machine to the player turn', LOOP_LIMIT);
   while (!['playerTurn', 'roundResult'].includes(table.readout().phase.kind)) {
     turn();
     const state = table.readout();
@@ -122,7 +106,7 @@ function toPlayerTurn(table: Table): Table {
 
 /** Run the round out to SPEC 12's result, standing on anything still live. */
 function toRoundResult(table: Table): Table {
-  const turn = bounded('driving the machine to the round result');
+  const turn = bounded('driving the machine to the round result', LOOP_LIMIT);
   while (table.readout().phase.kind !== 'roundResult') {
     turn();
     if (table.readout().phase.kind === 'playerTurn') {
@@ -145,7 +129,7 @@ function toRoundResult(table: Table): Table {
 function walletAt(target: number): Wallet {
   const wallet = createWallet();
   const bronze: TableLimits = tableLimits('bronze');
-  const turn = bounded(`draining a wallet to ${String(target)}`);
+  const turn = bounded(`draining a wallet to ${String(target)}`, LOOP_LIMIT);
   while (wallet.readout().chips > target) {
     turn();
     const wager = Math.min(bronze.maximum, wallet.readout().chips - target);

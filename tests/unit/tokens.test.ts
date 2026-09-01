@@ -28,6 +28,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { stripComments as withoutComments } from './support/source-scan';
+
 import {
   BORDER,
   CHIP_DENOMINATIONS,
@@ -44,10 +46,28 @@ import {
   SURFACE,
   duration,
 } from '../../src/render/tokens';
+import {
+  CHIP_DENOMINATIONS as WALLET_CHIP_DENOMINATIONS,
+  WAGER_GRID,
+} from '../../src/core/wallet';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CSS = readFileSync(join(PROJECT_ROOT, 'src', 'ui', 'tokens.css'), 'utf8');
 const CONTRACT = readFileSync(join(PROJECT_ROOT, 'tests', 'reference', 'design-contract.md'), 'utf8');
+
+/**
+ * The wager grid `src/render/chips.ts` refuses against, read out of its source.
+ *
+ * That module is a leaf with no `core/` import by design, so SPEC 4.11's grid
+ * is a literal in its guard. Reading the literal rather than transcribing it
+ * means the agreement assertion below moves with the guard instead of quietly
+ * agreeing with a number nobody edits any more.
+ */
+const CHIPS_GRID_LITERAL = Number(
+  /wager % (\d+) !== 0/.exec(
+    withoutComments(readFileSync(join(PROJECT_ROOT, 'src', 'render', 'chips.ts'), 'utf8')),
+  )?.[1] ?? Number.NaN,
+);
 
 /** The text of one numbered section of a markdown file. */
 function section(markdown: string, heading: string): string {
@@ -250,11 +270,75 @@ describe('E1: the spec is the only source of colour', () => {
     expect(FELT.gold).toBe(SURFACE.feltGold);
   });
 
+  /**
+   * Two tokens, one hex, and three places that rely on it silently.
+   *
+   * `src/render/card.ts:376` fills the whole card in `cardMargin` and says why
+   * in a comment: the face is the same hex by SPEC 16, so the light boundary
+   * against the felt is the whole outline rather than a ring around a separate
+   * fill. `scripts/report/contrast.mjs:358` makes the same substitution without
+   * a comment, which is what puts the G2 audit's two `rank-*-on-face` rows on
+   * `cardMargin`. Nothing read `cardFace` at all, and nothing failed if SPEC 16
+   * ever gave the two different values.
+   *
+   * The assertion is here rather than a second fill in `card.ts`: filling the
+   * face region separately would add a draw and could move antialiased pixels
+   * under the zero-threshold visual baselines, which is a real cost for no
+   * present gain. The day the contract separates them, this goes red at the two
+   * sites that must change instead of the game quietly painting the wrong face
+   * and the audit quietly measuring the wrong pair.
+   */
+  it('keeps the card face and the card margin one hex, which card.ts and the audit both assume', () => {
+    expect(SURFACE.cardFace).toBe(SURFACE.cardMargin);
+    expect(HIGH_CONTRAST_SURFACE.cardFace).toBe(HIGH_CONTRAST_SURFACE.cardMargin);
+    // Both sets, from the spec side rather than from the record, so a table
+    // that separated them would fail here even if the record still agreed.
+    expect(PLAY.get('--card-face')).toBe(PLAY.get('--card-margin'));
+    expect(FORCED.get('--card-face')).toBe(FORCED.get('--card-margin'));
+  });
+
   it('carries the same chips in both forms', () => {
     expect(CHIP_DENOMINATIONS).toEqual([...CHIPS.keys()]);
     for (const [denomination, { fill }] of CHIPS) {
       expect(declared(`--chip-${String(denomination)}-fill`)).toBe(fill);
       expect(CHIP_FILL[denomination as keyof typeof CHIP_FILL]).toBe(fill);
+    }
+  });
+
+  /**
+   * The denomination set is a SPEC 4.11 game rule and is declared twice.
+   *
+   * `src/core/wallet.ts` owns it as the money rule, `src/render/tokens.ts`
+   * re-declares it for the rack layout, and `src/render/chips.ts` decomposes a
+   * player's real wager against the second one. Each copy is pinned separately,
+   * to a different transcription of a different spec section: the render copy to
+   * SPEC 16's scraped chip table above, the wallet copy to a hand-written
+   * transcription of SPEC 4.11 in `tests/unit/wallet.test.ts`. No test file
+   * imported both, the two types are structurally identical so no compile error
+   * can arise at the seam, and `wagerToChips` takes a plain `number`, so nothing
+   * anywhere compared the two answers.
+   *
+   * The cure is this agreement test rather than an import, deliberately, for the
+   * same reason the `tokens.css` / `tokens.ts` duo is never merged:
+   * `src/render/tokens.ts` has no imports at all and is the leaf the shared
+   * engine extraction wants, so making it read `core/` to satisfy a test would
+   * cost more than the test does. What it protects is SPEC 4.11's own standing
+   * warning: do not add a chip denomination without re-deriving everything that
+   * rests on the grid, which is the 3:2 natural, the insurance stake, the 2:1
+   * insurance payout and the surrender return.
+   */
+  it('declares one denomination set, whichever module is asked', () => {
+    expect([...CHIP_DENOMINATIONS]).toEqual([...WALLET_CHIP_DENOMINATIONS]);
+
+    // The grid `render/chips.ts` refuses a wager against is SPEC 4.11's, which
+    // `wallet.ts` owns as `WAGER_GRID`, and it is spelled as a literal 10 there
+    // for the same leaf reason. Both readings are asserted equal, and the
+    // smallest denomination is what makes the grid the grid.
+    expect(WAGER_GRID).toBe(10);
+    expect(Math.min(...WALLET_CHIP_DENOMINATIONS)).toBe(WAGER_GRID);
+    expect(CHIPS_GRID_LITERAL).toBe(WAGER_GRID);
+    for (const denomination of CHIP_DENOMINATIONS) {
+      expect(denomination % WAGER_GRID, `${String(denomination)} is off the grid`).toBe(0);
     }
   });
 
@@ -541,6 +625,53 @@ describe('E1: the numeric scales match QUALITY-BAR section 15', () => {
   });
 });
 
+describe('H4: the timed-phase pin names the row it stands in for', () => {
+  /**
+   * The identity the adopted `H4` cure rested on without asserting it.
+   *
+   * The five timed screens pin `.bj-controls` to the height of the action rows
+   * beside them, so the play-surface backing store stops being reallocated on
+   * the first deal. That height is three things: the notice's own
+   * `min-height: var(--space-5)`, the row's `gap: var(--space-2)`, and a
+   * button's `min-height: var(--target-min)`. It shipped written as
+   * `calc(var(--target-min) + var(--space-6))`, which is the same 76 px only
+   * because `--space-6` happens to equal `--space-5 + --space-2` on the
+   * committed scale. QUALITY-BAR section 15 owns those steps independently and
+   * nothing tied them together, so a move in either would have un-equalised the
+   * pin silently, in a rule whose entire purpose is an equality.
+   *
+   * The declaration now names its three constituents. This is the arithmetic
+   * beside it, kept so the two forms cannot drift apart unnoticed either.
+   */
+  it('adds up to the action-row height, out of the tokens that make that row', () => {
+    const space5 = Number.parseInt(declared('--space-5'), 10);
+    const space2 = Number.parseInt(declared('--space-2'), 10);
+    const space6 = Number.parseInt(declared('--space-6'), 10);
+    const target = Number.parseInt(declared('--target-min'), 10);
+    for (const value of [space5, space2, space6, target]) {
+      expect(Number.isFinite(value)).toBe(true);
+    }
+
+    // The row: notice, gap, one button.
+    expect(space5 + space2 + target).toBe(76);
+    // And the coincidence the old form leaned on, stated rather than relied on.
+    expect(space6, 'the two forms have drifted apart').toBe(space5 + space2);
+    expect(target + space6).toBe(space5 + space2 + target);
+  });
+
+  it('is declared out of those three tokens and no others', () => {
+    const chrome = readFileSync(join(PROJECT_ROOT, 'src', 'ui', 'chrome.css'), 'utf8');
+    const rule = chrome
+      .slice(chrome.indexOf("[data-phase='dealing'] .bj-controls"))
+      .slice(0, 400);
+    expect(rule).toContain('min-height: calc(var(--space-5) + var(--space-2) + var(--target-min));');
+    // The three tokens it stands in for are really the ones those rules use.
+    expect(chrome).toContain('  min-height: var(--space-5);');
+    expect(chrome).toContain('  gap: var(--space-2);');
+    expect(chrome).toContain('  min-height: var(--target-min);');
+  });
+});
+
 describe('E1: no literal value in component code', () => {
   /**
    * Every source file under src/, except the two that ARE the token layer.
@@ -570,11 +701,6 @@ describe('E1: no literal value in component code', () => {
 
     walk(join(PROJECT_ROOT, 'src'));
     return files;
-  }
-
-  /** Comments are prose, and prose is allowed to quote a value. */
-  function withoutComments(text: string): string {
-    return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
   }
 
   it('finds the token layer and excludes exactly it', () => {

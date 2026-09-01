@@ -162,6 +162,28 @@ describe('BJ-22: the felt bakes once per distinct size, not once per screen', ()
     expect(canvases()).toBe(3 + 2);
   });
 
+  it('bakes no grain at all for a flat felt, which cannot draw one', () => {
+    // SPEC 16's forced-colors subsection suppresses the gradient and the grain
+    // under the high-contrast set, so `bakeFelt` skips the whole grain path and
+    // issues zero `drawImage` calls. A pair baked anyway is 4,096 cells of work
+    // no frame can read, and it lands in a `GRAIN_CACHE_LIMIT` of four beside
+    // the pairs the standard set is still using: three tables under forced
+    // colors fill it, and the live pair is evicted by pairs that exist only
+    // because the call site asked for one before the bake could refuse it.
+    const flat = harness();
+    flat.surface.render(scene({ palette: HIGH_CONTRAST_PALETTE }), 0);
+    expect(flat.bakes(), 'the felt did not bake').toBe(1);
+    expect(flat.canvases(), 'a flat felt paid for grain squares').toBe(1);
+
+    // The control: the same frame on the standard set does bake the pair, so
+    // the count above is the flat path answering and not the instrument
+    // failing to see a grain square at all.
+    const textured = harness();
+    textured.surface.render(scene(), 0);
+    expect(textured.bakes()).toBe(1);
+    expect(textured.canvases()).toBe(1 + 2);
+  });
+
   it('still rebakes for every spec change `needsRebake` reports', () => {
     // The cache is not a licence to serve a stale table. Each of these is a
     // field `needsRebake` compares, and each has to cost a bake.
@@ -232,6 +254,37 @@ describe('BJ-22: the felt bakes once per distinct size, not once per screen', ()
     // And the layer is showing the bake this frame chose, not a held one.
     expect(showing()).not.toBeNull();
     expect(surface.feltSpec().width).toBe(800);
+  });
+
+  /**
+   * The spec handed out by `feltSpec()` is the cache's own key.
+   *
+   * `needsRebake(entry.spec, wanted)` decides whether the next frame pays for a
+   * bake, and `feltSpec()` returns that very object, so before it was frozen a
+   * four-byte edit from outside made the cache miss on every subsequent frame
+   * and pay a bake the `BJ-22` measurement put at 176 ms, against item `H4`'s
+   * 50 ms ceiling. Nothing in the shipped page calls `feltSpec()` at all, which
+   * is why this was armour rather than a live defect; the interface invites the
+   * call, so the armour is the pin.
+   */
+  it('hands out a frozen spec, so nothing outside can poison the cache with it', () => {
+    const { surface, bakes } = harness();
+    surface.render(scene(), 1 / 60);
+    expect(bakes()).toBe(1);
+
+    const spec = surface.feltSpec();
+    expect(Object.isFrozen(spec)).toBe(true);
+    // The attack, which the freeze turns into a no-op in loose mode and a throw
+    // in the strict mode this file runs under. Either way the width is intact.
+    expect(() => {
+      (spec as { width: number }).width = 12_345;
+    }).toThrow(TypeError);
+    expect(surface.feltSpec().width).toBe(BETTING.width);
+
+    // The regression itself: an identical second frame still hits the cache.
+    surface.render(scene(), 1 / 60);
+    surface.render(scene(), 1 / 60);
+    expect(bakes(), 'an identical frame paid for a bake').toBe(1);
   });
 
   it('reads the cache through `needsRebake` and not a second copy of the rule', () => {

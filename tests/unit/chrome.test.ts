@@ -54,6 +54,13 @@ import {
  * `BJ-21` widened it by two. The machine still answers `table-locked` for both
  * of SPEC 6's entry conditions; the start screen derives which one failed and
  * says so, and those two sentences are graded here beside the seventeen.
+ *
+ * AUDIT-1 widened it by one more, on the same precedent: `above-ceiling` also
+ * carries two player meanings, a chip whose denomination this table has no use
+ * for and a tap that would carry the wager past the ceiling, and the betting
+ * bar used to hold the first of them as a private literal while the mirror
+ * spoke the second. `chip-over-ceiling` is the display-only split. No machine
+ * refusal kind moved for either.
  */
 const REASON_COVERAGE: Readonly<Record<DisplayReason, true>> = {
   'wrong-phase': true,
@@ -75,15 +82,16 @@ const REASON_COVERAGE: Readonly<Record<DisplayReason, true>> = {
   'insufficient-chips': true,
   'table-not-unlocked': true,
   'table-unaffordable': true,
+  'chip-over-ceiling': true,
 };
 
 const EVERY_REASON = Object.keys(REASON_COVERAGE) as DisplayReason[];
 
 describe('B15 armour: every refusal has a sentence, and no two share one', () => {
-  it('covers all seventeen reasons of the three layers, and the chooser two', () => {
+  it('covers all seventeen reasons of the three layers, and the three display splits', () => {
     // The count is the union's, and it is stated so that a reason quietly
     // removed from `DisplayReason` is as visible as one quietly added.
-    expect(EVERY_REASON).toHaveLength(19);
+    expect(EVERY_REASON).toHaveLength(20);
   });
 
   it('answers every reason with a non-empty sentence', () => {
@@ -108,6 +116,18 @@ describe('B15 armour: every refusal has a sentence, and no two share one', () =>
     expect(reasonText('above-ceiling')).not.toBe(reasonText('below-minimum'));
     expect(reasonText('above-ceiling')).toMatch(/maximum|balance/i);
     expect(reasonText('below-minimum')).toMatch(/minimum/i);
+  });
+
+  it('splits the greyed chip from the refused tap, which are two facts', () => {
+    // SPEC 4.11's other doubled word, and `src/ui/components/betting.ts`'s own
+    // header distinguishes them: a 500 at Bronze is a denomination this table
+    // has no use for, whatever is on the board, while a 50 that would carry a
+    // 90 wager past a 100 ceiling is a tap. One sentence for both told a
+    // screen-reader user the greyed chip was over the ceiling because of the
+    // wager it would build, which is not why it is greyed.
+    expect(reasonText('chip-over-ceiling')).not.toBe(reasonText('above-ceiling'));
+    expect(reasonText('chip-over-ceiling')).toMatch(/chip/i);
+    expect(reasonText('chip-over-ceiling')).toMatch(/maximum|balance/i);
   });
 
   it('splits the chooser refusal by which of SPEC 6 two conditions failed', () => {
@@ -261,6 +281,10 @@ describe('a hand is laid out centred, and grows without moving off centre', () =
 
   it('overlaps the cards by the geometry step and no more', () => {
     const laid = handLayout(four, 400, 100, naturalFan(100, 4), 4);
+    // The population first, as the neighbouring test does: every assertion here
+    // is inside the loop, so a `handLayout` that returned nothing would run the
+    // body zero times and report a green test that graded no card at all.
+    expect(laid).toHaveLength(four.length);
     const step = 100 * SCENE_GEOMETRY.cardStep;
     for (let index = 1; index < laid.length; index += 1) {
       expect((laid[index]?.x ?? 0) - (laid[index - 1]?.x ?? 0)).toBeCloseTo(step, 6);

@@ -18,6 +18,7 @@ import { describe, expect, it } from 'vitest';
 import { DEFAULT_RULES, type HouseRules } from '../../src/core/rules';
 import { createRng } from '../../src/core/rng';
 import { createTable } from '../../src/core/table';
+import { STARTING_CHIPS } from '../../src/core/wallet';
 import { DEFAULT_DECKS, createShoe } from '../../src/core/shoe';
 import type { Card } from '../../src/core/cards';
 
@@ -58,9 +59,112 @@ describe('SPEC 14: a staged rule record waits for the next round', () => {
     const next: HouseRules = { ...DEFAULT_RULES, surrender: false };
     table.setRules(next);
 
-    expect(table.stagedRules(), 'the stage is held, not applied').toBe(next);
+    // Equality and not identity: the setter normalises through `houseRules`,
+    // which copies and freezes. The test above is where that is pinned.
+    expect(table.stagedRules(), 'the stage is held, not applied').toEqual(next);
     expect(table.readout().rules, 'the rules in force did not move').toBe(before);
     expect(table.readout().rules.surrender, 'surrender is still on in force').toBe(true);
+  });
+
+  it('holds a copy of the record, frozen, and never the caller\'s own object', () => {
+    // `TableReadout`'s own header promises "a snapshot rather than a view" with
+    // "every array copied on the way out and every object frozen", and the
+    // construction path keeps that promise: `createTable` runs `houseRules`
+    // over its options. The setter did neither, so the machine played out of an
+    // object the caller still owned.
+    const table = createTable({ seed: 7 });
+    table.apply({ kind: 'start' });
+
+    const mine: HouseRules = { ...DEFAULT_RULES, surrender: true };
+    table.setRules(mine);
+    const staged = table.stagedRules();
+    expect(staged, 'the stage is held, not applied').toEqual(mine);
+    expect(staged, 'the machine kept the caller\'s own object').not.toBe(mine);
+    expect(Object.isFrozen(staged), 'the staged record is not frozen').toBe(true);
+  });
+
+  it('is not changed mid-round by an edit to the record that was staged', () => {
+    // The attack the copy exists to stop, driven rather than argued: SPEC 14
+    // forbids a rule change mid-round, and by-reference staging made one an
+    // assignment away. The record is mutated after the deal accepted it, so
+    // what is being asserted is the rules IN FORCE during a live round.
+    const table = createTable({ seed: 7 });
+    table.apply({ kind: 'start' });
+
+    // Deliberately not a `HouseRules`-typed const: the hole is a runtime one,
+    // and a caller who kept a mutable reference is what reaches it.
+    const mine = { ...DEFAULT_RULES, surrender: true };
+    table.setRules(mine);
+    table.apply({ kind: 'tapChip', chip: 50 });
+    expect(table.apply({ kind: 'deal' }).ok).toBe(true);
+    expect(table.readout().rules.surrender, 'the round opened with surrender on').toBe(true);
+
+    mine.surrender = false;
+    expect(
+      table.readout().rules.surrender,
+      'a caller edited the rules in force in the middle of a round',
+    ).toBe(true);
+    // And the control the construction path has always passed, beside it.
+    const options = { ...DEFAULT_RULES, surrender: true };
+    const built = createTable({ seed: 7, rules: options });
+    options.surrender = false;
+    expect(built.readout().rules.surrender).toBe(true);
+  });
+
+  it('refuses an out-of-range deck count at the stage, where the caller can see it', () => {
+    // **The wedge this cure closes, driven.** `setRules` performed no
+    // validation and `applyStagedRules` runs from the `deal` arm *after*
+    // `wallet.commitInitial` has already spent the wager, so a record whose
+    // `decks` defeated the type threw out of `apply` with the money gone, no
+    // hand on the table and the machine back at `betting`. Every later Deal
+    // then threw again, out of the frame loop and into the error boundary, and
+    // `table.ts`'s own header calls those wallet throws "unreachable from any
+    // player action in any phase" while `phase-legality.test.ts` has a whole
+    // describe block titled after the same claim. Both held only while the
+    // staged record was a valid `HouseRules`, and nothing enforced that.
+    //
+    // The refusal is loud and it is early: `assertDeckCount` is `shoe.ts`'s
+    // own, so there is one SPEC 4.1 sentence and not a second spelling of it,
+    // and it runs before anything is staged.
+    const table = createTable({ seed: 7 });
+    table.apply({ kind: 'start' });
+    const before = table.readout();
+    expect(before.phase.kind).toBe('betting');
+
+    // Deliberately cast: the hole is a runtime one, reached by a record that
+    // defeats the type. `overlays.ts` offers only `DECK_COUNTS` and
+    // `storage/document.ts` sanitises through `numberChoice`, so this is not
+    // reachable from the shipped product, which is why it is a guard rather
+    // than a screen.
+    const bad = { ...DEFAULT_RULES, decks: 3 } as unknown as HouseRules;
+    expect(() => {
+      table.setRules(bad);
+    }).toThrow(/6 or 8 decks/);
+
+    // Nothing was staged, and nothing was spent: the throw lands before the
+    // stage, and three phases before the wallet is asked for anything.
+    expect(table.stagedRules(), 'the refused record was staged anyway').toBeNull();
+    const after = table.readout();
+    expect(after.phase.kind).toBe('betting');
+    expect(after.wallet.chips, 'the wallet spent on a record that never applied').toBe(
+      STARTING_CHIPS,
+    );
+    expect(after.wallet.committed).toBe(0);
+    expect(after.wallet.wager).toBe(0);
+    expect(after.rules).toEqual(before.rules);
+
+    // And the next round plays normally, which is the half the old shape could
+    // not do: under it the wager was gone, `hands` was empty, and a second Deal
+    // threw `the round already has hands`.
+    table.apply({ kind: 'tapChip', chip: 50 });
+    expect(table.apply({ kind: 'deal' }).ok).toBe(true);
+    expect(table.readout().phase.kind).toBe('dealing');
+    expect(table.readout().wallet.chips).toBe(STARTING_CHIPS - 50);
+    expect(table.readout().wallet.committed).toBe(50);
+    // A legal stage still lands, so the guard refuses one record rather than
+    // the setter.
+    table.setRules({ ...DEFAULT_RULES, surrender: false });
+    expect(table.stagedRules()?.surrender).toBe(false);
   });
 
   it('applies at the deal, and a refused deal does not apply it', () => {

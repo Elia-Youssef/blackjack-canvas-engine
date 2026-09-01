@@ -31,6 +31,7 @@ import { expect, test, type Locator, type Page } from '@playwright/test';
 
 import { OVERLAY_IDS } from '../../src/ui/state';
 import { READOUT_KEYS } from '../../src/ui/components/readouts';
+import { readoutTexts } from './support/flow';
 import {
   atBetting,
   atShippedBetting,
@@ -77,15 +78,6 @@ function intersects(a: Box, b: Box): boolean {
 
 function overlayHost(page: Page): Locator {
   return page.locator('[data-overlay-host="true"]');
-}
-
-/** Every readout of SPEC 11, as the page renders it right now. */
-async function readoutTexts(page: Page): Promise<Record<string, string>> {
-  const values: Record<string, string> = {};
-  for (const key of READOUT_KEYS) {
-    values[key] = (await readoutValue(page, key).textContent()) ?? '';
-  }
-  return values;
 }
 
 /**

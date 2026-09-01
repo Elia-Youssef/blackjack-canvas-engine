@@ -78,10 +78,11 @@ import {
 } from '../../src/core/statistics';
 import type { Table, TableReadout } from '../../src/core/table';
 import { createTable } from '../../src/core/table';
-import type { HandInPlay, Intent, SettledHand } from '../../src/core/types';
+import type { HandInPlay, SettledHand } from '../../src/core/types';
 import type { TableId, WalletReadout } from '../../src/core/wallet';
 import { LOWEST_TABLE, STARTING_CHIPS, TABLES, tableLimits } from '../../src/core/wallet';
 
+import { acceptIntent as accept, bounded } from './support/drive';
 import { scriptedShoe } from './support/stacked-shoe';
 
 // ---------------------------------------------------------------------------
@@ -135,16 +136,6 @@ const ROUND_WAGER = 10;
 const TICK = 0.25;
 
 const LOOP_LIMIT = 2000;
-
-function bounded(label: string): () => void {
-  let turns = 0;
-  return () => {
-    turns += 1;
-    if (turns > LOOP_LIMIT) {
-      throw new RangeError(`${label} did not finish inside ${String(LOOP_LIMIT)} turns`);
-    }
-  };
-}
 
 // ---------------------------------------------------------------------------
 // A round, built rather than dealt
@@ -347,13 +338,6 @@ function coachAt(decisions: number, matched: number): CoachRecord {
 // Driving the real machine, for the rounds that are about cards
 // ---------------------------------------------------------------------------
 
-function accept(table: Table, intent: Intent): void {
-  const result = table.apply(intent);
-  if (!result.ok) {
-    throw new Error(`${result.kind} was refused by ${result.layer} as ${result.reason}`);
-  }
-}
-
 type Policy = (table: Table) => void;
 
 const stand: Policy = (table) => {
@@ -370,7 +354,7 @@ const splitThenStand: Policy = (table) => {
 
 /** Drive one round of a written-down script to SPEC 12's result. */
 function playRound(table: Table, policy: Policy = stand): TableReadout {
-  const turn = bounded('driving one round to SPEC 12 result');
+  const turn = bounded('driving one round to SPEC 12 result', LOOP_LIMIT);
   for (;;) {
     const state = table.readout();
     if (state.phase.kind === 'roundResult') {
@@ -885,7 +869,7 @@ describe('J6: SPEC 9 milestones', () => {
     it('survives a real bust-out and free reset without awarding', () => {
       const table = createTable({ seed: 2 });
       let stats: Statistics = NO_STATISTICS;
-      const turn = bounded('draining the bankroll to SPEC 10 bust-out');
+      const turn = bounded('draining the bankroll to SPEC 10 bust-out', LOOP_LIMIT);
       while (table.readout().phase.kind !== 'bustOut') {
         turn();
         const state = table.readout();
@@ -1138,6 +1122,28 @@ describe('J6: SPEC 9 milestones', () => {
         hands: Object.freeze(readout.hands.slice(0, 1)),
       });
       expect(() => observeRound(NO_STATISTICS, short, NO_DECISIONS)).toThrow(/settled hands/);
+    });
+
+    /**
+     * The per-index guard under the count check, and it is a twin: the same
+     * three lines sit in `history.ts`'s `record`, where
+     * `tests/unit/hand-history.test.ts` pins the other copy with the same
+     * construction. Neither is reachable through the machine, because
+     * `readout()` builds `hands` with a `map` and a map is always dense, so a
+     * hand-built readout carrying a hole is the only way in and both modules
+     * refuse it rather than counting a hand that is not on the felt.
+     */
+    it('refuses a result whose hand count agrees but whose hands carry a hole', () => {
+      const readout = roundOf({ rounds: 1, hands: [WIN] });
+      expect(readout.hands).toHaveLength(1);
+      expect(readout.hands.every((hand) => hand !== undefined)).toBe(true);
+      const holed: TableReadout = Object.freeze({
+        ...readout,
+        hands: Object.freeze(Array.from({ length: 1 })) as readonly HandInPlay[],
+      });
+      expect(() => observeRound(NO_STATISTICS, holed, NO_DECISIONS)).toThrow(
+        /settled but is not on the felt/,
+      );
     });
   });
 });

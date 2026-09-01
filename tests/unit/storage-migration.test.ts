@@ -421,7 +421,7 @@ describe('I1: one namespaced versioned document, migrated on bump', () => {
         expect(loaded.document.bestBalance).toBe(STARTING_CHIPS);
 
         const persistence = createPersistence(probeStore(() => null));
-        expect(reachesBetting(persistence.session())).toBe(true);
+        expect(reachesBetting(persistence.restored())).toBe(true);
       }
     });
 

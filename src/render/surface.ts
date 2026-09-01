@@ -94,7 +94,7 @@ export const SURFACE_SIZES = [100, 125, 150, 200] as const satisfies readonly Su
 export const DEFAULT_SURFACE_SIZE: SurfaceSize = 100;
 
 /** What a `SurfaceSize` is a percentage of, so the conversion is written once. */
-export const SURFACE_SIZE_WHOLE = 100;
+const SURFACE_SIZE_WHOLE = 100;
 
 /** A `SurfaceSize` as the multiplier it applies to the logical-to-CSS scale. */
 export function surfaceSizeFactor(size: SurfaceSize): number {

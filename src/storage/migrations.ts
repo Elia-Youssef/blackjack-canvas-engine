@@ -35,7 +35,7 @@
 
 import type { RepairReason } from './document';
 import { DOCUMENT_VERSION, MIN_DOCUMENT_VERSION } from './document';
-import { errorName } from './store';
+import { errorName, isRecord } from './store';
 
 /**
  * A stored document, as any version of this game can read it.
@@ -105,11 +105,6 @@ export type EnvelopeResult =
 /** Whether a stored number can be a schema version at all. */
 function isVersion(value: unknown): value is number {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= MIN_DOCUMENT_VERSION;
-}
-
-/** An object with readable fields, which is the only shape an envelope has. */
-function isRecord(value: unknown): value is Readonly<Record<string, unknown>> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 /**

@@ -70,13 +70,19 @@ class Round {
 
   private observe(): void {
     const readout = this.table.readout();
+    // The composition root's own shape: `observeRound` answers what the round
+    // awarded and the frame carries that list, rather than the frame carrying
+    // the whole record for the derivation to difference.
+    let awarded: readonly MilestoneId[] = [];
     if (readout.phase.kind === 'roundResult' && readout.rounds > this.statistics.rounds) {
-      this.statistics = observeRound(this.statistics, readout, NO_DECISIONS).statistics;
+      const observation = observeRound(this.statistics, readout, NO_DECISIONS);
+      this.statistics = observation.statistics;
+      awarded = observation.awarded;
     }
     const frame: CueFrame = {
       applied: this.appliedIntent,
       readout,
-      milestones: this.statistics.milestones,
+      awarded,
     };
     const fired = cuesFor(this.previous, frame);
     this.cues.push(...fired);

@@ -104,6 +104,18 @@ test.describe('B15: a chip whose denomination alone exceeds the ceiling', () => 
     await expect(chip(page, 100)).toBeEnabled();
     await expect(chip(page, 50)).toBeEnabled();
     await expect(chip(page, 10)).toBeEnabled();
+
+    // And it says why, in the sentence for the state it is actually in. SPEC
+    // 4.11 gives the ceiling two player meanings, a denomination this table
+    // has no use for and a tap that would carry the wager past the ceiling,
+    // and the greyed chip is the first. `src/ui/dom.ts` requires the control,
+    // the mirror and the announcement to speak one sentence, so the accessible
+    // name below and the mirror's own greyed list read the same words.
+    await expect(chip(page, 500)).toHaveAttribute(
+      'aria-label',
+      '500. This chip is more than the table maximum or your balance allows.',
+    );
+    await expect(chip(page, 100)).not.toHaveAttribute('aria-label', /.*/);
   });
 
   test('renders enabled at Gold, where the balance is the lower half', async ({ page }) => {

@@ -26,11 +26,10 @@
 
 import { expect, test, type Page } from '@playwright/test';
 
+import { STORAGE_KEY } from '../../src/storage/document';
+
 import { chip, control, settle, shell, waitForPhase } from './support/game';
 import { pressOn } from './support/game';
-
-/** The one key this game ever touches, as `document.ts` spells it. */
-const STORAGE_KEY = 'js-games.blackjack';
 
 /** The stored document's seen flag, read from inside the page. */
 async function seenFlag(page: Page): Promise<boolean | null> {

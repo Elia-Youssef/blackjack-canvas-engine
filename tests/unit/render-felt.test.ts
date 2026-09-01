@@ -87,7 +87,7 @@ describe('E5: the printed lines', () => {
 
   it('bakes all four lines onto the felt in the print ink', () => {
     const { canvas, recording } = createStyleFreeCanvas();
-    bakeFelt(canvas, spec(), tiles());
+    bakeFelt(canvas, spec(), () => tiles());
 
     const texts = recording.calls('fillText');
     expect(texts.map((call) => call.args[0])).toEqual([
@@ -118,7 +118,7 @@ describe('E5: the table itself', () => {
   it('grounds the felt in the named table\'s own colour', () => {
     for (const felt of ['bronze', 'silver', 'gold'] as const) {
       const { canvas, recording } = createStyleFreeCanvas();
-      bakeFelt(canvas, spec({ felt }), tiles(felt));
+      bakeFelt(canvas, spec({ felt }), () => tiles(felt));
       const firstFill = recording.indexOfCall('fill');
       expect(firstFill).toBeGreaterThan(-1);
       expect(recording.valueBefore(firstFill, 'fillStyle'), felt).toBe(FELT[felt]);
@@ -131,7 +131,7 @@ describe('E5: the table itself', () => {
     // would be under a logical pixel, so the floor is what keeps the
     // boundary real.
     const { canvas, recording } = createStyleFreeCanvas();
-    bakeFelt(canvas, spec(), tiles());
+    bakeFelt(canvas, spec(), () => tiles());
 
     const railStrokes = recording.calls('stroke').filter((call) => {
       const index = recording.entries.indexOf(call);
@@ -147,7 +147,7 @@ describe('E5: the table itself', () => {
 
   it('rules the insurance band with two divider lines in the print ink', () => {
     const { canvas, recording } = createStyleFreeCanvas();
-    bakeFelt(canvas, spec(), tiles());
+    bakeFelt(canvas, spec(), () => tiles());
 
     const bandStrokes = recording.calls('stroke').filter((call) => {
       const index = recording.entries.indexOf(call);
@@ -165,7 +165,7 @@ describe('E5: the table itself', () => {
     // composited over itself, so the vignette's every stop and the grain's
     // fill are the one committed colour.
     const { canvas, recording } = createStyleFreeCanvas();
-    bakeFelt(canvas, spec(), tiles());
+    bakeFelt(canvas, spec(), () => tiles());
 
     const gradients = recording.calls('createRadialGradient');
     expect(gradients).toHaveLength(1);
@@ -250,8 +250,8 @@ describe('E5: the table itself', () => {
     // that was made for something else. It is an error rather than a silently
     // wrong texture.
     const { canvas } = createStyleFreeCanvas();
-    expect(() => bakeFelt(canvas, spec(), tiles('gold'))).toThrow(/another colour/);
-    expect(() => bakeFelt(canvas, spec(), tiles('bronze', 2))).toThrow(/backing-store scale/);
+    expect(() => bakeFelt(canvas, spec(), () => tiles('gold'))).toThrow(/another colour/);
+    expect(() => bakeFelt(canvas, spec(), () => tiles('bronze', 2))).toThrow(/backing-store scale/);
     expect(sameGrain({ felt: FELT.bronze, dpr: 1 }, { felt: FELT.bronze, dpr: 1 })).toBe(true);
     expect(sameGrain({ felt: FELT.bronze, dpr: 1 }, { felt: FELT.gold, dpr: 1 })).toBe(false);
     expect(sameGrain({ felt: FELT.bronze, dpr: 1 }, { felt: FELT.bronze, dpr: 2 })).toBe(false);
@@ -266,9 +266,9 @@ describe('E5: the table itself', () => {
     // own determinism is the test below.
     const pair = tiles();
     const first = createStyleFreeCanvas();
-    bakeFelt(first.canvas, spec(), pair);
+    bakeFelt(first.canvas, spec(), () => pair);
     const second = createStyleFreeCanvas();
-    bakeFelt(second.canvas, spec(), pair);
+    bakeFelt(second.canvas, spec(), () => pair);
 
     expect(first.recording.entries.length).toBeGreaterThan(50);
     expect(first.recording.entries).toEqual(second.recording.entries);
@@ -276,7 +276,7 @@ describe('E5: the table itself', () => {
     // And a different table bakes different instructions, so the equality
     // above is not an artefact of a recorder that sees nothing.
     const gold = createStyleFreeCanvas();
-    bakeFelt(gold.canvas, spec({ felt: 'gold' }), tiles('gold'));
+    bakeFelt(gold.canvas, spec({ felt: 'gold' }), () => tiles('gold'));
     expect(gold.recording.entries).not.toEqual(second.recording.entries);
   });
 
@@ -315,7 +315,7 @@ describe('E5: the frame path is a blit', () => {
     // QUALITY-BAR 1: the felt, its grain and its printed rules render once
     // into an offscreen canvas; nothing procedural is regenerated per frame.
     const { canvas } = createStyleFreeCanvas();
-    const layer = bakeFelt(canvas, spec(), tiles());
+    const layer = bakeFelt(canvas, spec(), () => tiles());
 
     const frame = createRecordingContext();
     layer.drawShapes(frame.ctx);

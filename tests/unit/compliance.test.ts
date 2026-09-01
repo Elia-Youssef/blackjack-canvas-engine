@@ -46,6 +46,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { stripComments } from './support/source-scan';
+
 import { INTENT_KINDS } from '../../src/core/table';
 import { STARTING_CHIPS, createWallet, tableLimits } from '../../src/core/wallet';
 
@@ -81,10 +83,7 @@ function shippedSources(): readonly SourceFile[] {
 
 /** Source with its comments removed, so a scan reads code and not prose. */
 function code(text: string): string {
-  return text
-    .replace(/\/\*[\s\S]*?\*\//g, ' ')
-    .replace(/(^|[^:])\/\/.*$/gm, '$1')
-    .replace(/<!--[\s\S]*?-->/g, ' ');
+  return stripComments(text, { html: true });
 }
 
 function hits(text: string, pattern: RegExp): readonly string[] {

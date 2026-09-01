@@ -17,6 +17,10 @@
  * coin disagrees with something it does not share.
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -194,5 +198,50 @@ describe('E4: the drawing', () => {
     const text = createRecordingContext();
     drawChipStackText(text.ctx, { ...stack, chips: [] });
     expect(text.entries).toHaveLength(0);
+  });
+});
+
+/**
+ * The chip layer is total over the 10-grid and over nothing else, and the game
+ * holds one money quantity off it: SPEC 4.7's side wager is `wager / 2`, so
+ * Bronze's minimum stake is 5. Feeding that to `wagerToChips` throws, and inside
+ * a frame the throw reaches the `BJ-21` error boundary and takes the page to the
+ * recovery panel, so the separation between "a wager, which is drawn as chips"
+ * and "a stake, which is written as text" is load-bearing and is held today only
+ * by which two values the two call sites happen to pass.
+ *
+ * The census is the standing form of that sentence, in the shape
+ * `tests/unit/locale.test.ts` and `input-surface.test.ts` already use: the
+ * scanner is proved against a planted third caller first, so a scan that had
+ * stopped seeing anything cannot report clean forever.
+ */
+describe('E4 armour: only a wager reaches the chip layer', () => {
+  const SCENE = readFileSync(
+    join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'render', 'scene.ts'),
+    'utf8',
+  );
+
+  /** Every value passed as the second argument of a `stacked(...)` call. */
+  function stackedWagers(source: string): readonly string[] {
+    const found: string[] = [];
+    for (const match of source.matchAll(/\bstacked\(\s*(?:'[^']*'|[A-Za-z_$][\w$]*)\s*,\s*([^,]+),/g)) {
+      found.push((match[1] ?? '').trim());
+    }
+    return found;
+  }
+
+  it('sees a planted third caller, so a clean scan means something', () => {
+    const planted = "      stacked('side', offer.stake, spot, rack, stacks, flying);";
+    expect(stackedWagers(planted)).toEqual(['offer.stake']);
+  });
+
+  it('finds exactly the hand wager and the pending wager, and nothing else', () => {
+    expect(stackedWagers(SCENE)).toEqual(['hand.wager', 'state.pendingWager']);
+  });
+
+  it('throws on the off-grid stake rather than drawing it, which is why', () => {
+    // SPEC 4.7 on Bronze's minimum: 10 / 2.
+    expect(() => wagerToChips(5)).toThrow(/multiple of 10/);
+    expect(wagerToChips(10)).toEqual([10]);
   });
 });

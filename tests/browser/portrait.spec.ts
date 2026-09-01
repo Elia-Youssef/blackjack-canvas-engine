@@ -41,7 +41,9 @@
  * injected. Everything this item claims is reachable on a Bronze table.
  */
 
-import { expect, test, type Page } from '@playwright/test';
+import { expect, test } from '@playwright/test';
+
+import { readoutTexts } from './support/flow';
 
 import { SURFACE_FRAMING } from '../../src/ui/breakpoints';
 import { READOUT_KEYS, PRIMARY_READOUT_KEYS } from '../../src/ui/components/readouts';
@@ -68,15 +70,6 @@ const WAGER = 50;
 /** Every readout the page is showing right now, by key. */
 function visibleReadouts(report: LayoutReport): string[] {
   return report.readouts.filter((entry) => entry.visible).map((entry) => entry.key);
-}
-
-/** Read all fourteen readouts as text, whatever bar or panel they are on. */
-async function readoutTexts(page: Page): Promise<Record<string, string>> {
-  const values: Record<string, string> = {};
-  for (const key of READOUT_KEYS) {
-    values[key] = (await readoutValue(page, key).textContent()) ?? '';
-  }
-  return values;
 }
 
 test.describe('F3: portrait is a re-arrangement, not a scale', () => {

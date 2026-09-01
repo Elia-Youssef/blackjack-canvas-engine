@@ -36,7 +36,7 @@ import { describe, expect, it } from 'vitest';
 
 import { RANKS, type Rank } from '../../src/core/cards';
 import type { MilestoneId } from '../../src/core/statistics';
-import { TIMINGS, createTable, type IntentResult, type Table } from '../../src/core/table';
+import { TIMINGS, createTable, type Table } from '../../src/core/table';
 import type { Intent } from '../../src/core/types';
 import { createWallet, type Wallet } from '../../src/core/wallet';
 import {
@@ -49,6 +49,7 @@ import {
 } from '../../src/ui/announce';
 import type { Notice } from '../../src/ui/state';
 
+import { acceptResult as accept, bounded } from './support/drive';
 import { scriptedShoe } from './support/stacked-shoe';
 
 /** QUALITY-BAR section 4's floor, written out rather than only imported. */
@@ -263,23 +264,6 @@ describe('G4 armour: the queue obeys QUALITY-BAR section 4 and the checker can r
 // The deltas, against a real machine
 // ---------------------------------------------------------------------------
 
-function bounded(label: string): () => void {
-  let turns = 0;
-  return () => {
-    turns += 1;
-    if (turns > LOOP_LIMIT) {
-      throw new RangeError(`${label} did not finish inside ${String(LOOP_LIMIT)} turns`);
-    }
-  };
-}
-
-function accept(result: IntentResult): IntentResult {
-  if (!result.ok) {
-    throw new Error(`${result.kind} was refused by ${result.layer} as ${result.reason}`);
-  }
-  return result;
-}
-
 /** Everything one drive announced, with the readouts it announced them from. */
 interface Session {
   readonly table: Table;
@@ -297,11 +281,11 @@ interface Session {
  * assertions below assertions about the shipped derivation rather than about a
  * copy of it.
  */
-function session(table: Table, notice: Notice | null = null, milestones: readonly MilestoneId[] = []): Session {
+function session(table: Table, notice: Notice | null = null, awarded: readonly MilestoneId[] = []): Session {
   const said: Announcement[] = [];
   const record: Session = { table, said, frame: null };
   const observe = (): void => {
-    const next: AnnounceFrame = { readout: table.readout(), context: { notice, milestones, muted: false } };
+    const next: AnnounceFrame = { readout: table.readout(), context: { notice, awarded, muted: false } };
     said.push(...announcementsFor(record.frame, next));
     record.frame = next;
   };
@@ -322,7 +306,7 @@ type Driven = Session & { step(dt: number): void; apply(intent: Intent): void };
 
 /** Run the machine forward until it reaches one of the named phases. */
 function runTo(driven: Driven, wanted: readonly string[]): void {
-  const turn = bounded(`driving to ${wanted.join(' or ')}`);
+  const turn = bounded(`driving to ${wanted.join(' or ')}`, LOOP_LIMIT);
   while (!wanted.includes(driven.table.readout().phase.kind)) {
     turn();
     const { phase, wallet } = driven.table.readout();
@@ -360,7 +344,7 @@ describe('G4 armour: what a frame is worth announcing', () => {
     const table = tableOn(['8', '9', '8', '9']);
     const first: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, milestones: [], muted: false },
+      context: { notice: null, awarded: [], muted: false },
     };
     expect(announcementsFor(null, first)).toEqual([]);
   });
@@ -369,7 +353,7 @@ describe('G4 armour: what a frame is worth announcing', () => {
     const table = tableOn(['8', '9', '8', '9']);
     const frame: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, milestones: [], muted: false },
+      context: { notice: null, awarded: [], muted: false },
     };
     expect(announcementsFor(frame, frame)).toEqual([]);
   });
@@ -408,7 +392,7 @@ describe('G4 armour: what a frame is worth announcing', () => {
     const driven = session(tableOn(['8', '9', '8', '7', '10', '2', '9'])) as Driven;
     runTo(driven, ['playerTurn']);
     driven.apply({ kind: 'split' });
-    const turn = bounded('playing the split hands out');
+    const turn = bounded('playing the split hands out', LOOP_LIMIT);
     while (driven.table.readout().phase.kind === 'playerTurn') {
       turn();
       const before = driven.table.readout().phase;
@@ -443,7 +427,7 @@ describe('G4 armour: what a frame is worth announcing', () => {
     runTo(driven, ['playerTurn']);
     driven.apply({ kind: 'split' });
 
-    const settle = bounded('dealing the split hands');
+    const settle = bounded('dealing the split hands', LOOP_LIMIT);
     while ((driven.table.readout().hands[0]?.cards.length ?? 0) < 2) {
       settle();
       driven.step(FRAME);
@@ -469,12 +453,12 @@ describe('G4 armour: what a frame is worth announcing', () => {
 
   it('announces a refusal once, and again only when a different one arrives', () => {
     const table = tableOn(['8', '9', '8', '9']);
-    const quiet = { notice: null, milestones: [] as readonly MilestoneId[], muted: false };
+    const quiet = { notice: null, awarded: [] as readonly MilestoneId[], muted: false };
     const base = { readout: table.readout(), context: quiet } as const;
     const refused: Notice = { intent: 'deal', layer: 'wallet', reason: 'no-wager' };
     const withNotice: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: refused, milestones: [], muted: false },
+      context: { notice: refused, awarded: [], muted: false },
     };
     const said = announcementsFor(base, withNotice);
     expect(said.map((entry) => entry.text)).toEqual(['Place a wager before dealing.']);
@@ -487,11 +471,11 @@ describe('G4 armour: what a frame is worth announcing', () => {
     const table = tableOn(['8', '9', '8', '9']);
     const before: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, milestones: [], muted: false },
+      context: { notice: null, awarded: [], muted: false },
     };
     const after: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, milestones: ['firstNatural'], muted: false },
+      context: { notice: null, awarded: ['firstNatural'], muted: false },
     };
     expect(announcementsFor(before, after)).toEqual([
       { priority: 'polite', text: 'Milestone: First natural.' },
@@ -506,7 +490,7 @@ describe('G4 armour: what a frame is worth announcing', () => {
     const table = tableOn(['8', '9', '8', '9']);
     const frameOf = (muted: boolean): AnnounceFrame => ({
       readout: table.readout(),
-      context: { notice: null, milestones: [], muted },
+      context: { notice: null, awarded: [], muted },
     });
     expect(announcementsFor(frameOf(false), frameOf(true))).toEqual([
       { priority: 'polite', text: 'Sound muted.' },
@@ -531,7 +515,7 @@ describe('G4 armour: what a frame is worth announcing', () => {
       shoe: scriptedShoe(['5', '10', '6', '10', '10', '10']),
     });
     const driven = session(table) as Driven;
-    const turn = bounded('reaching the bust-out');
+    const turn = bounded('reaching the bust-out', LOOP_LIMIT);
     while (driven.table.readout().phase.kind !== 'bustOut') {
       turn();
       const { phase, wallet: money } = driven.table.readout();

@@ -39,7 +39,14 @@
 import lighthouse from 'lighthouse';
 import { chromium } from '@playwright/test';
 
-import { environmentRows, finish, round2, startPreview, table } from './support.mjs';
+import {
+  environmentRows,
+  finish,
+  resultRows,
+  round2,
+  startPreview,
+  table,
+} from './support.mjs';
 
 const PORT = 4184;
 const DEBUG_PORT = 9333;
@@ -107,11 +114,7 @@ async function main() {
     ['Largest Contentful Paint', `${String(round2(lcp))} ms`, `<= ${String(LCP_MS)} ms`, lcp <= LCP_MS],
     ['Total Blocking Time', `${String(round2(tbt))} ms`, `<= ${String(TBT_MS)} ms`, tbt <= TBT_MS],
   ];
-  for (const [measure, value, threshold, ok] of rows) {
-    if (!ok) {
-      breaches.push(`${measure}: ${value} against ${threshold}`);
-    }
-  }
+  const measured = resultRows(rows, breaches);
 
   // The preset is asserted rather than assumed. A Lighthouse whose mobile
   // defaults moved would otherwise report against a throttle the criterion does
@@ -142,7 +145,7 @@ async function main() {
     '',
     ...table(
       ['Measure', 'Median', 'Threshold', 'Verdict'],
-      rows.map(([measure, value, threshold, ok]) => [measure, value, threshold, ok ? 'PASS' : '**FAIL**']),
+      measured,
     ),
     '',
     '## Every run',

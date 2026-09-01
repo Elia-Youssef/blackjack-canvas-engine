@@ -42,11 +42,12 @@ import { describe, expect, it } from 'vitest';
 
 import type { Rank } from '../../src/core/cards';
 import { card } from '../../src/core/cards';
-import type { ActionContext, IntentResult, Table, TableOptions } from '../../src/core/table';
+import type { ActionContext, Table, TableOptions } from '../../src/core/table';
 import { createTable, surrenderRefusal } from '../../src/core/table';
 import type { ChipDenomination } from '../../src/core/wallet';
 import type { HandInPlay, PhaseKind, SettledHand } from '../../src/core/types';
 
+import { acceptResult as accept, bounded } from './support/drive';
 import { scriptedShoe } from './support/stacked-shoe';
 
 // ---------------------------------------------------------------------------
@@ -75,26 +76,9 @@ const TICK = 0.25;
 /** Bounded, for the reason `wallet.test.ts` gives: a stall must fail loudly. */
 const LOOP_LIMIT = 500;
 
-function bounded(label: string): () => void {
-  let turns = 0;
-  return () => {
-    turns += 1;
-    if (turns > LOOP_LIMIT) {
-      throw new RangeError(`${label} did not finish inside ${String(LOOP_LIMIT)} turns`);
-    }
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Driving the machine
 // ---------------------------------------------------------------------------
-
-function accept(result: IntentResult): IntentResult {
-  if (!result.ok) {
-    throw new Error(`${result.kind} was refused by ${result.layer} as ${result.reason}`);
-  }
-  return result;
-}
 
 /** Every phase the round passed through, in order, with no repeats. */
 function phasesOf(table: Table, seen: PhaseKind[]): void {
@@ -106,7 +90,7 @@ function phasesOf(table: Table, seen: PhaseKind[]): void {
 
 /** Drive to the player's turn, or to the round result if the peek ended it. */
 function toPlayerTurn(table: Table, seen: PhaseKind[] = []): Table {
-  const turn = bounded('driving the machine to the player turn');
+  const turn = bounded('driving the machine to the player turn', LOOP_LIMIT);
   phasesOf(table, seen);
   while (!['playerTurn', 'roundResult'].includes(table.readout().phase.kind)) {
     turn();
@@ -135,7 +119,7 @@ function toPlayerTurn(table: Table, seen: PhaseKind[] = []): Table {
 
 /** Run out to SPEC 12's result, standing on every hand still live. */
 function toRoundResult(table: Table, seen: PhaseKind[] = []): Table {
-  const turn = bounded('driving the machine to the round result');
+  const turn = bounded('driving the machine to the round result', LOOP_LIMIT);
   phasesOf(table, seen);
   while (table.readout().phase.kind !== 'roundResult') {
     turn();

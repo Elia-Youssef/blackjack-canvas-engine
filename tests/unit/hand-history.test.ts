@@ -55,10 +55,11 @@ import type { CoachVerdict } from '../../src/core/strategy';
 import { actionOf, compare, situationAt, strategyTable } from '../../src/core/strategy';
 import type { Table, TableReadout } from '../../src/core/table';
 import { PLAYER_ACTIONS, createTable } from '../../src/core/table';
-import type { Intent, PlayerAction } from '../../src/core/types';
+import type { HandInPlay, PlayerAction } from '../../src/core/types';
 import { createPersistence } from '../../src/storage/persistence';
 import { createMemoryStore } from '../../src/storage/store';
 
+import { acceptIntent as accept, bounded } from './support/drive';
 import { scriptedShoe } from './support/stacked-shoe';
 
 // ---------------------------------------------------------------------------
@@ -130,26 +131,9 @@ const TICK = 0.25;
 /** Bounded, in the house pattern: a stall must fail loudly, not hang. */
 const LOOP_LIMIT = 2000;
 
-function bounded(label: string): () => void {
-  let turns = 0;
-  return () => {
-    turns += 1;
-    if (turns > LOOP_LIMIT) {
-      throw new RangeError(`${label} did not finish inside ${String(LOOP_LIMIT)} turns`);
-    }
-  };
-}
-
 // ---------------------------------------------------------------------------
 // Driving the machine
 // ---------------------------------------------------------------------------
-
-function accept(table: Table, intent: Intent): void {
-  const result = table.apply(intent);
-  if (!result.ok) {
-    throw new Error(`${result.kind} was refused by ${result.layer} as ${result.reason}`);
-  }
-}
 
 /**
  * What the driver does at SPEC 10's player turn, and what it did.
@@ -218,7 +202,7 @@ function playRound(table: Table, options: DriveOptions = {}): PlayedRound {
   const policy = options.policy ?? stand;
   const observing = options.observing ?? false;
   const offer = options.insurance ?? 'decline';
-  const turn = bounded('driving one round to SPEC 12 result');
+  const turn = bounded('driving one round to SPEC 12 result', LOOP_LIMIT);
   const verdicts: CoachVerdict[] = [];
   const chart = strategyTable(houseRules());
   let chipsBeforeDeal = table.readout().wallet.chips;
@@ -810,7 +794,7 @@ describe('J5: SPEC 8 hand history', () => {
       expect(reopened.readout().load.source).toBe('stored');
       expect(reopened.readout().load.repairs).toEqual([]);
       expect(reopened.document().history).toEqual(history);
-      expect(reopened.session().history).toEqual(history);
+      expect(reopened.restored().history).toEqual(history);
     });
   });
 
@@ -833,7 +817,7 @@ describe('J5: SPEC 8 hand history', () => {
       // and recording carries straight on.
       const table = createTable({ seed: 2 });
       let history: History = NO_HISTORY;
-      const turn = bounded('draining the bankroll to SPEC 10 bust-out');
+      const turn = bounded('draining the bankroll to SPEC 10 bust-out', LOOP_LIMIT);
       while (table.readout().phase.kind !== 'bustOut') {
         turn();
         const state = table.readout();
@@ -898,6 +882,26 @@ describe('J5: SPEC 8 hand history', () => {
         hands: Object.freeze(played.readout.hands.slice(0, 1)),
       });
       expect(() => record(NO_HISTORY, short, null)).toThrow(/settled hands/);
+    });
+
+    /**
+     * The per-index guard under the count check, and it is a twin: the same
+     * three lines sit in `statistics.ts`'s `observeRound`, where
+     * `tests/unit/milestones.test.ts` pins the other copy with the same
+     * construction. Neither is reachable through the machine, because
+     * `readout()` builds `hands` with a `map` and a map is always dense, so a
+     * hand-built readout carrying a hole is the only way in and both modules
+     * refuse it rather than printing a hand that is not on the felt.
+     */
+    it('refuses a result whose hand count agrees but whose hands carry a hole', () => {
+      const played = playRound(dealing(PLAIN));
+      expect(played.readout.hands).toHaveLength(1);
+      expect(played.readout.hands.every((hand) => hand !== undefined)).toBe(true);
+      const holed: TableReadout = Object.freeze({
+        ...played.readout,
+        hands: Object.freeze(Array.from({ length: 1 })) as readonly HandInPlay[],
+      });
+      expect(() => record(NO_HISTORY, holed, null)).toThrow(/settled but is not on the felt/);
     });
   });
 });

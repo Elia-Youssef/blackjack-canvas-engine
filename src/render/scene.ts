@@ -50,6 +50,7 @@
 import type { Card, Rank, Suit } from '../core/cards';
 
 import {
+  PACING,
   arcTravel,
   flipScale,
   flipShowsFace,
@@ -566,10 +567,56 @@ function newMemory(): SceneMemory {
   };
 }
 
-/** Advance an ageing thing, capped at its own span. */
-function advance(timer: Ageing, dt: number, motion: Motion): void {
-  const span = motion.seconds(timer.pacing);
-  timer.age = Math.min(timer.age + dt, span);
+/**
+ * Advance an ageing thing, capped at its own **unscaled** pacing constant.
+ *
+ * **The cap is `PACING[name]` and not `motion.seconds(name)`, because the age
+ * outlives the Speed it was accumulated at.** `speedMultiplier` is 1 or 0.6, so
+ * the unscaled constant is the longest span any Speed can ask for, and an age
+ * capped there still reads finished at every Speed. Capping at the scaled span
+ * instead made Fast park every finished age at `0.6 x PACING[name]`; SPEC 14
+ * lets Speed move mid-round, and the next Normal frame divided that parked age
+ * by the full constant, so every settled card, chip and hand width read back at
+ * progress 0.6 and flew to its place a second time. The machine does not behave
+ * that way (`table.setSpeed` leaves its accumulator alone), and neither does
+ * this.
+ *
+ * **The residual, measured rather than characterised.** Between
+ * `0.6 x PACING[name]` and `PACING[name]` of wall clock a Fast tween has
+ * finished while its age is still climbing, so a switch taken inside that
+ * window still moves the card. At the top of the window it moves it a long way:
+ * on `cardTravel` the window is exactly [0.168, 0.28) s, and a switch at
+ * 0.175 s puts a settled card back through about 0.4 of its arc, **measured at
+ * 102.73 px** on the 1029 x 579 reference sizing. The displacement then decays
+ * to zero across the window (94.68 px at 0.18 s, 39.86 at 0.24, 8.43 at 0.275,
+ * 0.76 at 0.281) and is **exactly zero from `PACING[name]` onward**. So what
+ * this cure bought is the duration, 112 ms and decaying instead of a permanent
+ * 0.6-progress reset, not a smaller peak: the peak is larger than the 27 to
+ * 85 px the uncured case measured. Option 2 in the finding, latching a `done`
+ * flag the first time `finished()` holds, removes the window entirely and is
+ * the user's call. `tests/unit/motion.test.ts` drives the settled case, in both
+ * directions.
+ *
+ * **The delta is guarded here, because only the simulation half of the frame is
+ * clamped.** `table.update` runs QUALITY-BAR section 7's three clauses on its
+ * own copy of `dt`; the composition root hands the presentation half the raw
+ * one, and this is where that raw number is spent. A non-finite delta would
+ * write `NaN` into the age and `Math.min` keeps it there for the life of the
+ * key, so every tween would sit at progress 0 for ever rather than jumping to
+ * finished: a card mid-flight would never land. A negative delta would rewind
+ * an age the machine consumed as zero. Neither is reachable through
+ * `requestAnimationFrame`, whose timestamps are finite and non-decreasing; the
+ * guard is here because the failure would be permanent rather than transient.
+ *
+ * A **large** delta is deliberately not clamped. Saturating at the span is what
+ * lands every tween finished after a resume, which is the behaviour clause 3 of
+ * section 7 asks the presentation for; borrowing the machine's clamp here would
+ * leave them mid-flight instead.
+ */
+function advance(timer: Ageing, dt: number): void {
+  const span = PACING[timer.pacing];
+  const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
+  timer.age = Math.min(timer.age + step, span);
 }
 
 /** True once an ageing thing has run its whole span. */
@@ -599,13 +646,19 @@ function progressOf(
     timer = { age: 0, pacing };
     memory.set(key, timer);
   } else {
-    advance(timer, dt, motion);
+    advance(timer, dt);
   }
   return motion.progress(pacing, timer.age);
 }
 
-/** Drop every key that did not appear this frame. */
-function prune(memory: Map<string, Ageing>, seen: Set<string>): void {
+/**
+ * Drop every key that did not appear this frame.
+ *
+ * Generic over the value, because the two memories prune identically and the
+ * value type was the only thing that differed between the two copies this
+ * replaced. What a memory holds is nothing to do with when it is emptied.
+ */
+function prune<T>(memory: Map<string, T>, seen: Set<string>): void {
   for (const key of [...memory.keys()]) {
     if (!seen.has(key)) {
       memory.delete(key);
@@ -663,7 +716,10 @@ export interface EaseReading {
  * so a restarted ease reads `from`, which is the value it was showing.
  */
 export function easeStep(held: Easing, target: number, dt: number, motion: Motion): EaseReading {
-  held.age = Math.min(held.age + dt, motion.seconds('handRecentre'));
+  // The unscaled constant, for `advance`'s reason: the age outlives the Speed
+  // it was accumulated at, and a hand width parked at `0.6 x handRecentre` by
+  // Fast would re-slide on the first Normal frame after a mid-round switch.
+  held.age = Math.min(held.age + dt, PACING.handRecentre);
   if (held.to !== target) {
     held.from = toward(held.from, held.to, motion.progress('handRecentre', held.age));
     held.to = target;
@@ -671,14 +727,6 @@ export function easeStep(held: Easing, target: number, dt: number, motion: Motio
   }
   const progress = motion.progress('handRecentre', held.age);
   return { value: toward(held.from, held.to, progress), moving: progress < 1 };
-}
-
-function pruneEasings(memory: Map<string, Easing>, seen: Set<string>): void {
-  for (const key of [...memory.keys()]) {
-    if (!seen.has(key)) {
-      memory.delete(key);
-    }
-  }
 }
 
 // ---------------------------------------------------------------------------
@@ -874,7 +922,19 @@ function pulseLayer(rings: readonly PulseRing[], tokens: SurfaceTokens): ScenePa
 /** The play surface: a sized canvas, a cached felt, and one frame entry point. */
 export interface PlaySurface {
   readonly surface: Surface;
-  /** The spec the felt is currently baked from. For a drift check and a test. */
+  /**
+   * The spec the felt is currently baked from, frozen.
+   *
+   * **There is no drift-check consumer, and there is not meant to be one any
+   * more.** This was the composition root's door for detecting a size or
+   * device-pixel-ratio change and asking for a rebake; the `BJ-22` bake cache
+   * took that job over and answers it per frame from the wanted spec, so
+   * `main.ts` does not call this and the only reader is `felt-cache.test.ts`.
+   * It stays because reading what the felt was baked from is a fair question to
+   * be able to ask, and it is frozen at the bake because the object it hands
+   * back is the cache's own key: an edit to it would silently make every
+   * subsequent frame miss the cache and pay for a bake.
+   */
   feltSpec(): FeltSpec;
   /** Resize the backing store. The felt rebakes on the next frame. */
   resize(sizing: SurfaceSizing): void;
@@ -980,14 +1040,23 @@ export interface FeltLayerHost {
  *
  * **Bounded because it is a cache of backing stores and not of numbers.** Each
  * entry holds a canvas the size of the play surface, so an unbounded map would
- * be a leak item `H5` measures for. Four, because the shipped phase cycle
- * visits exactly three surface sizes, measured over three rounds on the built
- * page (1029 x 579 at betting and the player turn, 1121 x 631 at dealing and
- * the reveal, 407 x 229 at the round result), and the fourth slot absorbs one
- * drift, a viewport resize or a forced-colors flip, without evicting the set in
- * play. Past that a bake is what the renderer did on every size change before
- * this cache existed, so the worst case is the old behaviour rather than a new
- * failure.
+ * be a leak item `H5` measures for.
+ *
+ * **Four, re-derived from what the shipped page visits now.** The original
+ * measurement, three rounds on the built page, found three sizes: 1029 x 579 at
+ * betting and the player turn, 1121 x 631 at dealing and the reveal, and
+ * 407 x 229 at the round result, over 27 backing-store changes. The two
+ * transient visits to the widest size were the action row being replaced by a
+ * status line, and `src/ui/chrome.css` has since pinned the five timed screens
+ * to the betting row's own height, so at the reference viewport those phases
+ * now measure what betting measures and `tests/browser/surface-stability.spec.ts`
+ * is what holds that true. What the cycle still visits is two sizes, the
+ * action-and-timed size and the round result's, and the bound keeps its
+ * headroom for the changes that are not phase changes: a viewport resize, the
+ * play-surface size setting, a forced-colors flip, and the narrow breakpoints
+ * where the action rows wrap and the timed pin does not equalise them. Past
+ * that a bake is what the renderer did on every size change before this cache
+ * existed, so the worst case is the old behaviour rather than a new failure.
  */
 export const FELT_CACHE_LIMIT = 4;
 
@@ -997,7 +1066,7 @@ export const FELT_CACHE_LIMIT = 4;
  * A pair is two `noiseTileCells` squares rather than two full surfaces, so this
  * bound costs far less than the one above; it exists for the same reason.
  */
-export const GRAIN_CACHE_LIMIT = 4;
+const GRAIN_CACHE_LIMIT = 4;
 
 /** Build the play surface. The felt bakes on the first frame, not here. */
 export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
@@ -1015,16 +1084,16 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
   let inFlight = 0;
   let rendered: SceneState | null = null;
   let resized = false;
-  let fanReading: FanReading = {
+  let fanReading: FanReading = Object.freeze({
     cardWidth: 0,
     naturalCardWidth: 0,
     pitch: 0,
     pitchRatio: 0,
-    regimes: [],
+    regimes: Object.freeze([]),
     overflow: 0,
     dealerTop: 0,
     handTop: 0,
-  };
+  });
 
   /** The grain pair for one colour and scale, baked at most once for each. */
   function grainFor(wanted: GrainSpec): GrainTiles {
@@ -1045,11 +1114,19 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
    *
    * **The cache is why the shipped page stopped rebaking on every screen.**
    * SPEC 10 replaces the whole controls row at every phase, that row is an
-   * `auto` grid track, and the play-surface row above it therefore changes
+   * `auto` grid track, and the play-surface row above it therefore changed
    * height at every screen: three rounds of measured play on the built page
    * changed the backing store 27 times over three distinct sizes. Each of those
    * changes rebaked the felt, and a bake is the one expensive thing this
-   * renderer does. Three bakes now serve all 27.
+   * renderer does. Three bakes served all 27.
+   *
+   * The stylesheet has since pinned the five timed screens to the action rows'
+   * own height, so at the reference viewport the row stops moving between
+   * betting and the reveal and the changes themselves are fewer; the cache is
+   * still what makes the ones that remain free, and it is the only thing
+   * covering the narrow breakpoints, where the action rows wrap and the pin
+   * does not equalise them. `tests/browser/surface-stability.spec.ts` holds the
+   * wide case and states the narrow one.
    */
   function feltFor(state: SceneState): FeltLayer {
     const wanted: FeltSpec = {
@@ -1069,7 +1146,11 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
     const baked = bakeFelt(
       feltLayer === null ? options.offscreen() : feltLayer.acquire(),
       wanted,
-      grainFor({ felt: feltColour(state.palette.surface, state.felt), dpr: surface.dpr }),
+      // Deferred, not resolved: the flat felt takes no grain and asking for a
+      // pair it cannot draw both pays for two canvases and evicts a live pair
+      // out of a cache bounded at four. `bakeFelt` calls this only inside the
+      // branch that draws.
+      () => grainFor({ felt: feltColour(state.palette.surface, state.felt), dpr: surface.dpr }),
     );
     felts.unshift(baked);
     for (const evicted of felts.splice(FELT_CACHE_LIMIT)) {
@@ -1090,7 +1171,7 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
     if (was > 0 && state.dealer.length > HOLE_CARD) {
       memory.flip = { age: 0, pacing: 'holeCardFlip' };
     } else if (memory.flip !== null) {
-      advance(memory.flip, dt, state.motion);
+      advance(memory.flip, dt);
     }
     if (memory.flip === null) {
       return null;
@@ -1114,7 +1195,7 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
     if (!was) {
       memory.pulse = { age: 0, pacing: 'winPulse' };
     } else if (memory.pulse !== null) {
-      advance(memory.pulse, dt, state.motion);
+      advance(memory.pulse, dt);
     }
     if (memory.pulse === null) {
       return 0;
@@ -1156,36 +1237,54 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
       // each band then compresses its own pitch inside that width. The dealer's
       // band has the whole surface; each player hand has its equal share of it,
       // which is the room `handCentre` below already lays the hands out in.
+      //
+      // **Each band's fan is resolved once, here, and carried to whatever draws
+      // it.** `fanFor` is arithmetic, so this is not about cost: the reading
+      // `fan()` publishes is what `tests/browser/fan-floor.spec.ts` measures the
+      // composited pixels against, and a second derivation beside the one the
+      // cards are laid out from would let the probe report a fan the scene did
+      // not draw.
       const handCount = Math.max(1, state.hands.length);
       const handRoom = width / handCount;
       const natural = naturalCardWidth(width);
+      const dealerBand: FanBand = {
+        count: state.dealer.length + state.dealerConcealed,
+        room: width,
+      };
       const bands: FanBand[] = [
-        { count: state.dealer.length + state.dealerConcealed, room: width },
+        dealerBand,
         ...state.hands.map((hand) => ({ count: hand.cards.length, room: handRoom })),
       ];
       const cardWidth = fanCardWidth(bands, natural);
-      const resolved = bands.map((band) => fanFor(band.count, band.room, cardWidth, natural));
-      const handFan = fanFor(
-        state.hands[0]?.cards.length ?? 0,
-        handRoom,
-        cardWidth,
-        natural,
-      );
+      const dealerFan = fanFor(dealerBand.count, dealerBand.room, cardWidth, natural);
+      const laidHands = state.hands.map((hand) => ({
+        hand,
+        fan: fanFor(hand.cards.length, handRoom, cardWidth, natural),
+      }));
+      const resolved: Fan[] = [dealerFan, ...laidHands.map((entry) => entry.fan)];
+      // The reading names the player's band, and a table with no hand on it
+      // still has to answer: an empty band at the same room is what that is.
+      const handFan = laidHands[0]?.fan ?? fanFor(0, handRoom, cardWidth, natural);
       const dealerRowTop = height * SCENE_GEOMETRY.dealerY;
       const playerRowTop = Math.max(
         height * SCENE_GEOMETRY.handY,
         dealerRowTop + cardHeight(cardWidth),
       );
-      fanReading = {
+      // Frozen here rather than copied at the getter, which is the cheapest
+      // form: the record is rebuilt whole on every frame anyway, so freezing it
+      // at the assignment costs one call a frame and no copy. `fan()` was the
+      // one readout in the project that handed out live internal state, and it
+      // is the surface item `E8`'s fan-floor evidence travels on.
+      fanReading = Object.freeze({
         cardWidth,
         naturalCardWidth: natural,
         pitch: handFan.pitch,
         pitchRatio: handFan.pitchRatio,
-        regimes: resolved.map((fan) => fan.regime),
+        regimes: Object.freeze(resolved.map((fan) => fan.regime)),
         overflow: resolved.reduce((worst, fan) => Math.max(worst, fan.overflow), 0),
         dealerTop: dealerRowTop,
         handTop: playerRowTop,
-      };
+      });
       const chipRadius = width * SCENE_GEOMETRY.chipX;
       const arcLift = height * SCENE_GEOMETRY.arcLiftY;
       const shoe: Point = {
@@ -1208,9 +1307,8 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
         topY: number,
         faceUpCount: number,
         flip: Flip | null,
-        room: number,
+        fan: Fan,
       ): readonly DrawnCard[] {
-        const fan = fanFor(cards.length, room, cardWidth, natural);
         // SPEC 5's hand re-centre: the laid width eases to its new value, so the
         // cards already on the felt slide apart as one rather than jumping.
         const laid = easeToward(memory.widths, key, fan.laid, dt, motion, seenWidths);
@@ -1324,7 +1422,7 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
               dealerTop,
               state.dealer.length,
               flipAt === null ? null : { index: HOLE_CARD, progress: flipAt },
-              width,
+              dealerFan,
             ),
             tokens,
           ),
@@ -1350,11 +1448,11 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
       const stacks: ChipStackSpec[] = [];
       const flying: FlyingChip[] = [];
       const rings: PulseRing[] = [];
-      state.hands.forEach((hand, index) => {
+      laidHands.forEach(({ hand, fan }, index) => {
         const key = `h${String(index)}`;
         const centre = handCentre(index, state.hands.length, width);
         const topY = handTop;
-        const drawn = travelled(key, hand.cards, centre, topY, hand.cards.length, null, handRoom);
+        const drawn = travelled(key, hand.cards, centre, topY, hand.cards.length, null, fan);
         layers.push(cardLayer(drawn, tokens));
 
         stacked(
@@ -1396,7 +1494,7 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
 
       prune(memory.cards, seenCards);
       prune(memory.chips, seenChips);
-      pruneEasings(memory.widths, seenWidths);
+      prune(memory.widths, seenWidths);
       const wasInFlight = inFlight;
       inFlight = moving;
 

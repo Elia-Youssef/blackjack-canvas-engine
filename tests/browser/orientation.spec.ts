@@ -44,6 +44,8 @@
 
 import { expect, test, type Page } from '@playwright/test';
 
+import { readoutTexts } from './support/flow';
+
 import {
   atBetting,
   atShippedBetting,
@@ -57,7 +59,6 @@ import {
   settle,
   waitForPhase,
 } from './support/game';
-import { READOUT_KEYS } from '../../src/ui/components/readouts';
 
 const SEED = 53;
 const WAGER = 50;
@@ -98,15 +99,6 @@ async function readSentinel(
       | undefined,
     timeOrigin: performance.timeOrigin,
   }));
-}
-
-/** Every readout of SPEC 11, as text, whatever bar or disclosure it is on. */
-async function readoutTexts(page: Page): Promise<Record<string, string>> {
-  const values: Record<string, string> = {};
-  for (const key of READOUT_KEYS) {
-    values[key] = (await readoutValue(page, key).textContent()) ?? '';
-  }
-  return values;
 }
 
 test.describe('F5: an orientation change preserves the game', () => {

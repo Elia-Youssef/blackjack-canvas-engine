@@ -34,6 +34,8 @@
 
 import { expect, test, type Page } from '@playwright/test';
 
+import { scrollToTop } from './support/flow';
+
 import { STICKY_BARS_MIN_HEIGHT } from '../../src/ui/breakpoints';
 import {
   atShippedBetting,
@@ -71,21 +73,6 @@ const WAGER = 10;
 async function scrollToBottom(page: Page): Promise<void> {
   await page.evaluate(() => {
     window.scrollTo(0, document.documentElement.scrollHeight);
-  });
-  await settle(page);
-}
-
-/**
- * Scroll the document back to its top.
- *
- * Called before every measurement, because reaching the betting screen at this
- * size means clicking Start, and Playwright scrolls a control into view before
- * clicking it: the page arrives already scrolled, and a spec that measured from
- * there would be measuring a scroll position rather than a layout.
- */
-async function scrollToTop(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    window.scrollTo(0, 0);
   });
   await settle(page);
 }

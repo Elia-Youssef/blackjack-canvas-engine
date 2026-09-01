@@ -235,9 +235,14 @@ const LINT = {
  * both are correctness rather than tuning.
  *
  * The first is that a gate naming `--project=chromium` for that spec would
- * select **no tests at all**, and a command that runs nothing exits zero, so
- * every mutation measured against it would be reported detected while nothing
- * had been measured. `MOTION_DEMO` therefore names a timing project.
+ * select **no tests at all**. This Playwright treats an empty root suite as an
+ * error rather than a pass, so such a gate is red on the unmutated tree, and
+ * `main`'s baseline sweep below runs every distinct `detectedBy` before
+ * anything is measured and refuses to report at all when one of them is red.
+ * Had it exited zero instead, `record(mutation, !passes(...))` would report
+ * every mutation measured against it UNDETECTED, which reddens the sweep too.
+ * Both directions are loud, which is the property worth stating; what is not
+ * available is a quiet pass. `MOTION_DEMO` therefore names a timing project.
  *
  * The second is that a project with dependencies drags its whole chain in. Left
  * alone, each single-spec invocation here would run the three timing projects
@@ -351,6 +356,10 @@ const NO_THIRD_PARTY = browserGate('no-third-party.spec.ts');
 // page, so they take browser gates; the visual baselines are their own spec.
 const FAN_FLOOR = browserGate('fan-floor.spec.ts');
 const VISUAL = browserGate('visual.spec.ts');
+// The `H4` cure that entered outside a part cycle and shipped with no entry of
+// its own. Its detector was written with it and works; AUDIT-1 widened the spec
+// and gave the rule the entry the rest of this file's gated rules all have.
+const SURFACE_STABILITY = browserGate('surface-stability.spec.ts');
 
 /**
  * One measurement report, as a gate. `BJ-22`.
@@ -426,6 +435,25 @@ const EDITS = [
     file: 'package.json',
     find: '"lint": "eslint . --ignore-pattern \\"tests/lint/fixtures/**\\""',
     replace: '"lint": "eslint . --ignore-pattern \\"tests/lint/fixtures/**\\" --ignore-pattern \\"src/core/**\\""',
+    detectedBy: UNIT,
+  },
+  {
+    // The evasion the rule cannot see. `core-boundary/no-forbidden-imports`
+    // decides by the text of the specifier, so a module whose own path names
+    // neither layer carries both into `core/`'s graph silently, and
+    // `src/storage/document.ts` imports `../ui/audio`, `../ui/motion` and
+    // `../ui/theme` today. Only the transitive-closure test catches this; the
+    // whole lint gate stays green on it.
+    item: 'M3',
+    name: 'a core module reaches ui/ through the storage document, two hops out',
+    file: 'src/core/statistics.ts',
+    find:
+      "import type { Rung } from './settlement';\n" +
+      "import type { CoachAccuracy, CoachRecord } from './strategy';",
+    replace:
+      "import type { Rung } from './settlement';\n" +
+      "import type { GameDocument } from '../storage/document';\n" +
+      "import type { CoachAccuracy, CoachRecord } from './strategy';",
     detectedBy: UNIT,
   },
   {
@@ -657,6 +685,18 @@ const EDITS = [
     file: 'src/core/rng.ts',
     find: '    const derived = splitSeed(a, b, c, d, splits);',
     replace: '    const derived = nextUint32();',
+    detectedBy: UNIT,
+  },
+  {
+    // The seed reduction is on the live path of every launch: the shipped page
+    // seeds from `Date.now()`, which is always above 2^32. A reduction that
+    // kept a different set of bits would still be deterministic and would still
+    // pass every same-seed and adjacent-seed assertion.
+    item: 'B2',
+    name: 'the seed is folded to 16 bits instead of read modulo 2^32',
+    file: 'src/core/rng.ts',
+    find: '  let walked = seed >>> 0;',
+    replace: '  let walked = Math.abs(seed) % 65536;',
     detectedBy: UNIT,
   },
   {
@@ -1252,6 +1292,19 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The fallback's own use of the entry predicate. Both arms of `canEnter`
+    // reach it, and the minimum arm is the one no launch can exercise, since
+    // SPEC 13 always starts at 1,000 and every minimum sits at or below it. The
+    // sweep in `tables.test.ts` drives the function directly, which is where
+    // this is caught.
+    item: 'J1',
+    name: 'the fallback offers a table the balance cannot afford',
+    file: 'src/core/wallet.ts',
+    find: '    if (table !== undefined && canEnter(table.id, bestBalance, chips)) {',
+    replace: '    if (table !== undefined && bestBalance >= table.unlocksAt) {',
+    detectedBy: UNIT,
+  },
+  {
     item: 'J1',
     name: 'a launch stops preferring the persisted table',
     file: 'src/core/wallet.ts',
@@ -1299,8 +1352,8 @@ const EDITS = [
     item: 'J2',
     name: 'the best balance follows the current balance down instead of holding',
     file: 'src/core/wallet.ts',
-    find: '    if (chips > bestBalance) {\n      bestBalance = chips;\n    }',
-    replace: '    bestBalance = chips;',
+    find: '    if (settledBalance > bestBalance) {\n      bestBalance = settledBalance;\n    }',
+    replace: '    bestBalance = settledBalance;',
     detectedBy: UNIT,
   },
   {
@@ -1314,12 +1367,28 @@ const EDITS = [
     item: 'J2',
     name: 'the mark reads the balance plus the money still on the table',
     file: 'src/core/wallet.ts',
-    find: '    if (chips > bestBalance) {\n      bestBalance = chips;\n    }',
+    find: '    if (settledBalance > bestBalance) {\n      bestBalance = settledBalance;\n    }',
     replace:
       '    const reading = chips + committed();\n' +
       '    if (reading > bestBalance) {\n' +
       '      bestBalance = reading;\n' +
       '    }',
+    detectedBy: UNIT,
+  },
+  {
+    // The fourth term's mirror of the entry above, which had neither a test
+    // nor an entry until AUDIT-1. SPEC 4.7's even money can leave part of the
+    // stake unfunded, and on every deferred round the balance peaks at exactly
+    // `2.5 x wager` between `settleHand` and `endRound` with `deferredStake` of
+    // it owed. Marking that peak stood the mark permanently above a balance the
+    // player never held free. Invisible on the shipped tables, where
+    // `2.5 x maximum` clears every seat's own mark floor by at least 2.00x, and
+    // `tables.test.ts` now asserts that bound too.
+    item: 'J2',
+    name: 'the mark reads the balance plus the money it still owes',
+    file: 'src/core/wallet.ts',
+    find: '    const settledBalance = chips - deferredStake;',
+    replace: '    const settledBalance = chips;',
     detectedBy: UNIT,
   },
   {
@@ -1347,6 +1416,22 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The reset's other half of `endRound`'s refusal. Dropping it lets a reset
+    // run with a side wager open, and the bankroll then arrives on top of a term
+    // the identity is still counting.
+    item: 'J2',
+    name: 'the reset runs with a side wager open, creating the stake out of nothing',
+    file: 'src/core/wallet.ts',
+    find:
+      '    if (insuranceStake !== 0 || deferredStake !== 0) {\n' +
+      '      throw new RangeError(\n' +
+      "        'a reset with a side wager open would create chips; SPEC 4.7 settles it first',\n" +
+      '      );\n' +
+      '    }\n',
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
     item: 'J2',
     name: 'a persisted high-water mark is dropped on the way in',
     file: 'src/core/wallet.ts',
@@ -1358,7 +1443,7 @@ const EDITS = [
     item: 'J2',
     name: 'a corrupt persisted mark is accepted instead of refused',
     file: 'src/core/wallet.ts',
-    find: '  if (!Number.isInteger(carried) || carried < STARTING_CHIPS) {',
+    find: '  if (!Number.isSafeInteger(carried) || carried < STARTING_CHIPS) {',
     replace: '  if (!Number.isFinite(carried)) {',
     detectedBy: UNIT,
   },
@@ -1366,8 +1451,8 @@ const EDITS = [
     item: 'J2',
     name: 'the bust-out offer lists a lower table the balance cannot afford',
     file: 'src/core/wallet.ts',
-    find: '    (table) => bestBalance >= table.unlocksAt && chips >= table.minimum,',
-    replace: '    (table) => bestBalance >= table.unlocksAt,',
+    find: '    canEnter(table.id, bestBalance, chips),',
+    replace: '    bestBalance >= table.unlocksAt,',
     detectedBy: UNIT,
   },
   {
@@ -1733,6 +1818,20 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The coupling the drain's narrow discard rests on: `drain` discards the
+    // rest of the queue only when its OWN accepted intent moved the phase, so a
+    // stale press survives an `update`-driven transition. Nothing goes wrong
+    // because every intent that can be accepted while leaving the phase
+    // identical is legal only where no timer runs. This mutation breaks that
+    // coupling from the phase side, in a timed phase no other entry touches.
+    item: 'C2',
+    name: 'a phase-preserving control goes live in a timed phase, arming the stale-press hazard',
+    file: 'src/core/table.ts',
+    find: '  reveal: Object.freeze<IntentKind[]>([]),',
+    replace: "  reveal: Object.freeze<IntentKind[]>(['tapChip']),",
+    detectedBy: UNIT,
+  },
+  {
     item: 'C2',
     name: 'the phase gate is removed and every action reaches the layer beneath',
     file: 'src/core/table.ts',
@@ -1840,6 +1939,26 @@ const EDITS = [
     file: 'src/core/table.ts',
     find: '  function queue(intent: Intent): void {\n    queued.push(intent);\n  }',
     replace: '  function queue(intent: Intent): void {\n    apply(intent);\n  }',
+    detectedBy: UNIT,
+  },
+  {
+    // The two bet controls the shipped wallet can never refuse. Both arms were
+    // dead to the sweep until an injected wallet drove them, which is what
+    // makes these two entries worth having: a machine that swallowed a bet
+    // refusal would look identical against `createWallet`.
+    item: 'C2',
+    name: 'Clear reports an acceptance whatever the wallet answered',
+    file: 'src/core/table.ts',
+    find: "        return result.ok ? accepted('clear') : refused('clear', 'wallet', result.reason);",
+    replace: "        void result;\n        return accepted('clear');",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'C2',
+    name: 'Max reports an acceptance whatever the wallet answered',
+    file: 'src/core/table.ts',
+    find: "        return result.ok ? accepted('max') : refused('max', 'wallet', result.reason);",
+    replace: "        void result;\n        return accepted('max');",
     detectedBy: UNIT,
   },
   {
@@ -2306,8 +2425,8 @@ const EDITS = [
     file: 'src/core/table.ts',
     find:
       '        const grown = dealTo(index);\n' +
-      "        resolve(index, isBust(grown.cards) ? 'bust' : 'doubled');",
-    replace: "        resolve(index, 'doubled');",
+      "        resolveActiveHand(isBust(grown.cards) ? 'bust' : 'doubled');",
+    replace: "        resolveActiveHand('doubled');",
     detectedBy: UNIT,
   },
   {
@@ -2315,9 +2434,9 @@ const EDITS = [
     name: 'Double leaves the hand live instead of ending it',
     file: 'src/core/table.ts',
     find:
-      "        resolve(index, isBust(grown.cards) ? 'bust' : 'doubled');\n" +
-      '        phase = handOverToPlayer();',
-    replace: '        void grown;',
+      "        resolveActiveHand(isBust(grown.cards) ? 'bust' : 'doubled');\n" +
+      "        return accepted('double');",
+    replace: "        void grown;\n        return accepted('double');",
     detectedBy: UNIT,
   },
   {
@@ -2332,8 +2451,8 @@ const EDITS = [
     item: 'B9',
     name: 'a doubled hand that busts is recorded as doubled, so the dealer draws for it',
     file: 'src/core/table.ts',
-    find: "        resolve(index, isBust(grown.cards) ? 'bust' : 'doubled');",
-    replace: "        resolve(index, 'doubled');",
+    find: "        resolveActiveHand(isBust(grown.cards) ? 'bust' : 'doubled');",
+    replace: "        resolveActiveHand('doubled');",
     detectedBy: UNIT,
   },
 
@@ -3000,6 +3119,22 @@ const EDITS = [
       '  }\n' +
       '  const verdict = compare(table, situation, played);',
     replace: '  void mode;\n  const verdict = compare(table, situation, played);',
+    detectedBy: UNIT,
+  },
+  {
+    // The sibling of the entry above, on the other null path. SPEC 7's accuracy
+    // denominator counts decisions the coach had an opinion about, so a hand it
+    // has nothing to say on must leave the record alone rather than record a
+    // miss. Counting it as `false` is the flattering-in-reverse direction and
+    // would move every accuracy figure and SPEC 9's accuracy milestone.
+    item: 'J3',
+    name: 'a hand the coach has no opinion about is counted as a decision it got wrong',
+    file: 'src/core/strategy.ts',
+    find:
+      '  if (verdict === null) {\n' + '    return Object.freeze({ record, verdict: null });\n  }',
+    replace:
+      '  if (verdict === null) {\n' +
+      '    return Object.freeze({ record: recordDecision(record, false), verdict: null });\n  }',
     detectedBy: UNIT,
   },
   {
@@ -3949,6 +4084,26 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The other two pass-throughs of the one function that names the platform.
+    // A read that always answers `null` makes every reload look like a first
+    // launch, which SPEC 13 is the whole of; both were covered in the browser
+    // tier only, which is the tier a unit sweep cannot see.
+    item: 'I3',
+    name: 'the adapter reads nothing back, so every reload looks like a first launch',
+    file: 'src/storage/store.ts',
+    find: '      return storage.getItem(key);',
+    replace: '      void key;\n      return null;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I3',
+    name: 'the adapter never removes, so Reset all data leaves the document standing',
+    file: 'src/storage/store.ts',
+    find: '      storage.removeItem(key);',
+    replace: '      void key;',
+    detectedBy: UNIT,
+  },
+  {
     item: 'I3',
     name: 'an empty storage property is adapted instead of refused',
     file: 'src/storage/store.ts',
@@ -4113,6 +4268,19 @@ const EDITS = [
     file: 'src/core/shoe.ts',
     find: '    if (dealt >= stack.length) {\n      rebuild();\n    }',
     replace: '    if (dealt > stack.length) {\n      rebuild();\n    }',
+    detectedBy: UNIT,
+  },
+  {
+    // The rebuild puts the cut card at the top, which is the only reason the
+    // next `endRound` reshuffles rather than dealing on from a short stack.
+    // `Math.max(cutAt, 0)` is a no-op on a fresh shoe and leaves the old cut
+    // in place after a rebuild, which is exactly the state the boundary is
+    // supposed to repay.
+    item: 'B5',
+    name: 'the rebuild leaves the old cut card in place, so the boundary never repays the reshuffle',
+    file: 'src/core/shoe.ts',
+    find: '    cutAt = 0;',
+    replace: '    cutAt = Math.max(cutAt, 0);',
     detectedBy: UNIT,
   },
   {
@@ -4376,8 +4544,10 @@ const EDITS = [
     file: 'src/render/felt.ts',
     // `BJ-22` put the vignette and the grain behind the flat-felt switch the
     // high-contrast set carries, so the two lines moved in one indent level.
-    find: '    drawVignette(ctx, spec, frame, felt);\n    drawGrain(ctx, spec, frame, grain);',
-    replace: '    drawGrain(ctx, spec, frame, grain);',
+    // AUDIT-1 made `grain` a thunk called inside that same branch, so the pair
+    // now draws the resolved `tiles`.
+    find: '    drawVignette(ctx, spec, frame, felt);\n    drawGrain(ctx, spec, frame, tiles);',
+    replace: '    drawGrain(ctx, spec, frame, tiles);',
     detectedBy: UNIT,
   },
   {
@@ -4596,6 +4766,17 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // QUALITY-BAR section 7 on the presentation half. The machine clamps its
+    // own delta; the renderer is handed the raw one and spends it here, and a
+    // poisoned age never recovers because `Math.min(NaN, span)` is `NaN`.
+    item: 'M5',
+    name: 'the tween ages on the raw delta, so one hostile frame freezes the felt',
+    file: 'src/render/scene.ts',
+    find: '  const step = Number.isFinite(dt) && dt > 0 ? dt : 0;',
+    replace: '  const step = dt;',
+    detectedBy: UNIT,
+  },
+  {
     item: 'M1',
     name: 'the frame loop invents a delta for the frame it cannot measure',
     file: 'src/ui/loop.ts',
@@ -4661,6 +4842,25 @@ const EDITS = [
     file: 'src/render/animate.ts',
     find: '  return clampProgress(progress) >= DONE / 2;',
     replace: '  return clampProgress(progress) >= DONE / 4;',
+    detectedBy: UNIT,
+  },
+  {
+    // The wiring rather than the curve. Every entry above breaks what a flip
+    // looks like; these two break whether the scene flips the right card at
+    // all, which was graded by nothing until the reveal was driven end to end.
+    item: 'E6',
+    name: 'the reveal turns the dealer up card instead of the hole card',
+    file: 'src/render/scene.ts',
+    find: '              flipAt === null ? null : { index: HOLE_CARD, progress: flipAt },',
+    replace: '              flipAt === null ? null : { index: 0, progress: flipAt },',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E6',
+    name: 'the flip restarts on every frame instead of only when the reveal arrives',
+    file: 'src/render/scene.ts',
+    find: '    if (was > 0 && state.dealer.length > HOLE_CARD) {',
+    replace: '    if (state.dealer.length > HOLE_CARD) {',
     detectedBy: UNIT,
   },
   {
@@ -4778,8 +4978,8 @@ const EDITS = [
     item: 'E7',
     name: 'the media query is never read, so the page answers no-preference',
     file: 'src/ui/motion.ts',
-    find: '  return matchMedia(REDUCED_MOTION_QUERY);',
-    replace: '  return null;',
+    find: '  const query = options.query === undefined ? mediaQuery(REDUCED_MOTION_QUERY) : options.query;',
+    replace: '  const query = options.query === undefined ? null : options.query;',
     detectedBy: REDUCED_MOTION,
   },
   {
@@ -4841,6 +5041,29 @@ const EDITS = [
     find: '      table.setSpeed(speed);',
     replace: '      void speed;',
     detectedBy: SPEED_SETTING,
+  },
+  {
+    // The mid-round switch, which SPEC 14 allows in as many words. The age
+    // outlives the Speed it was accumulated at, so the cap has to be the
+    // longest span any Speed can ask for. Capping at the scaled span parks a
+    // Fast-finished age at 0.6 of the constant and the next Normal frame reads
+    // it back at progress 0.6: every settled card, chip and hand width flies a
+    // second time. Only one direction shows it, which is why the pinning test
+    // carries the Normal-to-Fast control beside the Fast-to-Normal case.
+    item: 'E9',
+    name: 'a tween ages against the Speed it is running at, so a switch resurrects it',
+    file: 'src/render/scene.ts',
+    find: '  const span = PACING[timer.pacing];',
+    replace: '  const span = PACING[timer.pacing] * 0.6;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E9',
+    name: 'the hand re-centre ages against the Speed, so a switch re-slides it',
+    file: 'src/render/scene.ts',
+    find: '  held.age = Math.min(held.age + dt, PACING.handRecentre);',
+    replace: "  held.age = Math.min(held.age + dt, motion.seconds('handRecentre'));",
+    detectedBy: UNIT,
   },
   {
     item: 'E6',
@@ -5025,12 +5248,27 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // AUDIT-1 re-pointed this: the write is keyed on the disclosure policy
+    // rather than on the breakpoint's name, so the line it lands on now reads
+    // the resolved answer. The mutant is unchanged in meaning.
     item: 'F3',
     name: 'the disclosure stays open at every width, so nothing is re-arranged',
     file: 'src/ui/components/readouts.ts',
-    find: '        more.open = showsEveryReadout(breakpoint);',
+    find: '        more.open = wanted;',
     replace: '        more.open = true;',
     detectedBy: PORTRAIT,
+  },
+  {
+    // The rotation. `compact` and `portrait` are one policy, and the guard has
+    // to compare what the breakpoint decides rather than which of the two
+    // names it is, or a device turning on its side shuts a disclosure the
+    // player opened.
+    item: 'F3',
+    name: 'the disclosure is re-armed on a name change, so a rotation closes it',
+    file: 'src/ui/components/readouts.ts',
+    find: '      if (appliedBreakpoint === null || wanted !== showsEveryReadout(appliedBreakpoint)) {',
+    replace: '      if (breakpoint !== appliedBreakpoint) {',
+    detectedBy: BREAKPOINTS,
   },
   {
     item: 'F3',
@@ -5299,6 +5537,19 @@ const EDITS = [
     file: 'src/ui/input.ts',
     find: '        const back = restoreTo !== null && focusable(restoreTo) ? restoreTo : anchor;',
     replace: '        const back = anchor;',
+    detectedBy: KEYBOARD,
+  },
+  {
+    // The third transition, which the two branches used to fall between: the
+    // player presses a second opener with a panel already up. The openers are
+    // background controls and nothing disables them, so this is two presses.
+    // Under `open === null` neither branch ran, the arriving panel never took
+    // focus, and Close went back to the opener of the panel already left.
+    item: 'D4',
+    name: 'a switch straight from one overlay to another moves no focus and restores to the wrong opener',
+    file: 'src/ui/input.ts',
+    find: '      if (wanted !== null && wanted !== open) {',
+    replace: '      if (wanted !== null && open === null) {',
     detectedBy: KEYBOARD,
   },
   {
@@ -5812,6 +6063,18 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The dealer has no bust state on the readout, so the cue reads the value
+    // off the face-up cards; drop the reading and every dealer draw sounds a
+    // bust. The player's arm reads `hand.state` and is not touched by this.
+    item: 'K5',
+    name: 'the dealer bust cue fires on every dealer draw rather than the one that busted',
+    file: 'src/ui/cues.ts',
+    find:
+      '    if (now.dealerVisible.length > before.dealerVisible.length && isBust(now.dealerVisible)) {',
+    replace: '    if (now.dealerVisible.length > before.dealerVisible.length) {',
+    detectedBy: UNIT,
+  },
+  {
     item: 'K5',
     name: 'the shuffle cue fires on every round boundary rather than a reshuffle',
     file: 'src/ui/cues.ts',
@@ -5833,6 +6096,19 @@ const EDITS = [
     file: 'src/ui/announce.ts',
     find: '  if (next.context.muted !== prior.context.muted) {',
     replace: '    if (false && next.context.muted !== prior.context.muted) {',
+    detectedBy: UNIT,
+  },
+  {
+    // The one input the bare comparison answers outside its own range. The
+    // stand-in's gain setter is as strict as the real `AudioParam`, so the
+    // mutant both reports a `NaN` volume and throws inside the gesture handler
+    // the engine promises never throws from.
+    item: 'K3',
+    name: 'the volume clamp answers NaN, which reaches the master gain',
+    file: 'src/ui/audio.ts',
+    find:
+      '  return Number.isNaN(value) ? DEFAULT_VOLUME : Math.min(MAX_VOLUME, Math.max(MIN_VOLUME, value));',
+    replace: '  return Math.min(MAX_VOLUME, Math.max(MIN_VOLUME, value));',
     detectedBy: UNIT,
   },
   {
@@ -5879,6 +6155,18 @@ const EDITS = [
     detectedBy: PERSISTENCE,
   },
   {
+    // AUDIT-1. `theme` was the one persisted setting with no boot door, while
+    // its own comment cited the Speed precedent that includes one. The mutant
+    // is the shape it shipped in: the document decides and an explicit option
+    // is silently ignored.
+    item: 'I4',
+    name: 'the theme option is dropped, so only the document can choose one',
+    file: 'src/main.ts',
+    find: '  let theme: Theme = options.theme ?? persisted.settings.theme;',
+    replace: '  let theme: Theme = persisted.settings.theme;',
+    detectedBy: UNIT,
+  },
+  {
     item: 'I4',
     name: 'the save assembles a document and writes nothing',
     file: 'src/main.ts',
@@ -5894,6 +6182,32 @@ const EDITS = [
     replace:
       "  const reset = button(\n    'Reset all data',\n    () => {\n      actions.resetAllData();\n    },",
     detectedBy: DATA_RESET,
+  },
+  {
+    // The other half of the same clause: a confirmation that stays armed after
+    // the panel closes is a "Clear everything" button waiting for whoever opens
+    // Settings next. The panel cannot observe its own close, so the disarm is
+    // the overlay step's, and a no-op there is invisible to every other test.
+    item: 'I5',
+    name: 'the reset confirmation is never disarmed, so a re-opened Settings inherits it armed',
+    file: 'src/ui/components/overlays.ts',
+    find: "      if (open !== 'settings') {\n        settings.disarm();\n      }",
+    replace: "      if (open !== 'settings') {\n        void settings;\n      }",
+    detectedBy: DATA_RESET,
+  },
+  {
+    // AUDIT-1's sibling note. `store.ts` answers `durable: false` on the arm
+    // where its probe was refused and `persistence.ts` runs a memory fallback
+    // behind it, so the panel stated SPEC 14's "stored in this browser only" in
+    // the one session where nothing is stored at all. The graded sentence is
+    // untouched and this is the line under it; showing it always would tell
+    // every ordinary session its progress is being thrown away.
+    item: 'I5',
+    name: 'the blocked-storage note is shown unconditionally, in every session',
+    file: 'src/ui/components/overlays.ts',
+    find: '      setHidden(notDurableNote, state.durable);',
+    replace: '      setHidden(notDurableNote, true);',
+    detectedBy: UNIT,
   },
   {
     item: 'I5',
@@ -6037,14 +6351,52 @@ const EDITS = [
     detectedBy: ONBOARDING,
   },
   {
+    // Second detector, verified by hand: the 50,000-round soak now stages a
+    // house-rule record at the betting screen and, one turn in forty, in the
+    // middle of a player turn, and its audit fails outright if a stage becomes
+    // the record in force anywhere but an accepted deal. `house-rules-staging`
+    // remains the first and the narrower one; both files run under UNIT.
     item: 'I5',
     name: 'a staged rule record applies the moment it is staged',
     file: 'src/core/table.ts',
-    find: '  function setRules(next: HouseRules): void {\n    staged = next;\n  }',
-    replace: '  function setRules(next: HouseRules): void {\n    staged = next;\n    applyStagedRules();\n  }',
+    find: '    staged = houseRules(next);',
+    replace: '    staged = houseRules(next);\n    applyStagedRules();',
     detectedBy: UNIT,
   },
   {
+    // The setter's other half. `createTable` has always normalised its own
+    // options through `houseRules`, which copies and freezes; the setter held
+    // the caller's own object, `applyStagedRules` assigned it straight to
+    // `rules`, and `readout()` handed it back, so a caller who kept a reference
+    // could edit the rules in force in the middle of a round. SPEC 14 forbids
+    // exactly that, and `rules.ts`'s readonly fields are a compile-time claim.
+    item: 'I5',
+    name: 'the staged record is the caller\'s own object, editable mid-round',
+    file: 'src/core/table.ts',
+    find: '    staged = houseRules(next);',
+    replace: '    staged = next;',
+    detectedBy: UNIT,
+  },
+  {
+    // `table.ts`'s header calls the wallet's throws "unreachable from any
+    // player action in any phase" and `phase-legality.test.ts` carries a
+    // describe block titled after the same claim. Both held only while a staged
+    // record was a valid `HouseRules`: `applyStagedRules` runs from the `deal`
+    // arm after `wallet.commitInitial` has spent the wager, and `createShoe`
+    // opens by asserting the deck count, so an out-of-range record threw out of
+    // `apply` with the money gone and every later Deal threw again. Dropping the
+    // guard puts that wedge back.
+    item: 'C2',
+    name: 'a staged deck count is not refused, so an ordinary Deal reaches a wallet throw',
+    file: 'src/core/table.ts',
+    find: '    assertDeckCount(next.decks);\n    staged = houseRules(next);',
+    replace: '    staged = houseRules(next);',
+    detectedBy: UNIT,
+  },
+  {
+    // Second detector, verified by hand, as above: the soak's shoe invariant
+    // requires the shoe in play to deal the deck count the record in force
+    // names, so a rebuild that stops firing is caught on the first deck flip.
     item: 'I5',
     name: 'a deck-count change keeps dealing from the old shoe',
     file: 'src/core/table.ts',
@@ -6053,6 +6405,11 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // Its detector is `tests/unit/chrome.test.ts`, the test named "stops on
+    // hidden, writes, and resumes with no gap penalty", which is what `UNIT`
+    // means here. Named because the file this mutates is a browser-shaped one:
+    // a scoped `persistence + visibility` chromium re-proof comes back green
+    // and would be misread as a survivor.
     item: 'C7',
     name: 'the hidden tab pauses without writing the document',
     file: 'src/ui/loop.ts',
@@ -6264,11 +6621,39 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // AUDIT-1 re-pointed this find: the entry point truncates before dividing,
+    // so the readout cannot print a milestone's own threshold back to a player
+    // the milestone has not awarded. The mutant is unchanged in meaning.
     item: 'M2',
     name: 'the coach accuracy stops being divided by a hundred',
     file: 'src/ui/format.ts',
-    find: '    percentOfHundred: (value: number) => share.format(value / PERCENT_SCALE),',
-    replace: '    percentOfHundred: (value: number) => share.format(value),',
+    find: '    percentOfHundred: (value: number) => share.format(Math.floor(value) / PERCENT_SCALE),',
+    replace: '    percentOfHundred: (value: number) => share.format(Math.floor(value)),',
+    detectedBy: UNIT,
+  },
+  {
+    // The pair the entry above was missing. `statistics.ts` grades the 90
+    // percent milestone with an exact integer inequality and this renders the
+    // same two counters; a half-expand rounding here printed `Accuracy 90%`
+    // above the milestone shown as unawarded for 2,435 distinct records
+    // between 100 and 1,000 decisions. Detected by the agreement sweep in
+    // `strategy-coach.test.ts`, which walks that whole grid.
+    item: 'J3',
+    name: 'the accuracy readout rounds where the milestone threshold truncates',
+    file: 'src/ui/format.ts',
+    find: '    percentOfHundred: (value: number) => share.format(Math.floor(value) / PERCENT_SCALE),',
+    replace: '    percentOfHundred: (value: number) => share.format(value / PERCENT_SCALE),',
+    detectedBy: UNIT,
+  },
+  {
+    // SPEC 7 names three accuracy quantities and the readout published one, so
+    // the panel had a percentage with no denominator and 100 percent over a
+    // single decision read like 100 percent over four hundred.
+    item: 'J3',
+    name: 'the scope readout drops the denominator its percentage is taken over',
+    file: 'src/core/statistics.ts',
+    find: '    decisions: coach.decisions,\n    matched: coach.matched,',
+    replace: '    decisions: 0,\n    matched: 0,',
     detectedBy: UNIT,
   },
   {
@@ -6289,6 +6674,32 @@ const EDITS = [
     find: "  return isUnlocked(id, bestBalance) ? 'table-unaffordable' : 'table-not-unlocked';",
     replace: "  return 'table-not-unlocked';",
     detectedBy: UNIT,
+  },
+  {
+    // AUDIT-1's arm, on the entry above's pattern. `above-ceiling` carries two
+    // player meanings too: a chip whose denomination this table has no use for
+    // and a tap that would carry the wager past the ceiling. Collapsing the
+    // greyed chip back onto the machine's word tells a screen-reader user the
+    // chip is over the ceiling because of a wager it would build, which is not
+    // why it is greyed.
+    item: 'B15',
+    name: 'the greyed chip goes back to the sentence for a refused tap',
+    file: 'src/ui/availability.ts',
+    find:
+      "        refusal: chipEnabled(denomination, limits, wallet.chips) ? null : 'chip-over-ceiling',",
+    replace:
+      "        refusal: chipEnabled(denomination, limits, wallet.chips) ? null : 'above-ceiling',",
+    detectedBy: UNIT,
+  },
+  {
+    // And the control's own half: the betting bar reading a sentence of its
+    // own again is exactly the drift that made one chip say two things.
+    item: 'B15',
+    name: 'the betting bar writes its own refusal sentence instead of the one home',
+    file: 'src/ui/components/betting.ts',
+    find: "          reasonText('chip-over-ceiling'),",
+    replace: "          reasonText('above-ceiling'),",
+    detectedBy: BETTING,
   },
   {
     // The same split, one layer up: the sentence that reaches the greyed
@@ -6451,6 +6862,20 @@ const EDITS = [
     detectedBy: FORCED_COLORS,
   },
   {
+    // AUDIT-1, on the user's ruling. The row's own words are "no task exceeds
+    // 50 ms" and it compared the median of three per-run maxima, so
+    // `[52, 48, 48]` passed it: the exact shape of the compositor residual this
+    // build documents and CI watches. Reverting the verdict term to the median
+    // is caught by `report-gates.test.ts`, which pins the statistic and not
+    // only the threshold, in milliseconds rather than in three 60 s runs.
+    item: 'H4',
+    name: 'the worst-task row goes back to gating on the median of three runs',
+    file: 'scripts/report/perf.mjs',
+    find: '      `<= ${String(LONG_TASK)} ms`, worstAnyRun <= LONG_TASK],',
+    replace: '      `<= ${String(LONG_TASK)} ms`, results.worstTask <= LONG_TASK],',
+    detectedBy: UNIT,
+  },
+  {
     item: 'H2',
     name: 'the JavaScript ceiling is dropped below the bundle',
     file: 'scripts/report/bundle-size.mjs',
@@ -6465,6 +6890,33 @@ const EDITS = [
     find: '  return into;',
     replace: '  return into.length >= 0 ? [] : into;',
     detectedBy: BUNDLE_SIZE,
+  },
+  {
+    // AUDIT-1. The exclusion used to be residual: a file the HTML did not name
+    // was labelled `nomodule` and charged to neither ceiling, and 218 KB
+    // gzipped of eagerly fetched chunk was demonstrated invisible while the
+    // report printed PASS with headroom. Emptying the written-down set makes
+    // the one genuinely unfetched file unaccounted, and the new breach fires
+    // end to end, which is what proves the breach is reachable at all.
+    item: 'H2',
+    name: 'the not-fetched set is emptied, so an unmeasured shipped file passes as one',
+    file: 'scripts/report/bundle-size.mjs',
+    find: "const NOT_FETCHED_BY_A_MODULE_BROWSER = new Set(['unsupported.js']);",
+    replace: 'const NOT_FETCHED_BY_A_MODULE_BROWSER = new Set([]);',
+    detectedBy: BUNDLE_SIZE,
+  },
+  {
+    // The breach itself, graded the way every other report guard is: through
+    // `tests/unit/report-gates.test.ts`, in milliseconds rather than a build.
+    // Deleting the breach cannot redden the report on today's bundle, because
+    // today's bundle has nothing unaccounted in it; the guards table is what
+    // notices the guard going away.
+    item: 'H2',
+    name: 'the unaccounted-file breach is deleted, so an unnamed chunk is only a row',
+    file: 'scripts/report/bundle-size.mjs',
+    find: '  if (unaccounted.length > 0) {',
+    replace: '  if (false) {',
+    detectedBy: UNIT,
   },
   {
     item: 'D3',
@@ -6601,6 +7053,32 @@ const EDITS = [
   // green with zero rounds dealt. The fifth is the shipped defect the part
   // found and fixed, which had no entry until the review asked for one.
   // ------------------------------------------------------------------
+  {
+    // AUDIT-1. The rule shipped with a working detector and no entry, which is
+    // the one thing this file exists to establish for every other gated rule in
+    // that stylesheet. Removing the pin restores the 1029 x 579 to 1121 x 631
+    // change the spec compares, on all five timed screens at once.
+    item: 'H4',
+    name: 'the timed screens stop holding the action-row height, and the surface resizes again',
+    file: 'src/ui/chrome.css',
+    find: '  min-height: calc(var(--space-5) + var(--space-2) + var(--target-min));',
+    replace: '  min-height: 0;',
+    detectedBy: SURFACE_STABILITY,
+  },
+  {
+    // The declaration's own form, which the browser spec cannot see: the old
+    // `calc(var(--target-min) + var(--space-6))` computes the same 76 px today,
+    // so no rendered property distinguishes them. What distinguishes them is a
+    // move in `--space-5` or `--space-2`, and `tests/unit/tokens.test.ts` is
+    // what notices that. This entry breaks the declaration in the one way a
+    // rendered property does see.
+    item: 'H4',
+    name: 'the pin is written out of the wrong tokens, so the row stops equalling itself',
+    file: 'src/ui/chrome.css',
+    find: '  min-height: calc(var(--space-5) + var(--space-2) + var(--target-min));',
+    replace: '  min-height: calc(var(--space-5) + var(--space-2));',
+    detectedBy: SURFACE_STABILITY,
+  },
   {
     item: 'H4',
     name: 'the felt cache is blinded, so every size change bakes again',
@@ -6861,6 +7339,25 @@ const ADDITIONS = [
     detectedBy: UNIT,
   },
   {
+    // The DOM-text census's own reach, planted in the shape a line-scoped scan
+    // could not see: the writer on one line and the number on the next, which
+    // is what prettier does to any call wide enough to wrap. Six shipped
+    // `src/ui/` sites are already written that way, and two of them were
+    // spelling a deck count in no locale at all until AUDIT-1 widened the scan
+    // to read the argument that becomes text rather than the line it starts on.
+    item: 'M2',
+    name: 'a raw number is written into DOM text across two lines in the real src/ui/',
+    file: 'src/ui/__mutation__.ts',
+    content:
+      'export function show(node: HTMLElement, count: number): void {\n' +
+      '  setText(\n' +
+      '    node,\n' +
+      '    String(count),\n' +
+      '  );\n' +
+      '}\n',
+    detectedBy: UNIT,
+  },
+  {
     item: 'L1',
     name: 'a currency symbol is added to the real src/ui/',
     file: 'src/ui/__mutation__.ts',
@@ -6995,7 +7492,24 @@ function runEdit(mutation) {
     );
   }
   try {
-    writeFileSync(path, original.replace(mutation.find, mutation.replace));
+    // **The replacement is a function, so `$` in a `replace` value is literal.**
+    // `String.prototype.replace` interprets `$&`, `` $` ``, `$'`, `$$` and
+    // `$<name>` in a string replacement, so an entry whose `replace` carried one
+    // would write something other than its own text into the source and the
+    // ledger line would then name a mutation that never ran. The failure is
+    // quiet in the interesting direction: if the mangled text still breaks the
+    // property, the entry is recorded detected and the sweep is one entry less
+    // honest than it says it is. A function replacement disables the whole
+    // mechanism rather than asking every future entry to escape correctly.
+    //
+    // Byte-identical for every entry in this file today: a scan of the whole
+    // ledger for `$&`, `` $` ``, `$'`, `$$`, `$<` and `$1` to `$9` finds one
+    // occurrence, `'$5 a hand'`, and that is an ADDITION's `content`, written
+    // by `runAddition` below and never passed through `replace`.
+    writeFileSync(
+      path,
+      original.replace(mutation.find, () => mutation.replace),
+    );
     record(mutation, !passes(mutation.detectedBy));
   } finally {
     writeFileSync(path, original);

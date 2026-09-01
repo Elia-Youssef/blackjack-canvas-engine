@@ -27,7 +27,8 @@
     "report:perf": "node scripts/report/perf.mjs",
     "report:lighthouse": "npm install --no-save --no-package-lock --no-audit --no-fund lighthouse@13.4.1 && node scripts/report/lighthouse.mjs",
     "report:memory": "node scripts/report/memory.mjs",
-    "report:all": "npm run report:bundle-size && npm run report:contrast && npm run report:touch-targets && npm run report:perf && npm run report:lighthouse && npm run report:memory",
+    "report:all": "node scripts/report/all.mjs",
+    "verify:reports": "npm run report:bundle-size && npm run report:contrast && npm run report:touch-targets && npm run report:perf",
     "verify:mutations": "node scripts/mutation-check.mjs",
     "verify": "npm run verify:policy && npm run typecheck && npm run lint && npm run test && npm run test:browser && npm run verify:build"
   },
@@ -35,6 +36,7 @@
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.62.1",
     "@types/node": "26.2.0",
+    "@vitest/coverage-v8": "4.1.11",
     "axe-core": "4.13.0",
     "eslint": "10.9.0",
     "globals": "17.11.0",

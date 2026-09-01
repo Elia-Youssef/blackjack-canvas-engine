@@ -297,8 +297,6 @@ export const EASE = {
   inOut: [0.4, 0, 0.2, 1],
 } as const satisfies Record<string, readonly [number, number, number, number]>;
 
-export type EaseName = keyof typeof EASE;
-
 /**
  * The duration a caller should use, given the reduced-motion flag.
  *

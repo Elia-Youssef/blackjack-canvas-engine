@@ -19,15 +19,21 @@
  * the current answer without a subscription. `motion.ts` subscribes because it
  * has to answer between frames as well, through `MotionPreference.reduced()`
  * being consulted by the probe; nothing needs that here. The absence also keeps
- * a gate intact: `tests/unit/input-surface.test.ts` pins the whole product to
- * three event listeners, one per input path, and a fourth would have to be
- * argued for rather than added.
+ * a gate intact: `tests/unit/input-surface.test.ts` pins the product's exact
+ * listener list, name by name and by a strict comparison, so a listener added
+ * anywhere has to be argued into that list rather than added quietly. The list
+ * has grown with the parts that needed it; what the gate holds is not a number
+ * but that nothing joins it silently.
  *
  * `matchMedia` is read off the global scope by name, exactly as `motion.ts` and
  * the composition root read theirs, because `tests/unit/storage-write-failure
  * .test.ts` requires that exactly one file under `src/` names the platform
- * storage globals through `window`.
+ * storage globals through `window`. The reading itself is
+ * `src/ui/platform.ts`'s; what stays here is the query and the decision not to
+ * subscribe to it.
  */
+
+import { mediaQuery } from './platform';
 
 /** The media query QUALITY-BAR section 5 and item `G9` are both written on. */
 export const FORCED_COLORS_QUERY = '(forced-colors: active)';
@@ -51,24 +57,14 @@ export interface ForcedColorsOptions {
   readonly query?: MediaQueryList | null;
 }
 
-/**
- * Read the platform's answer, or `null` where there is nothing to ask.
- *
- * A host with no `matchMedia` is not a host in forced colors: it is a host that
- * has not been asked. All three engines the browser gate runs carry it; the
- * guard is for the headless runner, which has no media at all.
- */
-function platformQuery(): MediaQueryList | null {
-  if (typeof matchMedia !== 'function') {
-    return null;
-  }
-  return matchMedia(FORCED_COLORS_QUERY);
-}
-
 export function createForcedColorsPreference(
   options: ForcedColorsOptions = {},
 ): ForcedColorsPreference {
-  const query = options.query === undefined ? platformQuery() : options.query;
+  // Read the platform's answer, or `null` where there is nothing to ask. A host
+  // with no `matchMedia` is not a host in forced colors: it is a host that has
+  // not been asked. All three engines the browser gate runs carry it; the guard
+  // is for the headless runner, which has no media at all.
+  const query = options.query === undefined ? mediaQuery(FORCED_COLORS_QUERY) : options.query;
   return {
     // Read per call rather than captured at construction: a player who turns
     // high contrast on at the operating system level while the game is open gets

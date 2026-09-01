@@ -51,6 +51,8 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { stripComments as withoutComments } from './support/source-scan';
+
 import type { Card, Rank, Suit } from '../../src/core/cards';
 import { card } from '../../src/core/cards';
 import { settle, settleInsurance } from '../../src/core/settlement';
@@ -466,17 +468,6 @@ describe('B14: no rounding call exists in the settlement module', () => {
     fileURLToPath(new URL('../../src/core/settlement.ts', import.meta.url)),
     'utf8',
   );
-
-  /**
-   * Comments are prose, and prose is allowed to name a rounding call. The same
-   * strip `tokens.test.ts` uses on component sources, and for the same reason:
-   * a gate that went red because a doc comment explained why the module does
-   * not round would be switched off inside a week, and the paragraph arguing
-   * against rounding is exactly the paragraph a settlement module should carry.
-   */
-  function withoutComments(text: string): string {
-    return text.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1');
-  }
 
   /**
    * Every way a payout could be rounded, including the bitwise idioms.

@@ -90,7 +90,7 @@ function feltLayerFor(
     dpr,
     palette,
   };
-  return bakeFelt(document.createElement('canvas'), spec, demoGrain(felt, dpr, palette));
+  return bakeFelt(document.createElement('canvas'), spec, () => demoGrain(felt, dpr, palette));
 }
 
 /** The grain pair a demo bake needs, made the way the composition root does. */
@@ -242,7 +242,7 @@ export function bakeDeterminism(dpr = 1): { same: boolean; otherFeltIdentical: b
         dpr,
         palette: STANDARD_PALETTE,
       },
-      demoGrain(felt, dpr, STANDARD_PALETTE),
+      () => demoGrain(felt, dpr, STANDARD_PALETTE),
     );
     return canvas.toDataURL();
   };

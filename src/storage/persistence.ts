@@ -43,6 +43,20 @@
  *      inconsistent even when neither is corrupt, and `launchTable` is the
  *      function SPEC 13 gives for exactly that.
  *
+ * **Two tabs on the one key are last-writer-wins on whole documents, and that
+ * is the chosen design rather than an oversight.** Each tab loads the document
+ * once at construction and holds it in memory as authoritative, and every save
+ * writes the whole of it, so a second tab that merely goes hidden writes the
+ * document it booted with over whatever the first tab has since achieved. SPEC
+ * 13 and QUALITY-BAR section 8 are silent on more than one tab, and section 8's
+ * own framing is that persistence is best-effort: nothing a player would be
+ * upset to lose may be gated on storage surviving. The alternative, re-reading
+ * on the write path to merge the monotone fields, buys back the unlocks at the
+ * cost of putting a read on every save and giving the document two authorities,
+ * which is the design this file exists not to have.
+ * `tests/unit/storage-write-failure.test.ts` pins the behaviour as the decision
+ * it is, so a change to it is deliberate rather than accidental.
+ *
  * **The chip balance is not here, and cannot be.** SPEC 13 does not persist one,
  * `GameDocument` has no field for it, and the wallet this file builds starts at
  * `STARTING_CHIPS` because that is what `createWallet` does. Item `I4` at
@@ -286,17 +300,34 @@ export interface PersistenceReadout {
   readonly load: LoadReport;
 }
 
-/** SPEC 13's persistence, as the composition root at `BJ-19` will hold it. */
+/**
+ * SPEC 13's persistence, as the composition root holds it.
+ *
+ * **Three of the six are the shipped page's, and two of the rest are
+ * test-facing seams.** `restored()`, `save()` and `resetAll()` are what
+ * `src/main.ts` calls. `document()` and `update()` are consumed by
+ * `tests/unit/storage-migration.test.ts` and `tests/unit/storage-corrupt.test.ts`
+ * and by nothing under `src/`: the root assembles the whole document from the
+ * live session at every save rather than patching a held one, deliberately, so
+ * the patch form is a convenience for a test that wants one field moved.
+ * Named here rather than deleted, so the surface reads as what it is.
+ */
 export interface Persistence {
   /** The degradation, for the settings panel and for a test. */
   readout(): PersistenceReadout;
-  /** The authoritative in-memory document. */
+  /** The authoritative in-memory document. A test-facing seam. */
   document(): GameDocument;
-  /** The launch this load produced. Rebuilt only by `resetAll`. */
-  session(): RestoredSession;
+  /**
+   * The launch this load produced. Rebuilt only by `resetAll`.
+   *
+   * Named `restored` and not `session`, because `Game.session()` in
+   * `src/main.ts` is a different shape with a different lifetime, the live
+   * settings set rebuilt on every call, and the composition root holds both.
+   */
+  restored(): RestoredSession;
   /** Replace the document and try to write it. */
   save(next: GameDocument): SaveResult;
-  /** Replace some of the document and try to write it. */
+  /** Replace some of the document and try to write it. A test-facing seam. */
   update(patch: Partial<GameDocument>): SaveResult;
   /**
    * SPEC 14's Reset all data, and SPEC 8's "cleared only by a full data reset".
@@ -392,7 +423,7 @@ export function createPersistence(probe: StoreProbe): Persistence {
      * 1,000 mid-session. Only `resetAll` replaces it, because that is the one
      * operation whose whole point is that everything starts again.
      */
-    session(): RestoredSession {
+    restored(): RestoredSession {
       return restored;
     },
     save,

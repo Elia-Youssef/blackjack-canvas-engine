@@ -79,7 +79,7 @@
  * the machine's acceptances rather than the page's clicks.
  */
 
-import { handValue } from '../core/hand';
+import { isBust } from '../core/hand';
 import type { MilestoneId } from '../core/statistics';
 import type { TableReadout } from '../core/table';
 import type { IntentKind } from '../core/types';
@@ -92,8 +92,15 @@ export interface CueFrame {
   readonly applied: IntentKind | null;
   /** The machine's snapshot, after the drain and the update. */
   readonly readout: TableReadout;
-  /** SPEC 9's awarded milestones, in award order. */
-  readonly milestones: readonly MilestoneId[];
+  /**
+   * SPEC 9's milestones **this frame** awarded, in award order. Usually empty.
+   *
+   * The list `observeRound` returned for the frame, not a difference of two
+   * milestone records: `statistics.ts` decides what an award is and publishes
+   * the answer, and a frame delta computed here would be a second derivation
+   * that is only correct while that record stays append-only.
+   */
+  readonly awarded: readonly MilestoneId[];
 }
 
 /**
@@ -177,8 +184,11 @@ export function cuesFor(previous: CueFrame | null, next: CueFrame): readonly Cue
     // The dealer's bust, on the draw that made it. A busted dealer never
     // draws again, `shouldHit` stops nothing else from stopping earlier, and
     // the value is read from the face-up cards only, which is all this
-    // derivation is ever shown.
-    if (now.dealerVisible.length > before.dealerVisible.length && handValue(now.dealerVisible).total > 21) {
+    // derivation is ever shown. The threshold is `hand.ts`'s, asked for rather
+    // than respelled: the readout carries no bust state for the dealer, which
+    // is why the value is read here at all, but the rule that reads it is
+    // still `core/`'s.
+    if (now.dealerVisible.length > before.dealerVisible.length && isBust(now.dealerVisible)) {
       cues.push('bust');
     }
   }
@@ -241,8 +251,7 @@ export function cuesFor(previous: CueFrame | null, next: CueFrame): readonly Cue
 
   // SPEC 9's awards, which are exactly once each by the statistics module's
   // own guard; one cue per award, in award order.
-  const awarded = next.milestones.length - previous.milestones.length;
-  for (let index = 0; index < awarded; index += 1) {
+  for (let index = 0; index < next.awarded.length; index += 1) {
     cues.push('milestone');
   }
 

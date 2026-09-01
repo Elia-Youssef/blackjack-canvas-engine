@@ -9,6 +9,19 @@
  * is about. What this file cannot see is the real browser's side of the
  * autoplay policy, which is `tests/browser/audio-start.spec.ts`'s half: there
  * the page's own `AudioContext` is wrapped before anything loads.
+ *
+ * **"It never throws" is asserted by its effects, and the runner is the real
+ * detector.** The engine's promise is kept inside listeners, and
+ * `EventTarget.dispatchEvent` *reports* a listener's exception rather than
+ * propagating it, so `expect(() => target.dispatchEvent(...)).not.toThrow()`
+ * passes over a listener that certainly threw. What actually reddens the suite
+ * when the engine rethrows, and what the `K2` mutation entry
+ * "a failed construction is rethrown instead of swallowed" is caught by, is
+ * vitest's unhandled-error channel and its non-zero exit. The assertions below
+ * therefore say what the engine did after the gesture, which is a claim a
+ * swallowed exception cannot satisfy; nobody should re-introduce the
+ * `not.toThrow` shape, and nobody should turn `dangerouslyIgnoreUnhandledErrors`
+ * on without reading this paragraph.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -114,7 +127,9 @@ describe('K2: no context exists before the first user gesture', () => {
         throw new Error('no audio on this platform');
       },
     });
-    expect(() => page.dispatchEvent(new Event('pointerdown'))).not.toThrow();
+    page.dispatchEvent(new Event('pointerdown'));
+    // The effect, not the absence of a throw: the gesture ran, the engine gave
+    // up on the context, and it still answers every later call.
     expect(engine.started()).toBe(true);
     engine.cue('win', 'roundResult');
     expect(engine.offered().win).toBe(1);
@@ -127,7 +142,8 @@ describe('K2: no context exists before the first user gesture', () => {
       visibility: page,
       contextFactory: () => null,
     });
-    expect(() => page.dispatchEvent(new Event('keydown'))).not.toThrow();
+    page.dispatchEvent(new Event('keydown'));
+    expect(engine.started()).toBe(true);
     engine.cue('blackjack', 'roundResult');
     expect(engine.offered().blackjack).toBe(1);
   });
@@ -209,7 +225,7 @@ describe('K2: the iOS session is routed once, behind the feature test', () => {
       audioSession: null,
       contextFactory: () => new RecordingAudioContext() as unknown as AudioContext,
     });
-    expect(() => page.dispatchEvent(new Event('pointerdown'))).not.toThrow();
+    page.dispatchEvent(new Event('pointerdown'));
     expect(engine.started()).toBe(true);
   });
 
@@ -252,8 +268,10 @@ describe('K2: the context is resumed again when the page becomes visible', () =>
       },
     });
     page.dispatchEvent(new Event('pointerdown'));
-    expect(() => page.dispatchEvent(new Event('visibilitychange'))).not.toThrow();
+    page.dispatchEvent(new Event('visibilitychange'));
     expect(engine.started()).toBe(true);
+    engine.cue('win', 'roundResult');
+    expect(engine.offered().win).toBe(1);
   });
 });
 
@@ -294,6 +312,41 @@ describe('K3: persisted mute and volume, applied at creation and live after', ()
     expect(context.master?.gain.value).toBeCloseTo(0.25, 12);
     engine.setVolume(9);
     expect(engine.volume()).toBe(MAX_VOLUME);
+  });
+
+  /**
+   * The one input `Math.min(MAX, Math.max(MIN, value))` answers outside its own
+   * range. `AudioParam.value` is a WebIDL restricted float, so a `NaN` reaching
+   * the master gain is a `TypeError` thrown inside the first-gesture handler,
+   * which is inside the one function this module promises never throws; the
+   * stand-in's gain setter is as strict as the real one so that this test can
+   * see it. Nothing reachable produces a non-finite volume today, and that is
+   * the point: the promise should not rest on the engine's two callers.
+   */
+  it('clamps a non-finite volume rather than answering with it', () => {
+    const page = new FakePage();
+    const context = new RecordingAudioContext();
+    const engine = createAudioEngine({
+      volume: Number.NaN,
+      listeners: page,
+      visibility: page,
+      contextFactory: () => context as unknown as AudioContext,
+    });
+    page.dispatchEvent(new Event('pointerdown'));
+    expect(engine.started()).toBe(true);
+    expect(engine.volume()).toBe(DEFAULT_VOLUME);
+    expect(context.master?.gain.value).toBe(DEFAULT_VOLUME);
+
+    engine.setVolume(Number.NaN);
+    expect(engine.volume()).toBe(DEFAULT_VOLUME);
+    expect(context.master?.gain.value).toBe(DEFAULT_VOLUME);
+
+    // The control: every finite value, both infinities included, clamps as the
+    // contract says, so the guard above is one hole rather than a broken clamp.
+    engine.setVolume(Number.POSITIVE_INFINITY);
+    expect(engine.volume()).toBe(MAX_VOLUME);
+    engine.setVolume(Number.NEGATIVE_INFINITY);
+    expect(engine.volume()).toBe(MIN_VOLUME);
   });
 });
 

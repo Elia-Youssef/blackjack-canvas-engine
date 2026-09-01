@@ -52,9 +52,11 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import type { Table, TableReadout } from '../../src/core/table';
+import { acceptIntent as accept } from './support/drive';
+import { stripComments as code } from './support/source-scan';
+
+import type { TableReadout } from '../../src/core/table';
 import { createTable } from '../../src/core/table';
-import type { Intent } from '../../src/core/types';
 import { STARTING_CHIPS } from '../../src/core/wallet';
 import type { GameDocument } from '../../src/storage/document';
 import { DEFAULT_DOCUMENT, STORAGE_KEY } from '../../src/storage/document';
@@ -151,14 +153,20 @@ describe('I3: a SecurityError on the property access falls back to memory', () =
     expect(() => probe.store.write(STORAGE_KEY, '{}')).not.toThrow();
   });
 
-  it('reports a store that answers as durable', () => {
+  it('reports a store that answers as durable, and passes all three calls through', () => {
     const backing = new Map<string, string>();
+    const calls: string[] = [];
     const storage: StorageLike = {
-      getItem: (key) => backing.get(key) ?? null,
+      getItem: (key) => {
+        calls.push('getItem');
+        return backing.get(key) ?? null;
+      },
       setItem: (key, value) => {
+        calls.push('setItem');
         backing.set(key, value);
       },
       removeItem: (key) => {
+        calls.push('removeItem');
         backing.delete(key);
       },
     };
@@ -168,6 +176,24 @@ describe('I3: a SecurityError on the property access falls back to memory', () =
 
     probe.store.write(STORAGE_KEY, 'through the adapter');
     expect(backing.get(STORAGE_KEY)).toBe('through the adapter');
+
+    // **All three pass-throughs, not just the write.** `adaptStorage` is the one
+    // place in the codebase that names the platform, and only its `setItem` arm
+    // had ever been driven by a unit test or broken by a mutation entry: a
+    // `getItem` that always answered `null` would make every reload look like a
+    // first launch, and a `removeItem` that did nothing would make Reset all
+    // data leave the document exactly where it was. Both are covered in the
+    // browser tier, which is precisely the shape the `BJ-20` sweep-miss lesson
+    // names, an entry family only one tier can see.
+    expect(probe.store.read(STORAGE_KEY)).toBe('through the adapter');
+    expect(probe.store.read('js-games.blackjack.absent')).toBeNull();
+    probe.store.remove(STORAGE_KEY);
+    expect(backing.has(STORAGE_KEY)).toBe(false);
+    expect(probe.store.read(STORAGE_KEY)).toBeNull();
+
+    // The count is the control: a read that answered out of a cache of its own
+    // rather than out of the platform would pass everything above.
+    expect(calls).toEqual(['setItem', 'getItem', 'getItem', 'removeItem', 'getItem']);
   });
 
   it('reports a refusal raised by the platform store, through the real adapter', () => {
@@ -218,14 +244,75 @@ describe('I3: a SecurityError on the property access falls back to memory', () =
   });
 });
 
+describe('I3: and the panel says so, in the one session where it matters', () => {
+  /**
+   * The consumer the degradation readout went without.
+   *
+   * `store.ts`'s own header says `durable` "exists so a settings panel can say
+   * plainly that progress will not carry, which is QUALITY-BAR section 8's last
+   * clause", and `persistence.readout()` had **no caller anywhere under
+   * `src/`**: the panel stated SPEC 14's "stored in this browser only" as a
+   * static string even in the session where the probe was refused and the whole
+   * game was running out of the memory fallback. The apparatus was built and
+   * tested at `BJ-11` and read by nothing.
+   *
+   * **Scanned rather than rendered, and the trade is stated.** This runner is a
+   * `node` environment with no `document`, so the panel cannot be built here;
+   * what a unit test can hold is that the composition root reads the answer, the
+   * frame carries it, and the panel's second line is conditional on it. The last
+   * hop, the line actually appearing on a browser that refuses site data, is not
+   * scriptable from this suite either: Playwright cannot make a real browser
+   * throw `SecurityError` on the `localStorage` property access. That half is
+   * noted rather than claimed.
+   *
+   * **The graded sentence is untouched.** Item `I5` grades SPEC 14's own
+   * wording and `scripts/mutation-check.mjs` anchors it character for character;
+   * this is a sibling line under it, shown only when `durable` is false, so the
+   * graded sentence reads identically in every ordinary session.
+   */
+  const MAIN = code(readFileSync(join(PROJECT_ROOT, 'src', 'main.ts'), 'utf8'));
+  const OVERLAYS = code(
+    readFileSync(join(PROJECT_ROOT, 'src', 'ui', 'components', 'overlays.ts'), 'utf8'),
+  );
+
+  it('reads the store answer once at boot and puts it on the frame', () => {
+    expect(MAIN, 'the composition root reads no degradation answer').toContain(
+      'const durable = persistence.readout().durable;',
+    );
+    expect(MAIN, 'the answer never reaches the chrome').toContain('      durable,');
+    // Once, not per frame: the probe ran at boot and the answer cannot move.
+    expect(MAIN.split('persistence.readout()').length - 1).toBe(1);
+  });
+
+  it('renders the note conditionally, and leaves the graded sentence alone', () => {
+    expect(OVERLAYS).toContain('setHidden(notDurableNote, state.durable);');
+    // The condition is the whole of it: an unconditional line would tell every
+    // ordinary session its progress is being thrown away.
+    expect(OVERLAYS, 'the note is shown unconditionally').not.toContain(
+      'setHidden(notDurableNote, false)',
+    );
+    // SPEC 14's own sentence, word for word, still written as a plain string.
+    expect(OVERLAYS).toContain(
+      "text: 'Progress is stored in this browser only and can be cleared by the browser itself.',",
+    );
+  });
+
+  it('states a different fact from the graded sentence, or it is not worth a line', () => {
+    // A note that paraphrased the sentence above would be a second copy of a
+    // wording clause rather than an answer to it.
+    expect(OVERLAYS).toContain('This browser is refusing to store anything');
+    expect(OVERLAYS).toContain("attributes: { 'data-field': 'storage-blocked' }");
+  });
+});
+
 describe('I3: without preventing the game from starting', () => {
   it('starts the game on a blocked browser, all the way to SPEC 10 betting', () => {
     const host = throwingHost(securityError());
     const persistence = openPersistence(() => host.localStorage);
 
     expect(persistence.readout().durable).toBe(false);
-    expect(reachesBetting(persistence.session())).toBe(true);
-    expect(persistence.session().wallet.readout().chips).toBe(SPEC_STARTING_CHIPS);
+    expect(reachesBetting(persistence.restored())).toBe(true);
+    expect(persistence.restored().wallet.readout().chips).toBe(SPEC_STARTING_CHIPS);
   });
 
   it('starts the game when the store refuses the read', () => {
@@ -235,7 +322,7 @@ describe('I3: without preventing the game from starting', () => {
     expect(persistence.readout().load.source).toBe('unreadable');
     expect(persistence.readout().load.failure?.name).toBe('SecurityError');
     expect(persistence.document()).toEqual(DEFAULT_DOCUMENT);
-    expect(reachesBetting(persistence.session())).toBe(true);
+    expect(reachesBetting(persistence.restored())).toBe(true);
   });
 
   it('says plainly that the carry is degraded, which is what settings shows', () => {
@@ -314,13 +401,6 @@ describe('I3: the in-memory value stays authoritative', () => {
 // ---------------------------------------------------------------------------
 // A write that throws does not interrupt the round
 // ---------------------------------------------------------------------------
-
-function accept(table: Table, intent: Intent): void {
-  const result = table.apply(intent);
-  if (!result.ok) {
-    throw new Error(`${result.kind} was refused by ${result.layer} as ${result.reason}`);
-  }
-}
 
 /**
  * Play one round, saving at every phase transition. The shape a composition
@@ -458,7 +538,7 @@ describe('I3: reset all data degrades the same way', () => {
     const result = persistence.resetAll();
     expect(result.ok).toBe(false);
     expect(persistence.document()).toEqual(DEFAULT_DOCUMENT);
-    expect(persistence.session().wallet.readout().bestBalance).toBe(STARTING_CHIPS);
+    expect(persistence.restored().wallet.readout().bestBalance).toBe(STARTING_CHIPS);
     expect(persistence.readout().carryDegraded).toBe(true);
   });
 
@@ -477,9 +557,9 @@ describe('I3: reset all data degrades the same way', () => {
     createPersistence({ store, durable: true, failure: null }).save(carried);
 
     const persistence = createPersistence({ store, durable: true, failure: null });
-    expect(persistence.session().wallet.readout().bestBalance).toBe(11_000);
-    expect(persistence.session().launch.table).toBe('gold');
-    expect(persistence.session().howToPlaySeen).toBe(true);
+    expect(persistence.restored().wallet.readout().bestBalance).toBe(11_000);
+    expect(persistence.restored().launch.table).toBe('gold');
+    expect(persistence.restored().howToPlaySeen).toBe(true);
     expect(store.read(STORAGE_KEY)).not.toBeNull();
 
     expect(persistence.resetAll().ok).toBe(true);
@@ -487,10 +567,10 @@ describe('I3: reset all data degrades the same way', () => {
     expect(persistence.document()).toEqual(DEFAULT_DOCUMENT);
     // SPEC 14's "clears every persisted value": a fresh wallet at the starting
     // mark, back at the table SPEC 6 never locks, with nothing seen.
-    expect(persistence.session().wallet.readout().bestBalance).toBe(STARTING_CHIPS);
-    expect(persistence.session().launch.table).toBe('bronze');
-    expect(persistence.session().history).toHaveLength(0);
-    expect(persistence.session().howToPlaySeen).toBe(false);
+    expect(persistence.restored().wallet.readout().bestBalance).toBe(STARTING_CHIPS);
+    expect(persistence.restored().launch.table).toBe('bronze');
+    expect(persistence.restored().history).toHaveLength(0);
+    expect(persistence.restored().howToPlaySeen).toBe(false);
     expect(loadDocument(store).report.source).toBe('absent');
   });
 });
@@ -498,19 +578,6 @@ describe('I3: reset all data degrades the same way', () => {
 // ---------------------------------------------------------------------------
 // The two scanners, and the controls that prove they can see
 // ---------------------------------------------------------------------------
-
-/**
- * Strip comments so a scanner reads code and not prose.
- *
- * Deliberately simple, and its limits are known: a `//` inside a string literal
- * would be mistaken for a comment. The guard on the preceding character keeps a
- * `://` intact, and nothing under `src/storage/` contains either. The can-see
- * controls below are what make the simplicity safe: a stripper that removed too
- * much would fail them.
- */
-function code(text: string): string {
-  return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/(^|[^:])\/\/.*$/gm, '$1');
-}
 
 /** QUALITY-BAR section 12: a `catch` with no binding, or with an empty body. */
 function bareCatches(text: string): readonly string[] {
@@ -593,6 +660,45 @@ describe('I3: no bare catch, and the scanner can see one', () => {
       );
     }
     expect(handlers).toBeGreaterThan(0);
+  });
+});
+
+/**
+ * Two tabs on the one namespaced key, pinned as the design it is.
+ *
+ * SPEC 13 and QUALITY-BAR section 8 say nothing about a second tab, so this is
+ * not a graded criterion; it is a behaviour a player can reach, and the choice
+ * between accepting it and merging the monotone fields at the write is recorded
+ * in `persistence.ts`'s header. The pin is here so the decision cannot change by
+ * accident: the day someone puts a re-read on the save path, this goes red and
+ * says which sentence they are editing.
+ *
+ * Torn reads are deliberately not part of the claim. `setItem` and `getItem`
+ * are atomic per key and the document is one key, so what is at stake is which
+ * whole document wins, not a half-written one.
+ */
+describe('SPEC 13: one key, one document, and the last writer wins', () => {
+  it('lets a stale tab overwrite what the other tab achieved, which is the chosen design', () => {
+    const store = createMemoryStore();
+    // Both tabs boot on the same empty document, which is the realistic case:
+    // a second tab opened while the first is mid-session.
+    const tabA = createPersistence({ store, durable: true, failure: null });
+    const tabB = createPersistence({ store, durable: true, failure: null });
+
+    tabA.update({ bestBalance: 42_000, howToPlaySeen: true });
+    expect(loadDocument(store).document.bestBalance).toBe(42_000);
+
+    // Tab B writes anything at all: a settings toggle, a round boundary, or the
+    // pagehide save `main.ts` wires to `onHidden`. It carries its own boot-time
+    // document, so tab A's mark goes.
+    tabB.update({ howToPlaySeen: true });
+    expect(loadDocument(store).document.bestBalance).toBe(STARTING_CHIPS);
+
+    // The other half of the same design: tab A's own view is unaffected, because
+    // the in-memory document is authoritative and nothing re-reads.
+    expect(tabA.document().bestBalance).toBe(42_000);
+    tabA.update({ howToPlaySeen: true });
+    expect(loadDocument(store).document.bestBalance).toBe(42_000);
   });
 });
 

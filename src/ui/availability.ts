@@ -69,7 +69,18 @@ export interface ControlAvailability {
  */
 export type HandAction = Exclude<PlayerAction, 'takeInsurance' | 'declineInsurance'>;
 
-/** SPEC 4.5's five actions, in SPEC 4.5's order, with their labels. */
+/**
+ * SPEC 4.5's five actions, in SPEC 4.5's order, with their labels.
+ *
+ * **These are the control-row labels, and `double` is deliberately not the name
+ * `src/ui/text.ts`'s `actionText` gives it.** SPEC.md draws the action row as
+ * "Hit / Stand / Double / Split / Surrender", and SPEC 4.5's action table calls
+ * the same action "Double Down"; the button register follows the row and the
+ * prose register follows the table, so the coach verdict and the history line
+ * say "Double Down" while the button says "Double". The other four agree. Both
+ * spellings have a spec source, so unifying them in either direction drops one
+ * of the two and is a question for whoever owns the spec, not a tidy-up.
+ */
 export const ACTION_LABELS: Readonly<Record<HandAction, string>> = Object.freeze({
   hit: 'Hit',
   stand: 'Stand',
@@ -190,7 +201,10 @@ export function screenAvailability(readout: TableReadout): readonly ControlAvail
       return CHIP_DENOMINATIONS.map((denomination) => ({
         key: `chip-${String(denomination)}`,
         label: chipLabel(denomination),
-        refusal: chipEnabled(denomination, limits, wallet.chips) ? null : 'above-ceiling',
+        // The display-only split, on `tableRefusal`'s precedent: this is the
+        // denomination against the table rather than a tap against the
+        // ceiling, and the two are different facts about the same word.
+        refusal: chipEnabled(denomination, limits, wallet.chips) ? null : 'chip-over-ceiling',
       }));
     }
 

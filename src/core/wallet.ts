@@ -52,6 +52,19 @@
  * and otherwise the natural pays `wager x 3 / 2`, both of which exceed any
  * possible shortfall.
  *
+ * **There is no maximum balance, and none is needed.** SPEC 6 states none, this
+ * module enforces none, and the argument for that is arithmetic rather than
+ * taste: the initial wager is capped at the table maximum however rich the
+ * player is, at most four hands can be in play, and each may double once, so a
+ * single round can add at most `4 x 2 x 2000` chips and the growth is additive
+ * rather than multiplicative. Leaving `Number.MAX_SAFE_INTEGER` therefore takes
+ * over five hundred billion consecutive maximum-win rounds. That matters because
+ * every chip figure here is an exact integer and the whole file assumes so:
+ * `tests/unit/tables.test.ts` asserts the bound off `TABLES` so a table retune
+ * that broke it fails loudly instead of quietly making the assumption false.
+ * `createWallet`'s guard below reads `Number.isSafeInteger` for the same reason,
+ * which is also what `src/storage/document.ts` says about the persisted mark.
+ *
  * **A rejected bet changes nothing.** SPEC 4.11: a chip tap that would carry the
  * wager above `min(tableMax, chips)` is rejected with a reason, never silently
  * clamped, and Deal below the table minimum is blocked, never raised to it. Only
@@ -80,6 +93,10 @@
  * without touching it. It marks the **balance**, never the balance plus what is
  * still committed: a hand paid while its sibling is still on the table would
  * otherwise mark money that is at risk, and unlock a table early and for good.
+ * It is not the balance plus what is still owed either: SPEC 4.7's deferred
+ * stake is money `endRound` takes straight back, so the mark reads
+ * `chips - deferredStake` and the two readings the conserved quantity makes
+ * available are both refused for the same reason.
  * Lifetime statistics and milestones survive the same reset and are not this
  * module's: `statistics.ts` is built at `BJ-10`, `J6` grades the milestones and
  * `J5` the hand history, and `C4` at `BJ-20` grades the preservation clause end
@@ -183,6 +200,10 @@ export const LOWEST_TABLE: TableLimits = firstTable();
 function firstTable(): TableLimits {
   const first = TABLES[0];
   if (first === undefined) {
+    // Deliberately unpinned. `TABLES` is a frozen three-row literal in this
+    // file, so this arm is `noUncheckedIndexedAccess` asking for a reading of a
+    // list that cannot be empty; there is no construction that reaches it and a
+    // test would only assert that the literal has rows.
     throw new RangeError('SPEC 6 configures three tables and the list is empty');
   }
   return first;
@@ -251,7 +272,7 @@ export function canEnter(id: TableId, bestBalance: number, chips: number): boole
 export function highestEnterableTable(bestBalance: number, chips: number): TableLimits | null {
   for (let index = TABLES.length - 1; index >= 0; index -= 1) {
     const table = TABLES[index];
-    if (table !== undefined && bestBalance >= table.unlocksAt && chips >= table.minimum) {
+    if (table !== undefined && canEnter(table.id, bestBalance, chips)) {
       return table;
     }
   }
@@ -300,6 +321,10 @@ export function launchTable(persisted: TableId, bestBalance: number): LaunchChoi
     return Object.freeze({ table: persisted, fromFallback: false });
   }
   const fallback = highestEnterableTable(bestBalance, STARTING_CHIPS);
+  // The `null` arm is deliberately unpinned and unreachable: this call asks the
+  // question at `STARTING_CHIPS`, and Bronze's minimum is far below it, so the
+  // search always finds at least Bronze. It stays as the total-function belt
+  // that keeps `launchTable` from having to answer `null` itself.
   return Object.freeze({
     table: fallback === null ? LOWEST_TABLE.id : fallback.id,
     fromFallback: true,
@@ -333,9 +358,12 @@ export interface BustOut {
  */
 export function bustOut(current: TableId, bestBalance: number, chips: number): BustOut {
   const limits = tableLimits(current);
-  const index = TABLES.indexOf(limits);
-  const lower = TABLES.slice(0, index).filter(
-    (table) => bestBalance >= table.unlocksAt && chips >= table.minimum,
+  // Keyed on the id rather than on object identity: `indexOf` answering -1 is a
+  // legal `slice` argument, so a miss would quietly turn "the tables below mine"
+  // into "all but the last" rather than failing.
+  const index = TABLES.findIndex((table) => table.id === current);
+  const lower = TABLES.slice(0, index).filter((table) =>
+    canEnter(table.id, bestBalance, chips),
   );
   return Object.freeze({
     out: chips < limits.minimum,
@@ -654,7 +682,7 @@ export interface WalletOptions {
  */
 export function createWallet(options: WalletOptions = {}): Wallet {
   const carried = options.bestBalance ?? STARTING_CHIPS;
-  if (!Number.isInteger(carried) || carried < STARTING_CHIPS) {
+  if (!Number.isSafeInteger(carried) || carried < STARTING_CHIPS) {
     throw new RangeError(
       `a persisted best balance is a whole number of chips at or above ${String(STARTING_CHIPS)}; ` +
         `${String(carried)} is not`,
@@ -677,10 +705,23 @@ export function createWallet(options: WalletOptions = {}): Wallet {
   let insuranceStake = 0;
   let deferredStake = 0;
 
-  /** The high-water mark of SPEC 6. It rises and never falls. */
+  /**
+   * The high-water mark of SPEC 6. It rises and never falls.
+   *
+   * **The balance it marks is the settled one**, which is `chips` less what is
+   * still owed. SPEC 4.7's even money can leave part of the stake unfunded, and
+   * on every deferred round the balance peaks at exactly `2.5 x wager` between
+   * `settleHand` and `endRound` while `deferredStake` of that is money the
+   * player does not have: `endRound` takes it straight back. Marking the peak
+   * put the mark permanently above a balance the player never held free, in the
+   * number SPEC 6 keys every unlock to and SPEC 13 persists. It is the mirror of
+   * the third term's reading this module's header already refuses: money still
+   * at risk is not a balance, and neither is money still owed.
+   */
   function recordBest(): void {
-    if (chips > bestBalance) {
-      bestBalance = chips;
+    const settledBalance = chips - deferredStake;
+    if (settledBalance > bestBalance) {
+      bestBalance = settledBalance;
     }
   }
 
@@ -977,10 +1018,23 @@ export function createWallet(options: WalletOptions = {}): Wallet {
    * nothing at the new one. It refuses to run mid-round for the same reason
    * `endRound` does: a reset with chips still committed would create the
    * difference out of nothing.
+   *
+   * **Both of `endRound`'s conditions, not just the hands one.** An open
+   * insurance stake or an unpaid deferred remainder is money the identity is
+   * still counting, and raising `chips` to 1,000 underneath either of them adds
+   * that term to the conserved total out of nothing. No caller can reach that
+   * state today, because `table.ts` only takes a side wager with a hand in play,
+   * but that is the caller's shape rather than this module's guarantee, and the
+   * rest of the file refuses to lean on it.
    */
   function reset(): void {
     if (hands.length > 0) {
       throw new RangeError('a reset with hands in play would create chips; settle the round first');
+    }
+    if (insuranceStake !== 0 || deferredStake !== 0) {
+      throw new RangeError(
+        'a reset with a side wager open would create chips; SPEC 4.7 settles it first',
+      );
     }
     chips = STARTING_CHIPS;
     wager = NO_WAGER;

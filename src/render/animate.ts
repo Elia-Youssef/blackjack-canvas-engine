@@ -257,11 +257,6 @@ export function easeOut(progress: number): number {
   return ease(EASE.out, progress);
 }
 
-/** The symmetric curve. The flip uses it, so both halves match. */
-export function easeInOut(progress: number): number {
-  return ease(EASE.inOut, progress);
-}
-
 // ---------------------------------------------------------------------------
 // The resolved policy: one reduced-motion switch, one Speed multiplier
 // ---------------------------------------------------------------------------

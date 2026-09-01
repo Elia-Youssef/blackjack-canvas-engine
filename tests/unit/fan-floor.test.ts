@@ -28,11 +28,13 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { resolveMotion } from '../../src/render/animate';
 import { CARD_GEOMETRY } from '../../src/render/card';
 import {
   CARD_WIDTH_FLOOR,
   FAN_PITCH_FLOOR,
   SCENE_GEOMETRY,
+  createPlaySurface,
   fanCardWidth,
   fanFor,
   handLayout,
@@ -41,6 +43,9 @@ import {
   type Fan,
   type FanBand,
 } from '../../src/render/scene';
+import { STANDARD_PALETTE } from '../../src/render/tokens';
+
+import { createStyleFreeCanvas } from './support/recording-context';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CONTRACT = readFileSync(join(PROJECT_ROOT, 'tests', 'reference', 'design-contract.md'), 'utf8');
@@ -275,5 +280,80 @@ describe('E8: the pitch is what the layout actually spaces the cards by', () => 
     expect(laidWidth(5, fan.cardWidth, fan.pitch)).toBeCloseTo(fan.laid, 9);
     expect(laidWidth(0, fan.cardWidth, fan.pitch)).toBe(0);
     expect(laidWidth(1, fan.cardWidth, fan.pitch)).toBe(fan.cardWidth);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E8: the reading the browser probe measures against
+// ---------------------------------------------------------------------------
+
+/**
+ * `PlaySurface.fan()` was the one readout in the project that aliased live
+ * internal state.
+ *
+ * Every other readout in `core/`, `storage/` and `render/` is a frozen snapshot
+ * and says so; `fan()` returned the same mutable object on every call, so a
+ * caller's edit was visible to the next reader for the rest of the frame. That
+ * matters here rather than somewhere else because this is the surface item
+ * `E8`'s evidence travels on: `main.ts` puts it straight into `LayoutProbe` as
+ * the one field it does not copy, and `tests/browser/fan-floor.spec.ts` reads it
+ * to check the composited pixels against.
+ *
+ * The record is rebuilt whole on every frame, so it is frozen at the assignment
+ * rather than copied at the getter, which costs one call a frame and no copy.
+ */
+describe('E8: the fan reading is a snapshot, not a window onto the scene', () => {
+  const surfaceWith = (hands: number): ReturnType<typeof createPlaySurface> => {
+    const surface = createPlaySurface({
+      canvas: createStyleFreeCanvas().canvas,
+      offscreen: () => createStyleFreeCanvas().canvas,
+      sizing: { width: 800, height: 450, dpr: 1 },
+    });
+    surface.render(
+      {
+        felt: 'bronze',
+        limits: { minimum: 10, maximum: 100 },
+        dealer: [
+          { rank: 'A', suit: 'spades' },
+          { rank: '10', suit: 'hearts' },
+        ],
+        dealerConcealed: 0,
+        hands: Array.from({ length: hands }, () => ({
+          cards: [
+            { rank: 'K', suit: 'clubs' },
+            { rank: '9', suit: 'diamonds' },
+          ] as const,
+          wager: 50,
+          won: null,
+        })),
+        pendingWager: 0,
+        motion: resolveMotion({ reducedMotion: true, speed: 'normal' }),
+        palette: STANDARD_PALETTE,
+      },
+      1 / 60,
+    );
+    return surface;
+  };
+
+  it('freezes the reading and its regime list, so a reader cannot corrupt it', () => {
+    const surface = surfaceWith(2);
+    const reading = surface.fan();
+    expect(Object.isFrozen(reading)).toBe(true);
+    expect(Object.isFrozen(reading.regimes)).toBe(true);
+    expect(reading.regimes.length).toBe(3);
+    expect(reading.cardWidth).toBeGreaterThan(0);
+
+    // Both attacks, which the freeze turns into throws under this file's strict
+    // mode. Before it, the first left `-999` standing until the next frame
+    // rebuilt the record.
+    expect(() => {
+      (reading as { cardWidth: number }).cardWidth = -999;
+    }).toThrow(TypeError);
+    expect(() => {
+      (reading.regimes as string[]).push('CORRUPT');
+    }).toThrow(TypeError);
+
+    expect(surface.fan().cardWidth).toBe(reading.cardWidth);
+    expect(surface.fan().regimes.length).toBe(3);
   });
 });

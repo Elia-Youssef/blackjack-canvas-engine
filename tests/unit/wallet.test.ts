@@ -36,6 +36,8 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { bounded } from './support/drive';
+
 import type {
   BetResult,
   ChipDenomination,
@@ -120,19 +122,9 @@ type Wallet = ReturnType<typeof createWallet>;
  */
 const LOOP_LIMIT = 1000;
 
-function bounded(label: string): () => void {
-  let turns = 0;
-  return () => {
-    turns += 1;
-    if (turns > LOOP_LIMIT) {
-      throw new RangeError(`${label} did not finish inside ${String(LOOP_LIMIT)} turns`);
-    }
-  };
-}
-
 /** Build a wager out of chip taps, largest first. Every tap must land. */
 function place(wallet: Wallet, limits: TableLimits, target: number): void {
-  const turn = bounded('building a wager out of chip taps');
+  const turn = bounded('building a wager out of chip taps', LOOP_LIMIT);
   for (const chip of [500, 100, 50, 10] as const) {
     while (wallet.readout().wager + chip <= target) {
       turn();
@@ -823,7 +815,7 @@ describe('SPEC 4.11: the wager leaves the balance and the identity moves only on
 
     for (const plan of PLANS) {
       let taps = 0;
-      const turn = bounded('building the round wager');
+      const turn = bounded('building the round wager', LOOP_LIMIT);
       for (const chip of [500, 100, 50, 10] as const) {
         while (wallet.readout().wager + chip <= plan.wager) {
           turn();
@@ -1107,6 +1099,101 @@ describe('SPEC 4.10 and 4.12: the boundary and the reset refuse to lose money', 
     wallet.endRound();
     wallet.reset();
     expect(wallet.readout().chips).toBe(SPEC_STARTING_CHIPS);
+  });
+
+  /**
+   * `endRound` refuses two states and `reset` refuses the same two, which is
+   * what its doc-block claims. The stake arm is unreachable through `table.ts`
+   * (it only takes a side wager with a hand in play), so it is driven straight
+   * at the wallet: the point of the guard is that the wallet does not lean on
+   * the caller's shape for a term the identity is still counting.
+   */
+  it('refuses a reset with a side wager still open, on both terms', () => {
+    const funded = createWallet();
+    funded.takeInsurance(100);
+    expect(funded.readout().insuranceStake).toBe(100);
+    expect(funded.readout().hands).toEqual([]);
+    expect(() => {
+      funded.endRound();
+    }).toThrow(RangeError);
+    expect(() => {
+      funded.reset();
+    }).toThrow(RangeError);
+    // Nothing moved: the refusal is the whole behaviour.
+    expect(funded.readout().chips).toBe(SPEC_STARTING_CHIPS - 100);
+    expect(funded.readout().conserved).toBe(SPEC_STARTING_CHIPS);
+
+    // The fourth term on its own: a stake larger than the balance funds what it
+    // can and defers the rest, and the deferred remainder is money still owed.
+    const deferred = createWallet();
+    deferred.takeInsurance(SPEC_STARTING_CHIPS + 500);
+    expect(deferred.readout().deferredStake).toBe(500);
+    expect(deferred.readout().insuranceStake).toBe(SPEC_STARTING_CHIPS + 500);
+    expect(() => {
+      deferred.reset();
+    }).toThrow(RangeError);
+    expect(deferred.readout().conserved).toBe(SPEC_STARTING_CHIPS);
+  });
+
+  /**
+   * The caller-defect guards the rest of this block leaves unpinned.
+   *
+   * Every other refusal in `wallet.ts` has a test beside it, and these five did
+   * not, so a guard that was deleted looked exactly like a guard that is merely
+   * never provoked. None of them is reachable through `table.ts` today: the
+   * machine settles a hand once, offers one side wager per round and takes it
+   * only with a hand in play. That is the caller's shape rather than this
+   * module's guarantee, which is the same reasoning the reset guard above
+   * carries, and the module's own convention is to refuse rather than to lean
+   * on it.
+   *
+   * Two further guards are genuinely unreachable and are deliberately left
+   * without a test: `firstTable`'s empty-`TABLES` throw and `launchTable`'s
+   * `fallback === null` arm. Both are commented as such at the site.
+   */
+  it('refuses a second commitment on a hand that has already settled', () => {
+    const doubled = createWallet();
+    const bronze = tableLimits('bronze');
+    place(doubled, bronze, 50);
+    doubled.commitInitial(bronze);
+    doubled.settleHand(0, 0);
+    expect(() => doubled.commitDouble(0)).toThrow(RangeError);
+
+    const split = createWallet();
+    place(split, bronze, 50);
+    split.commitInitial(bronze);
+    split.settleHand(0, 0);
+    expect(() => split.commitSplit(0)).toThrow(RangeError);
+
+    // The refusals moved nothing: both wallets are still whole.
+    expect(doubled.readout().conserved).toBe(SPEC_STARTING_CHIPS);
+    expect(split.readout().conserved).toBe(SPEC_STARTING_CHIPS);
+  });
+
+  it('refuses a second insurance stake in one round, and a stake that is not chips', () => {
+    const wallet = createWallet();
+    wallet.takeInsurance(100);
+    expect(() => {
+      wallet.takeInsurance(100);
+    }).toThrow(RangeError);
+    expect(wallet.readout().insuranceStake).toBe(100);
+
+    // SPEC 4.7 stakes a whole number of chips above zero, and nothing else.
+    for (const stake of [0, -10, 5.5, Number.NaN, Number.POSITIVE_INFINITY]) {
+      const fresh = createWallet();
+      expect(() => {
+        fresh.takeInsurance(stake);
+      }).toThrow(RangeError);
+      expect(fresh.readout().conserved).toBe(SPEC_STARTING_CHIPS);
+    }
+  });
+
+  it('refuses to settle a side wager that was never taken', () => {
+    const wallet = createWallet();
+    expect(wallet.readout().insuranceStake).toBe(0);
+    expect(() => wallet.settleInsurance(0)).toThrow(RangeError);
+    expect(() => wallet.settleInsurance(200)).toThrow(RangeError);
+    expect(wallet.readout().conserved).toBe(SPEC_STARTING_CHIPS);
   });
 
   it('clears the board on a reset, since the wager was built at the old table', () => {

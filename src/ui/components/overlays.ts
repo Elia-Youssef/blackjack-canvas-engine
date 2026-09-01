@@ -60,7 +60,13 @@ import type { SplitRule } from '../../core/hand';
 import { SURFACE_SIZES, type SurfaceSize } from '../../render/surface';
 import { MAX_VOLUME, MIN_VOLUME } from '../audio';
 import { button, el, empty, setAttribute, setHidden, setText } from '../dom';
-import { NOTHING_YET, chips as formatChips, delta as formatDelta, percentOfHundred } from '../format';
+import {
+  NOTHING_YET,
+  chips as formatChips,
+  delta as formatDelta,
+  percent,
+  percentOfHundred,
+} from '../format';
 import { MOTION_SETTINGS, type MotionSetting } from '../motion';
 import {
   OVERLAY_IDS,
@@ -71,7 +77,13 @@ import {
   type OverlayId,
 } from '../state';
 import { THEMES, type Theme } from '../theme';
-import { milestoneRowText, outcomeText, playerActionText, tableText } from '../text';
+import {
+  accuracyText,
+  milestoneRowText,
+  outcomeText,
+  playerActionText,
+  tableText,
+} from '../text';
 
 /**
  * SPEC 5's two speeds, with the words SPEC 5 and SPEC 14 both use.
@@ -180,7 +192,17 @@ function settingRow(label: string, group: HTMLElement): HTMLElement {
 }
 
 /** The Settings panel: SPEC 14's whole list, since `BJ-20` item `I5`. */
-function settingsPanel(actions: ChromeActions): Component {
+/**
+ * The Settings panel, which is the one panel holding a flow rather than only
+ * values, so it publishes the one thing `createOverlays` has to be able to tell
+ * it: that it is no longer the open overlay.
+ */
+interface SettingsPanel extends Component {
+  /** Forget an armed reset confirmation. Called when the panel stops being open. */
+  disarm(): void;
+}
+
+function settingsPanel(actions: ChromeActions): SettingsPanel {
   const modeButtons = new Map<CoachMode, HTMLButtonElement>();
   const group = el('div', {
     className: 'bj-modes',
@@ -245,7 +267,10 @@ function settingsPanel(actions: ChromeActions): Component {
   });
   for (const count of DECK_COUNTS) {
     const control = button(
-      `${String(count)} decks`,
+      // The formatter, not `String`: the mirror renders the identical quantity
+      // through `houseRulesText`, so a raw label would show `6 decks` in
+      // Western digits beside the mirror's Arabic-Indic ones under `ar-EG`.
+      `${formatChips(count)} decks`,
       () => {
         actions.setRules({ decks: count });
       },
@@ -393,8 +418,15 @@ function settingsPanel(actions: ChromeActions): Component {
    * Whether the confirmation is asking its question. Panel state, held here
    * for the reason the readout panel holds its count: a confirm dialog is the
    * one piece of a settings panel that is genuinely a flow rather than a value.
-   * It is disarmed whenever the panel itself closes, so a re-opened Settings
-   * never inherits an armed reset from a session that only looked at it.
+   *
+   * It is disarmed whenever the panel stops being the open overlay, so a
+   * re-opened Settings never inherits an armed reset from a session that only
+   * looked at it. **The disarm cannot live in `update` below**, which is the
+   * shape it was first written in: `createOverlays.update` returns before
+   * touching any panel while the overlay is shut and otherwise updates only the
+   * open one, so a guard here reading `state.overlay !== 'settings'` could
+   * never run. `disarm()` is exported to the one step that can see the panel go
+   * away, and it is called from there.
    */
   let confirming = false;
 
@@ -408,6 +440,28 @@ function settingsPanel(actions: ChromeActions): Component {
     // browser's business and nobody else's.
     text: 'Progress is stored in this browser only and can be cleared by the browser itself.',
   });
+  /**
+   * The sibling note, shown only where the store refused. QUALITY-BAR 8's last
+   * clause and `AUDIT-1`.
+   *
+   * **A second line, never a rewrite of the first.** The sentence above is
+   * SPEC 14's own and item `I5` grades it word for word, so it stays exactly
+   * as it is in every session; this one says what the sentence above cannot,
+   * which is that this particular browser is not carrying anything. Hidden by
+   * default, which is every ordinary launch: `storage/store.ts` answers
+   * `durable: false` only on the arm where its probe was refused, and
+   * `persistence.ts` runs a memory fallback behind it so the round still
+   * plays.
+   */
+  const notDurableNote = el('p', {
+    className: 'bj-panel__note',
+    attributes: { 'data-field': 'storage-blocked' },
+    text:
+      'This browser is refusing to store anything, so nothing from this session ' +
+      'will be here next time.',
+  });
+  notDurableNote.hidden = true;
+
   const reset = button(
     'Reset all data',
     () => {
@@ -502,6 +556,7 @@ function settingsPanel(actions: ChromeActions): Component {
       }),
       el('h3', { className: 'bj-panel__heading', text: 'Data' }),
       resetNote,
+      notDurableNote,
       reset,
       confirm,
     ],
@@ -550,7 +605,7 @@ function settingsPanel(actions: ChromeActions): Component {
       const house = state.readout.rules;
       setText(
         inForce,
-        `This round runs ${String(house.decks)} decks. Dealer stands on all 17s. ` +
+        `This round runs ${formatChips(house.decks)} decks. Dealer stands on all 17s. ` +
           `Double after split ${house.doubleAfterSplit ? 'on' : 'off'}. ` +
           `Surrender ${house.surrender ? 'on' : 'off'}. ` +
           `Even money ${house.evenMoney ? 'on' : 'off'}. ` +
@@ -564,7 +619,11 @@ function settingsPanel(actions: ChromeActions): Component {
       if (volume.value !== wanted) {
         volume.value = wanted;
       }
-      setText(volumeText, `Volume ${percentOfHundred(state.volume * 100)} of full.`);
+      // `state.volume` is already the fraction `percent` takes, so it goes
+      // straight in: `percentOfHundred` is for a value that arrives as a
+      // percentage already, and multiplying by 100 to have it divided again is
+      // exactly the round trip that entry point exists to stop.
+      setText(volumeText, `Volume ${percent(state.volume)} of full.`);
 
       for (const [theme, control] of themeButtons) {
         setAttribute(control, 'aria-pressed', String(theme === state.theme));
@@ -573,12 +632,18 @@ function settingsPanel(actions: ChromeActions): Component {
         setAttribute(control, 'aria-pressed', String(setting === state.reducedMotion));
       }
 
-      // The confirmation, hidden until asked and disarmed when the panel
-      // itself goes, so a reset is never armed in a panel nobody is looking at.
-      if (state.overlay !== 'settings') {
-        confirming = false;
-      }
+      // The one session where SPEC 14's sentence above is true and unhelpful.
+      // `state.durable` is read once at boot, so this is a constant for the
+      // life of the page and the write below is idempotent.
+      setHidden(notDurableNote, state.durable);
+
+      // The confirmation, hidden until asked. The disarm is `disarm()` below,
+      // called from the step that observes the panel close; this frame only
+      // shows the answer.
       setHidden(confirm, !confirming);
+    },
+    disarm(): void {
+      confirming = false;
     },
   };
 }
@@ -664,16 +729,12 @@ function statisticsPanel(): Component {
       const { session, lifetime } = state.statistics;
       setText(rows.sessionHands.value, formatChips(session.handsPlayed));
       setText(rows.sessionWins.value, formatChips(session.wins));
-      setText(
-        rows.sessionAccuracy.value,
-        session.accuracy === null ? NOTHING_YET : percentOfHundred(session.accuracy),
-      );
+      // The percentage with the denominator it was taken over, so a reader can
+      // tell 100 percent over one decision from 100 percent over four hundred.
+      setText(rows.sessionAccuracy.value, accuracyText(session));
       setText(rows.lifetimeHands.value, formatChips(lifetime.handsPlayed));
       setText(rows.lifetimeWins.value, formatChips(lifetime.wins));
-      setText(
-        rows.lifetimeAccuracy.value,
-        lifetime.accuracy === null ? NOTHING_YET : percentOfHundred(lifetime.accuracy),
-      );
+      setText(rows.lifetimeAccuracy.value, accuracyText(lifetime));
 
       // Both lists are immutable values replaced on change, so identity is the
       // whole of the dirty check and the panel is free on every other frame.
@@ -737,8 +798,9 @@ export interface Overlays {
 }
 
 export function createOverlays(actions: ChromeActions): Overlays {
+  const settings = settingsPanel(actions);
   const panels: Readonly<Record<OverlayId, Component>> = {
-    settings: settingsPanel(actions),
+    settings,
     howToPlay: howToPlayPanel(),
     statistics: statisticsPanel(),
   };
@@ -807,6 +869,16 @@ export function createOverlays(actions: ChromeActions): Overlays {
       setHidden(host, open === null);
       for (const id of OVERLAY_IDS) {
         setHidden(panels[id].root, id !== open);
+      }
+
+      // The Settings panel's reset confirmation is a flow, and this step is
+      // the only one that can see the panel stop being open: the early return
+      // below skips every panel while the overlay is shut, and the line after
+      // it updates the open panel alone, so a settings panel asked to notice
+      // its own close is asked something it can never answer. Before every
+      // return, so a close and a switch to another panel both disarm it.
+      if (open !== 'settings') {
+        settings.disarm();
       }
 
       // Nothing below this line is visible when no overlay is open, and the

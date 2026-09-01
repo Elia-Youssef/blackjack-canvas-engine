@@ -40,9 +40,7 @@ import {
 import { chipLabel } from '../availability';
 import { button, el, setDisabled, setHidden } from '../dom';
 import type { ChromeActions, ChromeState, Component } from '../state';
-
-/** The label the disabled chips carry, per SPEC 4.11's ceiling. */
-const OVER_CEILING = 'This chip is more than the table maximum or your balance allows.';
+import { reasonText } from '../text';
 
 /** Build the betting bar. Visible at SPEC 10's `betting` phase and nowhere else. */
 export function createBetting(actions: ChromeActions): Component {
@@ -110,7 +108,16 @@ export function createBetting(actions: ChromeActions): Component {
       for (const [denomination, control] of chipButtons) {
         // SPEC 4.11's one disabled case, asked of the wallet and not re-derived.
         const enabled = chipEnabled(denomination, limits, balance);
-        setDisabled(control, !enabled, OVER_CEILING, chipLabel(denomination));
+        // The sentence comes from `src/ui/text.ts` like every other refusal, so
+        // the control and the mirror's greyed list read the same words. This
+        // module used to hold a private copy of it, which is how the two came
+        // to say different things about one chip.
+        setDisabled(
+          control,
+          !enabled,
+          reasonText('chip-over-ceiling'),
+          chipLabel(denomination),
+        );
       }
     },
   };

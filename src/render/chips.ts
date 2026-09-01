@@ -76,6 +76,18 @@ export const CHIP_GEOMETRY = Object.freeze({
  * wager the game can build is a multiple of 10 (SPEC 4.11), and each
  * denomination divides the next one's break point. A wager off the grid is a
  * caller defect and throws; zero is a legal absence of chips.
+ *
+ * **Only a wager may be drawn as chips, and the game holds one quantity that is
+ * not one.** SPEC 4.7's side wager is `wager / 2`, a multiple of 5, and Bronze's
+ * minimum stake of 5 is off this grid entirely; feeding it here throws, and
+ * inside a frame that throw lands in the `BJ-21` error boundary and takes the
+ * page to the recovery panel. Nothing does: the two call sites in
+ * `src/render/scene.ts` pass a hand's wager and the pending wager, the stake
+ * reaches the player as DOM text through `src/ui/text.ts` and never as artwork,
+ * and `tests/unit/render-chips.test.ts` carries a census of this function's
+ * callers so a third one is a red test rather than a recovery panel. Adding a
+ * 5 chip is not the answer: SPEC 4.11 names four denominations and SPEC 16
+ * paints four, so a fifth would be invented artwork.
  */
 export function wagerToChips(wager: number): readonly ChipDenomination[] {
   if (!Number.isSafeInteger(wager) || wager < 0 || wager % 10 !== 0) {

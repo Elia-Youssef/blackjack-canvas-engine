@@ -45,6 +45,8 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { acceptIntent as accept } from './support/drive';
+
 import type { History } from '../../src/core/history';
 import { NO_HISTORY, record } from '../../src/core/history';
 import { DEFAULT_RULES } from '../../src/core/rules';
@@ -56,10 +58,16 @@ import {
   observeRound,
   openSession as openStatisticsSession,
 } from '../../src/core/statistics';
-import { NO_DECISIONS, openSession as openCoachSession } from '../../src/core/strategy';
+import type { CoachRecord, CoachVerdict } from '../../src/core/strategy';
+import {
+  NO_DECISIONS,
+  observe,
+  openSession as openCoachSession,
+  situationAt,
+  strategyTable,
+} from '../../src/core/strategy';
 import type { Table, TableReadout } from '../../src/core/table';
 import { createTable } from '../../src/core/table';
-import type { Intent } from '../../src/core/types';
 import { STARTING_CHIPS, createWallet } from '../../src/core/wallet';
 import type { GameDocument } from '../../src/storage/document';
 import {
@@ -128,13 +136,6 @@ const TICK = 0.25;
 /** Bounded, in the house pattern: a stall must fail loudly, not hang. */
 const LOOP_LIMIT = 500;
 
-function accept(table: Table, intent: Intent): void {
-  const result = table.apply(intent);
-  if (!result.ok) {
-    throw new Error(`${result.kind} was refused by ${result.layer} as ${result.reason}`);
-  }
-}
-
 /** Play one round through the real machine and stop at SPEC 10's round result. */
 function playOneRound(table: Table): TableReadout {
   for (let turn = 0; turn < LOOP_LIMIT; turn += 1) {
@@ -167,6 +168,85 @@ function playOneRound(table: Table): TableReadout {
 
 /** One genuine SPEC 8 entry, so a history fixture is not a hand-written guess. */
 const REAL_HISTORY: History = record(NO_HISTORY, playOneRound(createTable({ seed: 11 })), null);
+
+/**
+ * The same, with the coach on and recording real verdicts.
+ *
+ * `REAL_HISTORY` is recorded with `coach: null`, which is the "coach was off"
+ * arm, and every history fixture in the matrix is a damaged copy of it. So the
+ * branch of `entryOf` that reads a genuine `CoachVerdict` list, five nested
+ * fields, a three-armed `CellAddress` and a `PreferenceList`, had no positive
+ * round-trip control anywhere: a drift in `verdictOf` would silently drop every
+ * round the coach graded out of a reloaded history and leave the uncoached ones
+ * standing, which is the shape a player would read as "some of my hands are
+ * missing" rather than as a broken save.
+ *
+ * Observed the way `main.ts` does, before the drain and from the pre-action
+ * situation, so the verdicts are the ones a real session records.
+ */
+function playCoachedRound(seed: number): {
+  readonly readout: TableReadout;
+  readonly verdicts: readonly CoachVerdict[];
+} {
+  const table = createTable({ seed });
+  const chart = strategyTable(table.readout().rules);
+  let coach: CoachRecord = NO_DECISIONS;
+  const verdicts: CoachVerdict[] = [];
+  for (let turn = 0; turn < LOOP_LIMIT; turn += 1) {
+    const state = table.readout();
+    switch (state.phase.kind) {
+      case 'start':
+        accept(table, { kind: 'start' });
+        break;
+      case 'betting':
+        if (state.wallet.wager === 0) {
+          accept(table, { kind: 'max' });
+        } else {
+          accept(table, { kind: 'deal' });
+        }
+        break;
+      case 'insurance':
+        accept(table, { kind: 'declineInsurance' });
+        break;
+      case 'playerTurn': {
+        const situation = situationAt(state);
+        accept(table, { kind: 'hit' });
+        if (situation !== null) {
+          const observation = observe('review', coach, chart, situation, 'hit');
+          coach = observation.record;
+          if (observation.verdict !== null) {
+            verdicts.push(observation.verdict);
+          }
+        }
+        break;
+      }
+      case 'roundResult':
+        return { readout: state, verdicts: Object.freeze(verdicts) };
+      default:
+        table.update(TICK);
+    }
+  }
+  throw new RangeError(`a coached round did not finish inside ${String(LOOP_LIMIT)} turns`);
+}
+
+/**
+ * A seed hunted for a round the coach actually graded, in the shape
+ * `tests/browser/support/flow-seeds.ts` hunts elsewhere: the first seed whose
+ * round produces at least one verdict, so the fixture cannot quietly become the
+ * uncoached case again.
+ */
+const COACHED_ROUND = ((): { readonly readout: TableReadout; readonly verdicts: readonly CoachVerdict[] } => {
+  for (let seed = 1; seed < 200; seed += 1) {
+    const played = playCoachedRound(seed);
+    if (played.verdicts.length > 0) {
+      return played;
+    }
+  }
+  throw new RangeError('no seed under 200 produced a coached round');
+})();
+
+/** One genuine SPEC 8 entry carrying real SPEC 7 verdicts. */
+const COACHED_HISTORY: History = record(NO_HISTORY, COACHED_ROUND.readout, COACHED_ROUND.verdicts);
 
 /** Two of SPEC 9's eleven, awarded, so the salvage has something to preserve. */
 const HEALTHY_MILESTONES: readonly MilestoneId[] = Object.freeze([
@@ -374,6 +454,15 @@ const STORED: readonly Fixture[] = Object.freeze([
   holding('an entry with an unknown action', 'field', payloadWith({ history: [entryWithBadAction()] })),
   holding('an entry with an unknown outcome', 'field', payloadWith({ history: [entryWithBadOutcome()] })),
   holding('an entry whose coach field is a number', 'field', payloadWith({ history: [entryWithBadCoach()] })),
+  // The four salvage branches inside an entry that nothing reached. Each one
+  // stops at a different guard: `handOf`'s non-record arm, `handOf`'s count
+  // arm, `verdictsOfEntry`'s malformed-member arm and `cardOf`'s non-record
+  // arm. All four drop the entry rather than the document, which is what the
+  // reach column below asserts.
+  holding('an entry whose hand is a number', 'field', payloadWith({ history: [entryWithHandNumber()] })),
+  holding('an entry whose hand wager is a string', 'field', payloadWith({ history: [entryWithHandBadWager()] })),
+  holding('an entry whose coach list holds a malformed verdict', 'field', payloadWith({ history: [entryWithBadVerdict()] })),
+  holding('an entry whose dealer card is a number', 'field', payloadWith({ history: [entryWithNumericCard()] })),
 
   // SPEC 14's settings.
   holding('settings that are a string', 'field', payloadWith({ settings: 'default' })),
@@ -397,6 +486,23 @@ const STORED: readonly Fixture[] = Object.freeze([
 
 /** The whole matrix. */
 const CORRUPT: readonly Fixture[] = Object.freeze([...UNREADABLE, ...STORED]);
+
+/**
+ * The size the bank must not fall below. `BJ-11`'s record quotes 73.
+ *
+ * A floor rather than a count, so a fixture added needs no edit here and a
+ * fixture deleted is loud. Every other guard in this file's census is satisfied
+ * by four fixtures as readily as by seventy-three, because each loop iterates
+ * the list: erosion makes them assert less and stay green.
+ *
+ * **Raised to 77.** Four fixtures were added for the salvage branches inside a
+ * history entry that nothing reached: a hand that is not a record, a hand whose
+ * wager is not a count, a coach list holding a malformed verdict and a dealer
+ * card that is a number. The floor moves with the bank deliberately, so that a
+ * later deletion cannot quietly take the bank back below what the record now
+ * describes.
+ */
+const BANK_FLOOR = 77;
 
 function withoutKey(key: string): Readonly<Record<string, unknown>> {
   const copy: Record<string, unknown> = { ...HEALTHY };
@@ -441,6 +547,44 @@ function entryWithBadOutcome(): Readonly<Record<string, unknown>> {
 function entryWithBadCoach(): Readonly<Record<string, unknown>> {
   const entry = entryRecord();
   entry['coach'] = 7;
+  return entry;
+}
+
+/** A hand that is not a record at all, which `handOf` refuses before reading it. */
+function entryWithHandNumber(): Readonly<Record<string, unknown>> {
+  const entry = entryRecord();
+  entry['hands'] = [7];
+  return entry;
+}
+
+/** A hand whose wager is not a count, which `handOf` refuses on the field. */
+function entryWithHandBadWager(): Readonly<Record<string, unknown>> {
+  const entry = entryRecord();
+  const hands = JSON.parse(JSON.stringify(entry['hands'])) as Record<string, unknown>[];
+  const first = hands[0];
+  if (first === undefined) {
+    throw new Error('the real entry has no hands to damage');
+  }
+  first['wager'] = 'a lot';
+  entry['hands'] = hands;
+  return entry;
+}
+
+/**
+ * A coach LIST holding one malformed verdict, which is a different arm from
+ * `entryWithBadCoach`: that one stops at "the coach field is not a list", and
+ * this one gets past that and is refused per member.
+ */
+function entryWithBadVerdict(): Readonly<Record<string, unknown>> {
+  const entry = entryRecord();
+  entry['coach'] = [{ played: 'hit', recommended: 'nope' }];
+  return entry;
+}
+
+/** A dealer card that is a number, which `cardOf` refuses before reading a rank. */
+function entryWithNumericCard(): Readonly<Record<string, unknown>> {
+  const entry = entryRecord();
+  entry['dealer'] = [3];
   return entry;
 }
 
@@ -491,13 +635,34 @@ const HOSTILE_MARKS: readonly unknown[] = Object.freeze([
 
 describe('I2: a corrupt saved value does not prevent the game from starting', () => {
   describe('the whole matrix', () => {
+    /**
+     * SPEC 13's bank, as a floor rather than a count.
+     *
+     * The counts below are derived from the list, so adding a fixture moves
+     * them rather than slipping past a hard-coded number. What is asserted is
+     * that the list is partitioned, that neither half is empty, and that no two
+     * fixtures share a name, since a duplicated name is a fixture that is
+     * silently running twice instead of covering two cases.
+     *
+     * **The floor is what those six guards could not say.** Every one of them
+     * is satisfied by four fixtures as readily as by seventy-three: each loop in
+     * this file iterates the list, so a deletion makes every assertion run
+     * fewer times and leaves the suite green. `BANK_FLOOR` is written down once, as
+     * a floor so that adding a fixture still needs no edit and removing one is
+     * loud. It is deliberately not an equality: the bank is meant to grow, and
+     * it has. It was **73** when `BJ-11` wrote it, which is the figure that
+     * part's record and its report both quote; it is **77** now, raised by
+     * `AUDIT-1` for four salvage-branch fixtures. The floor moves with the bank
+     * on purpose, and the constant's own header states each raise.
+     *
+     * One line was dropped with it. `CORRUPT` is defined as
+     * `[...UNREADABLE, ...STORED]`, so requiring its length to equal the sum of
+     * those two lengths is a property of the spread operator and cannot fail;
+     * the partition assertion below it is the one with force, because it fails
+     * on any fixture whose `reach` is neither `'whole'` nor `'field'`.
+     */
     it('covers both reaches and every category the criterion names', () => {
-      // The counts are derived from the list, so adding a fixture moves them
-      // rather than slipping past a hard-coded number. What is asserted is that
-      // the list is partitioned, that neither half is empty, and that no two
-      // fixtures share a name, since a duplicated name is a fixture that is
-      // silently running twice instead of covering two cases.
-      expect(CORRUPT).toHaveLength(UNREADABLE.length + STORED.length);
+      expect(CORRUPT.length).toBeGreaterThanOrEqual(BANK_FLOOR);
       expect(CORRUPT).toHaveLength(WHOLE_DOCUMENT_FIXTURES + PER_FIELD_FIXTURES);
       expect(UNREADABLE.length).toBeGreaterThan(0);
       expect(WHOLE_DOCUMENT_FIXTURES).toBeGreaterThan(UNREADABLE.length);
@@ -540,7 +705,7 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
           durable: true,
           failure: null,
         });
-        expect(reachesBetting(persistence.session()), fixture.name).toBe(true);
+        expect(reachesBetting(persistence.restored()), fixture.name).toBe(true);
       }
     });
 
@@ -575,7 +740,7 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
           durable: true,
           failure: null,
         });
-        const { launch, wallet } = persistence.session();
+        const { launch, wallet } = persistence.restored();
         expect(wallet.readout().chips, fixture.name).toBe(SPEC_STARTING_CHIPS);
         expect(['bronze', 'silver', 'gold'], fixture.name).toContain(launch.table);
       }
@@ -607,6 +772,29 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
       const loaded = loadDocument(storeHolding(envelopeText(DOCUMENT_VERSION, HEALTHY)));
       expect(loaded.document.history).toEqual(REAL_HISTORY);
       expect(loaded.document.history).toHaveLength(1);
+    });
+
+    it('a coached entry survives with every verdict field it was recorded with', () => {
+      // The control the matrix never had. `REAL_HISTORY` is recorded with the
+      // coach off, so `verdictOf` and the whole `CoachVerdict` shape below it
+      // had no positive round trip: a sanitiser that dropped every coached
+      // entry would leave a reloaded history holding only the rounds the coach
+      // was off for, and every other assertion in this file would still pass.
+      //
+      // `toStrictEqual` rather than `toEqual`, because the difference between a
+      // field restored as `undefined` and a field restored at all is exactly
+      // what a round trip through `JSON` loses.
+      const coached: GameDocument = Object.freeze({ ...HEALTHY, history: COACHED_HISTORY });
+      const roundTripped = sanitiseDocument(JSON.parse(JSON.stringify(coached)));
+      expect(roundTripped.repairs).toEqual([]);
+      expect(roundTripped.document.history).toStrictEqual(COACHED_HISTORY);
+
+      // And the fixture is really a coached one, so the assertion above cannot
+      // quietly become the uncoached case again.
+      const entry = COACHED_HISTORY[0];
+      expect(entry?.coach, 'the hunted seed produced no verdicts').not.toBeNull();
+      expect(entry?.coach?.length ?? 0).toBeGreaterThan(0);
+      expect(COACHED_ROUND.verdicts.length).toBeGreaterThan(0);
     });
   });
 
@@ -777,7 +965,7 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
         expect(Object.keys(stored.data)).not.toContain(excluded);
       }
       // A launch starts at 1,000 whatever the document said.
-      expect(persistence.session().wallet.readout().chips).toBe(SPEC_STARTING_CHIPS);
+      expect(persistence.restored().wallet.readout().chips).toBe(SPEC_STARTING_CHIPS);
     });
 
     it('opens the session scope on the way in, so nothing session-shaped is carried', () => {

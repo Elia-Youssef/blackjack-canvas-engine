@@ -74,6 +74,7 @@ import {
   observeRound,
   openSession as openStatisticsSession,
   statisticsReadout,
+  type MilestoneId,
   type Statistics,
 } from './core/statistics';
 import {
@@ -151,7 +152,10 @@ import { openPersistence, type Persistence } from './storage/persistence';
 import './ui/tokens.css';
 import './ui/chrome.css';
 
-export const GAME_ID = 'blackjack';
+const GAME_ID = 'blackjack';
+
+/** No milestone was awarded on this frame, which is almost every frame. */
+const NO_AWARDS: readonly MilestoneId[] = Object.freeze([]);
 
 /**
  * The play surface's logical space, its two framings and the floor it is drawn
@@ -208,8 +212,9 @@ export interface SessionState {
   /**
    * SPEC 14's theme. `BJ-20`, item `E2`.
    *
-   * On the Speed precedent: the document was the first thing that had to name
-   * it, and this is the shape the save reads and the restore writes. The
+   * On the Speed precedent, in full: the document was the first thing that had
+   * to name it, this is the shape the save reads and the restore writes, and
+   * `BootOptions.theme` is the door an explicit option comes through. The
    * chrome resolves it to the one `data-theme` attribute the stylesheet's
    * selectors already answer to; the play surface never sees it, because SPEC
    * 16 fixes the felt's palette across both themes.
@@ -418,6 +423,17 @@ export interface BootOptions {
    * Clamped to `MIN_VOLUME` to `MAX_VOLUME` by the engine, whatever arrives.
    */
   readonly volume?: number;
+  /**
+   * SPEC 14's theme. `AUDIT-1`, on the same terms as the five above.
+   *
+   * The one persisted setting that had no boot door, while `SessionState.theme`
+   * cited the Speed precedent that includes one and the merge comment below
+   * claimed "every merge runs the option on the right". `Theme` is three-valued
+   * (`system` is a value, not an absence), so unlike `alwaysReduceMotion` there
+   * is no boolean shorthand that could stand in for it. Unset means the
+   * document decides, which is every existing caller and the shipped page.
+   */
+  readonly theme?: Theme;
 }
 
 /** The game this module last built, so a second boot can dispose the first. */
@@ -631,32 +647,44 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
   // gate drives a known deal through and the reason every merge below runs the
   // option on the right.
   const persistence: Persistence = carriedPersistence ?? openPersistence();
-  const restored = persistence.session();
+  const restored = persistence.restored();
   const persisted: GameDocument = restored.document;
+  // QUALITY-BAR section 8's last clause needs an answer, not only a sentence:
+  // the store's probe has already run by here, and on a browser that refuses
+  // site data the session plays out of the memory fallback and carries nothing.
+  // Read once, because that is when the probe ran.
+  const durable = persistence.readout().durable;
 
   const wallet = createWallet(
     options.bestBalance === undefined
       ? { bestBalance: persisted.bestBalance }
       : { bestBalance: options.bestBalance },
   );
+  // SPEC 14's settings, as the session holds them. The rules the panel stages
+  // sit beside the machine's in-force record until the next deal applies them,
+  // which is the one boundary SPEC 14 gives a house-rule change.
+  //
+  // **One merge, above the machine, because both readers must agree.** This is
+  // what the Settings panel shows as pressed state and what `save()` persists,
+  // and it is what the table is built from; two spellings of the same spread
+  // agree today only because `houseRules` is idempotent over a complete record
+  // and `createTable` normalises again anyway, so a default or a validation
+  // added to one of them would have the panel showing rules the round is not
+  // being played under, with no test between them.
+  let settingsRules: HouseRules = houseRules({
+    ...persisted.settings.rules,
+    ...options.rules,
+  });
   const tableOptions: TableOptions = {
     wallet,
     table: options.table ?? restored.launch.table,
-    rules: { ...persisted.settings.rules, ...options.rules },
+    rules: settingsRules,
     seed: options.seed ?? Date.now(),
     speed: options.speed ?? persisted.settings.speed,
   };
   const table: Table = createTable(tableOptions);
   let chart: ReturnType<typeof strategyTable> = strategyTable(table.readout().rules);
   let chartRules: HouseRules = table.readout().rules;
-
-  // SPEC 14's settings, as the session holds them. The rules the panel stages
-  // sit beside the machine's in-force record until the next deal applies them,
-  // which is the one boundary SPEC 14 gives a house-rule change.
-  let settingsRules: HouseRules = houseRules({
-    ...persisted.settings.rules,
-    ...options.rules,
-  });
   let reducedMotion: MotionSetting =
     options.alwaysReduceMotion === undefined
       ? persisted.settings.reducedMotion
@@ -677,13 +705,22 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
   const forcedColors: ForcedColorsPreference = createForcedColorsPreference();
 
   let statistics: Statistics = openStatisticsSession(restored.statistics);
+  /**
+   * SPEC 9's awards this frame made, cleared at the top of every frame.
+   *
+   * `observeRound` already answers "what did this round award", and the two
+   * consumers of that answer, the audio cue and the announcement, would
+   * otherwise each rebuild it by differencing two milestone lists. One list,
+   * from the module that decides awards, handed to both.
+   */
+  let awarded: readonly MilestoneId[] = NO_AWARDS;
   let history: History = restored.history;
   let coach: CoachRecord = openCoachSession(restored.coach);
   let coachMode: CoachMode = options.coachMode ?? persisted.settings.coach;
   let verdicts: HandVerdict[] | null = coachMode === 'off' ? null : [];
   let notice: Notice | null = null;
   let surfaceSize: SurfaceSize = options.surfaceSize ?? persisted.settings.surfaceSize;
-  let theme: Theme = persisted.settings.theme;
+  let theme: Theme = options.theme ?? persisted.settings.theme;
   let howToPlaySeen: boolean = restored.howToPlaySeen;
   // SPEC 17: shown automatically on first launch, and only then. The dismissal
   // writes the flag below, so the second launch starts with no overlay.
@@ -894,6 +931,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       statistics: statisticsReadout(statistics, readout.wallet, coach),
       history,
       milestones: statistics.milestones,
+      awarded,
       coachMode,
       verdicts,
       notice,
@@ -906,6 +944,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       reducedMotion,
       stagedRules: settingsRules,
       hint: currentHint(readout),
+      durable,
     };
   }
 
@@ -1001,7 +1040,9 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     if (readout.phase.kind !== 'roundResult' || readout.rounds <= statistics.rounds) {
       return;
     }
-    statistics = observeRound(statistics, readout, coach).statistics;
+    const observation = observeRound(statistics, readout, coach);
+    statistics = observation.statistics;
+    awarded = observation.awarded;
     history = recordRound(
       history,
       readout,
@@ -1031,7 +1072,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
   let previousCue: CueFrame | null = null;
 
   function emitCues(readout: TableReadout): void {
-    const frame: CueFrame = { applied: appliedIntent, readout, milestones: statistics.milestones };
+    const frame: CueFrame = { applied: appliedIntent, readout, awarded };
     for (const cue of cuesFor(previousCue, frame)) {
       audio.cue(cue, readout.phase.kind);
     }
@@ -1071,6 +1112,10 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     if (readout.phase.kind !== was) {
       notice = null;
     }
+    // SPEC 9's awards belong to the frame that made them. `closeRound` writes
+    // the list `observeRound` returned, the cue derivation and the announcer
+    // both read it below, and it is empty again on the next frame.
+    awarded = NO_AWARDS;
     closeRound(readout);
     emitCues(readout);
 

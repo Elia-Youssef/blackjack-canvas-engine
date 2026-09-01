@@ -62,6 +62,7 @@ import { MIN_SURFACE_HEIGHT, resolveBreakpoint } from '../../src/ui/breakpoints'
 // The control census moved to `support/controls.ts` at `BJ-17`, unchanged: item
 // `D2` grades the same list against a different question, and two copies of it
 // is how one of them quietly stops being complete.
+import { scrollToTop } from './support/flow';
 import { SCREEN_CONTROLS, selectorFor } from './support/controls';
 import {
   atBetting,
@@ -149,13 +150,6 @@ async function reachableByPageScroll(page: Page, selector: string): Promise<stri
     const hit = document.elementFromPoint(centreX, centreY);
     return hit !== null && node.contains(hit) ? 'self' : 'covered';
   }, selector);
-}
-
-async function scrollToTop(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    window.scrollTo(0, 0);
-  });
-  await settle(page);
 }
 
 /** Clause 1, on the regions, on every label, and on the play-surface row. */
@@ -534,5 +528,52 @@ test.describe('F1: the four are one page, not four pages', () => {
     await chip(page, WAGER).click();
     await control(page, 'deal').click();
     await expect(page.locator('.bj-shell')).not.toHaveAttribute('data-phase', 'betting');
+  });
+});
+
+test.describe('F3: the disclosure survives a rotation between the two narrow widths', () => {
+  test('stays open across portrait to compact, which is one disclosure policy', async ({
+    page,
+  }) => {
+    // `compact` and `portrait` are two names for one policy: `showsEveryReadout`
+    // answers false for both, so the eleven secondary readouts sit behind the
+    // disclosure either way. Below 768 px it is the orientation alone that
+    // decides which of the two names applies, so this transition is a device
+    // rotation, and a write keyed on the name closed a disclosure the player
+    // had opened while nothing about the policy moved. The rule the component
+    // states is that the open state is written on a change of breakpoint and
+    // never otherwise; the fix is that a change of breakpoint means a change of
+    // what the breakpoint decides.
+    await page.setViewportSize({ width: 320, height: 568 });
+    await atShippedBetting(page);
+    await settle(page);
+    await expect(page.locator('.bj-shell')).toHaveAttribute('data-breakpoint', 'portrait');
+
+    expect(await setDisclosure(page, true), 'no disclosure at portrait').toBe(true);
+    await expect(page.locator('.bj-readouts__more')).toHaveAttribute('open', '');
+
+    // The rotation: the same device, landscape. Both sides stay under the 768
+    // px medium floor, so the only thing that changed is the orientation.
+    await page.setViewportSize({ width: 568, height: 320 });
+    await settle(page);
+    await expect(page.locator('.bj-shell')).toHaveAttribute('data-breakpoint', 'compact');
+    await expect(
+      page.locator('.bj-readouts__more'),
+      'the rotation closed the disclosure the player opened',
+    ).toHaveAttribute('open', '');
+
+    // The control, in the same test so the assertion above cannot pass by the
+    // write never happening at all: crossing into a width that shows every
+    // readout does move it, and crossing back closes it again.
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await settle(page);
+    await expect(page.locator('.bj-shell')).toHaveAttribute('data-breakpoint', 'wide');
+    await page.setViewportSize({ width: 320, height: 568 });
+    await settle(page);
+    await expect(page.locator('.bj-shell')).toHaveAttribute('data-breakpoint', 'portrait');
+    await expect(
+      page.locator('.bj-readouts__more'),
+      'a real policy change did not rewrite the open state',
+    ).not.toHaveAttribute('open', '');
   });
 });

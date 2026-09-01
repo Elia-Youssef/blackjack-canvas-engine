@@ -36,7 +36,14 @@
 import { chromium } from '@playwright/test';
 
 import { bootGame, findSeedReaching, settle, toBetting } from './drive.mjs';
-import { environmentRows, finish, round2, startPreview, table } from './support.mjs';
+import {
+  environmentRows,
+  finish,
+  resultRows,
+  round2,
+  startPreview,
+  table,
+} from './support.mjs';
 
 const PORT = 4183;
 
@@ -321,11 +328,17 @@ async function main() {
   // the instrument that reported it. Rounded to the grid both sides live on, so
   // the comparison is between two measurements and not between two floats.
   const frameCeiling = round2(results.interval + TIMESTAMP_QUANTUM);
-  // **`H4` is a maximum and the row below reports a median of three runs**, which
-  // is the statistic this script has reported since it was written and is what
-  // keeps one noisy run from failing a build. A median of maxima can hide a
-  // breach in one run of three, so the worst of the three is stated in the
-  // section below rather than left for somebody to derive from the run table.
+  // **`H4` is a maximum, and the gated row is now the maximum.** It reported the
+  // median of three per-run maxima from the day it was written, which keeps one
+  // noisy run from failing a build and also hides a breach in one run of three:
+  // `[52, 48, 48]`, which is the exact shape of the residual this report
+  // documents below, has a median of 48 and passes a row whose words are "no
+  // task exceeds 50 ms". The disclosure lived in this comment and in the prose
+  // and in no gate. The criterion's property is now the verdict term, and the
+  // median stays as a second, informational row so both statistics are visible
+  // and neither is derived from the other. AUDIT-1, on the user's ruling; the
+  // first CI run after it may go red on the documented residual, which is what
+  // a watch item is for.
   const worstAnyRun = runs.reduce((worst, entry) => Math.max(worst, entry.worstTask), 0);
   const rows = [
     [`\`H1\` frame time p95`, `${String(round2(results.p95))} ms`,
@@ -336,19 +349,26 @@ async function main() {
       round2(results.interval) <= FRAME_P95],
     ['`H1` frame time p99', `${String(round2(results.p99))} ms`, `<= ${String(FRAME_P99)} ms`,
       results.p99 <= FRAME_P99],
-    ['`H4` worst task after the first interactive frame', `${String(round2(results.worstTask))} ms`,
-      `<= ${String(LONG_TASK)} ms`, results.worstTask <= LONG_TASK],
+    ['`H4` worst task in any run, after the first interactive frame',
+      `${String(round2(worstAnyRun))} ms`,
+      `<= ${String(LONG_TASK)} ms`, worstAnyRun <= LONG_TASK],
     ['`H7` app work per frame p95', `${String(round2(results.appP95))} ms`,
       `<= ${String(APP_P95)} ms`, results.appP95 <= APP_P95],
     [`\`H7\` frames over ${String(SLOW_FRAME_FACTOR)}x the interval`,
       `${String(round2(results.slowShare * 100))} percent`,
       `< ${String(SLOW_FRAME_SHARE * 100)} percent`, results.slowShare < SLOW_FRAME_SHARE],
   ];
-  for (const [measure, value, threshold, ok] of rows) {
-    if (!ok) {
-      breaches.push(`${measure}: ${value} against ${threshold}`);
-    }
-  }
+  const measured = resultRows(rows, breaches);
+  // The statistic the row above used to gate on, kept visible and kept out of
+  // the verdict. Appended after `resultRows` rather than passed through it,
+  // because that helper turns any row without a true verdict into a breach and
+  // this row is not a threshold.
+  measured.push([
+    '`H4` worst task, median of the three runs',
+    `${String(round2(results.worstTask))} ms`,
+    'informational, not gated',
+    '-',
+  ]);
   if (runs.some((entry) => !entry.observed)) {
     breaches.push('the long-task observer never attached, so H4 measured nothing');
   }
@@ -410,7 +430,7 @@ async function main() {
     '',
     ...table(
       ['Measure', 'Median', 'Threshold', 'Verdict'],
-      rows.map(([measure, value, threshold, ok]) => [measure, value, threshold, ok ? 'PASS' : '**FAIL**']),
+      measured,
     ),
     '',
     '## Every run',
@@ -485,10 +505,11 @@ async function main() {
     '  three consecutive runs on an idle machine report none at all.',
     '',
     `**The worst task in any single run above was ${String(round2(worstAnyRun))} ms**, against the`,
-    `${String(LONG_TASK)} ms ceiling. The gated row is the **median** of the three runs, which is what`,
-    'this script has reported since it was written and is what keeps one noisy run from failing a',
-    'build; a median of maxima can hide a breach in one run of three, so the worst is stated here',
-    'as well and neither number is derived from the other.',
+    `${String(LONG_TASK)} ms ceiling, and that is the number the gated row compares. The median of`,
+    'the three per-run maxima is reported beside it as a second row and is not gated: it is the',
+    'statistic this script reported from the day it was written, and it can hide a breach in one',
+    'run of three, which on this build is exactly the shape being watched. Neither number is',
+    'derived from the other and both are in the table above.',
     '',
     'Two things would remove the cost rather than the conditions, and neither is a measurement',
     "part's to choose: stop the controls row from changing the surface size, which is items",
@@ -519,9 +540,19 @@ async function main() {
     'felt, bounded, and looks it up through `needsRebake` so the rule has one home: three',
     'bakes now serve all 27 size changes, and `tests/unit/felt-cache.test.ts` pins that count.',
     '`src/render/felt.ts` pays for the grain once into one square and blits it across the',
-    'table under the two blend operations, so a bake that does happen is cheap. The controls',
-    'row was left alone on purpose: freezing its height would reach the committed invariants',
-    'of items `F1` and `F7`, and with the cache the cost of a moving row is one blit.',
+    'table under the two blend operations, so a bake that does happen is cheap.',
+    '',
+    '**The controls row is pinned as well, for the five screens that carry no control.**',
+    'The paragraph above recorded the opposite decision, that the row was left alone because',
+    'freezing its height would reach the committed invariants of items `F1` and `F7`; a later',
+    'change pinned `.bj-controls` to the action-row height under `dealing`, `peek`, `reveal`,',
+    '`dealerTurn` and `settling`, and `tests/browser/surface-stability.spec.ts` holds the',
+    'betting-to-dealing backing store equal across it. The `F1` and `F7` reading the earlier',
+    'decision rested on is the one to re-verify: the pinned height feeds `barsStick` through',
+    'the measured controls height, and the pin equals the action row only at `wide`, where one',
+    'row of buttons fits. Narrow viewports wrap that row and continue to resize, and the round',
+    'result is a taller screen still, so the largest excursion recorded above is untouched by',
+    'the pin and the felt cache is what absorbs its bake.',
     '',
     '## Environment',
     '',

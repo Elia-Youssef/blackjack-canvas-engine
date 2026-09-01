@@ -92,6 +92,7 @@ import type {
 } from '../../src/core/wallet';
 import { createWallet, tableLimits } from '../../src/core/wallet';
 
+import { bounded } from './support/drive';
 import { scriptedShoe } from './support/stacked-shoe';
 
 // ---------------------------------------------------------------------------
@@ -320,17 +321,14 @@ function plainTable(rounds: number, options: TableOptions = {}): Table {
  */
 const LOOP_LIMIT = 2000;
 
-function bounded(label: string): () => void {
-  let turns = 0;
-  return () => {
-    turns += 1;
-    if (turns > LOOP_LIMIT) {
-      throw new RangeError(`${label} did not finish inside ${String(LOOP_LIMIT)} turns`);
-    }
-  };
-}
-
-/** Read an accepted result, or fail loudly with the reason it was refused. */
+/**
+ * Read an accepted result, or fail loudly with the reason it was refused.
+ *
+ * Kept local rather than taken from `./support/drive`, which the other eleven
+ * suites now share. This file drives 187 legality cells and a failure here has
+ * to say which direction it failed in: the shared sentence names the refusal,
+ * and this one names the expectation the refusal broke.
+ */
 function accept(result: IntentResult): IntentResult {
   if (!result.ok) {
     throw new Error(
@@ -342,7 +340,7 @@ function accept(result: IntentResult): IntentResult {
 
 /** Feed the accumulator in chunks no larger than QUALITY-BAR section 7's clamp. */
 function feed(table: Table, seconds: number): void {
-  const turn = bounded('feeding the accumulator');
+  const turn = bounded('feeding the accumulator', LOOP_LIMIT);
   let left = seconds;
   while (left > 0) {
     turn();
@@ -382,7 +380,7 @@ function signature(table: Table): string {
  * and gets a clamped frame. Nothing here reaches inside the machine.
  */
 function driveTo(table: Table, target: PhaseKind): Table {
-  const turn = bounded(`driving the machine to ${target}`);
+  const turn = bounded(`driving the machine to ${target}`, LOOP_LIMIT);
   while (table.readout().phase.kind !== target) {
     turn();
     const state = table.readout();
@@ -419,7 +417,7 @@ function driveTo(table: Table, target: PhaseKind): Table {
  */
 function driveRound(table: Table): readonly PhaseKind[] {
   const seen: PhaseKind[] = [table.readout().phase.kind];
-  const turn = bounded('driving one round to the round result');
+  const turn = bounded('driving one round to the round result', LOOP_LIMIT);
   while (table.readout().phase.kind !== 'roundResult') {
     turn();
     const was = table.readout().phase.kind;
@@ -459,6 +457,17 @@ interface WalletHooks {
   readonly onCall?: () => void;
   /** A SPEC 4.11 refusal at the commit, to prove the machine surfaces it. */
   readonly dealRefusal?: Refusal;
+  /**
+   * A SPEC 4.11 refusal at `clear` and `max`, for the same reason.
+   *
+   * The shipped `createWallet` cannot refuse either: both hand `apply` a result
+   * that is already an acceptance, so `ok` is always true and the refusal arms
+   * of `perform`'s `clear` and `max` cases are correct defensive code against
+   * the `Wallet` interface that nothing reaches. `TableOptions.wallet` takes any
+   * `Wallet`, so an injected one reaches them, which is why the arms stay and
+   * why this hook exists rather than the arms being deleted.
+   */
+  readonly betRefusal?: Refusal;
 }
 
 /**
@@ -485,10 +494,16 @@ function wrapWallet(inner: Wallet, hooks: WalletHooks = {}): Wallet {
     },
     clear: (): BetResult => {
       called();
+      if (hooks.betRefusal !== undefined) {
+        return Object.freeze({ ok: false, reason: hooks.betRefusal });
+      }
       return inner.clear();
     },
     max: (limits: TableLimits): BetResult => {
       called();
+      if (hooks.betRefusal !== undefined) {
+        return Object.freeze({ ok: false, reason: hooks.betRefusal });
+      }
       return inner.max(limits);
     },
     repeat: (limits: TableLimits): BetResult => {
@@ -535,7 +550,7 @@ function wrapWallet(inner: Wallet, hooks: WalletHooks = {}): Wallet {
 
 /** Build a wager out of chip taps, largest denomination first. SPEC 4.11. */
 function place(wallet: Wallet, limits: TableLimits, target: number): void {
-  const turn = bounded('building a wager out of chip taps');
+  const turn = bounded('building a wager out of chip taps', LOOP_LIMIT);
   for (const chip of [500, 100, 50, 10] as const) {
     while (wallet.readout().wager + chip <= target) {
       turn();
@@ -1233,6 +1248,53 @@ describe('C2: the phase is asked before the wallet, and the reason says which', 
     expect(checked).toBe(6);
   });
 
+  /**
+   * The same pass-through, on the two bet controls that can never refuse.
+   *
+   * `wallet.clear()` and `wallet.max()` both hand `apply` an already-accepted
+   * result, so the shipped wallet answers `ok` every time and the refusal arms
+   * of `perform`'s `clear` and `max` cases were driven by nothing: a mutation
+   * that replaced either `result.ok ?` with `true ?` was graded by no test at
+   * all. An injected wallet reaches them, and what the machine owes is the same
+   * contract it owes at the deal, name the wallet as the layer and pass the
+   * reason through without re-deriving it.
+   */
+  it('lets an injected wallet refuse Clear and Max, and names the wallet either way', () => {
+    const reasons: readonly Refusal[] = ['no-wager', 'above-ceiling', 'insufficient-chips'];
+    let checked = 0;
+    for (const reason of reasons) {
+      for (const kind of ['clear', 'max'] as const) {
+        const table = createTable({ wallet: wrapWallet(createWallet(), { betRefusal: reason }) });
+        accept(table.apply({ kind: 'start' }));
+        const before = table.readout();
+        const result = table.apply({ kind });
+        expect(result.ok, `${kind} was accepted despite the wallet refusing it`).toBe(false);
+        if (!result.ok) {
+          expect(result.kind).toBe(kind);
+          expect(result.layer).toBe('wallet');
+          expect(result.reason).toBe(reason);
+        }
+        // A refusal moves nothing, which is the other half of the contract.
+        expect(table.readout()).toEqual(before);
+        expect(table.readout().phase.kind).toBe('betting');
+        checked += 1;
+      }
+    }
+    expect(checked).toBe(reasons.length * 2);
+
+    // The control beside it: the shipped wallet accepts both, at every betting
+    // state the phase allows, so the arms above really are unreachable without
+    // an injected wallet rather than merely rare.
+    const shipped = createTable();
+    accept(shipped.apply({ kind: 'start' }));
+    for (let taps = 0; taps < 12; taps += 1) {
+      shipped.apply({ kind: 'tapChip', chip: ROUND_CHIP });
+      expect(accept(shipped.apply({ kind: 'clear' })).ok).toBe(true);
+      expect(accept(shipped.apply({ kind: 'max' })).ok).toBe(true);
+      expect(accept(shipped.apply({ kind: 'clear' })).ok).toBe(true);
+    }
+  });
+
   it('refuses a locked table at the start screen and an unoffered one at the bust-out', () => {
     const start = createTable();
     const locked = start.apply({ kind: 'chooseTable', table: 'gold' });
@@ -1691,6 +1753,87 @@ describe('C2: one accepted intent per frame, and the queue behind it', () => {
     expect(state.queued.length).toBe(1);
     expect(state.wallet.wager).toBe(before.wallet.wager);
     expect(state.phase.kind).toBe('betting');
+  });
+
+  /**
+   * The composition property that makes the discard above sufficient.
+   *
+   * `drain` discards the rest of the queue only when **its own** accepted intent
+   * changed the phase (`if (phase !== before)`), which is narrower than DESIGN
+   * section 3's sentence: an intent queued before an `update`-driven transition
+   * is still judged against the screen that replaced the one it was aimed at.
+   * The shipped page is nevertheless safe, and the reason is a coupling between
+   * two lists that nothing had written down. After a drain the queue is
+   * non-empty only when the accepted intent left the phase object identical; the
+   * intents that can do that are legal only in phases the machine gives no
+   * timer; so the `update` that follows the drain in `main.ts` is a no-op and
+   * there is no transition for a stale intent to survive.
+   *
+   * Both lists are measured off the machine here rather than transcribed, so the
+   * assertion breaks from either direction: an intent made phase-preserving and
+   * legal in a timed phase, or a phase given a timer that already carries a
+   * phase-preserving intent. The full enforcement, stamping each queued intent
+   * with the phase it was aimed at, is a behaviour change and is not proposed;
+   * this states the property the current shape rests on.
+   */
+  it('leaves no accepted phase-preserving intent legal in a phase that has a timer', () => {
+    // Half one, off the sweep: what the machine accepts while leaving the phase
+    // object itself identical, which is exactly what `drain` compares.
+    const preserving = new Set<IntentKind>();
+    for (const cell of sweep()) {
+      if (cell.result.ok && cell.after.phase === cell.before.phase) {
+        preserving.add(cell.kind);
+      }
+    }
+    expect([...preserving].sort()).toEqual(['chooseTable', 'clear', 'max', 'repeat', 'tapChip']);
+
+    // The sixth, which the sweep's own fixtures cannot show. Its `playerTurn`
+    // machine holds a pair of eights so that all five actions are available on
+    // it, and the next card is a ten, so its Hit busts the hand and moves the
+    // phase. A Hit that leaves the hand live does not touch `phase` at all, and
+    // it is the one phase-preserving acceptance a timed phase would be exposed
+    // to during a round rather than between rounds, so it belongs in the set.
+    const soft = driveTo(
+      createTable({ shoe: scriptedShoe(['2', PLAIN_UP, '3', '7', '2', '10', '10', '10']) }),
+      'playerTurn',
+    );
+    const beforeHit = soft.readout();
+    expect(accept(soft.apply({ kind: 'hit' })).ok).toBe(true);
+    expect(soft.readout().hands[0]?.state).toBe('live');
+    expect(soft.readout().phase, 'a live Hit reassigned the phase').toBe(beforeHit.phase);
+    preserving.add('hit');
+    expect(preserving.size).toBe(6);
+
+    // Half two, off the machine: which phases a frame can move on its own. A
+    // phase with a timer either advances or banks the delta on its accumulator.
+    const timed = PHASES.filter((kind) => {
+      const table = machineAt(kind);
+      const before = table.readout();
+      table.update(QB_CLAMP);
+      const after = table.readout();
+      return after.phase !== before.phase || after.elapsed !== before.elapsed;
+    });
+    expect(timed).toEqual(['dealing', 'peek', 'reveal', 'dealerTurn', 'settling']);
+    expect(timed.length + UNTIMED.length).toBe(PHASES.length);
+
+    // The coupling: no cell of the cross product is accepted.
+    let checked = 0;
+    for (const kind of timed) {
+      for (const intent of preserving) {
+        const table = machineAt(kind, intent);
+        const before = table.readout();
+        const result = table.apply(SAMPLES[intent]);
+        expect(result.ok, `${intent} is accepted at the timed phase ${kind}`).toBe(false);
+        if (!result.ok) {
+          expect(result.layer).toBe('phase');
+          expect(result.reason).toBe('wrong-phase');
+        }
+        expect(table.readout()).toEqual(before);
+        checked += 1;
+      }
+    }
+    expect(checked).toBe(timed.length * preserving.size);
+    expect(checked).toBe(30);
   });
 });
 

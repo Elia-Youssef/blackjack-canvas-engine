@@ -107,8 +107,19 @@ export function createFormatters(locales: readonly string[]): Formatters {
      * `strategy.accuracy` returns a percentage rather than a fraction, and
      * dividing at every call site is how one of them ends up showing 0.9
      * percent. One conversion, here.
+     *
+     * **Truncated rather than rounded, because a milestone reads the same
+     * pair.** `statistics.ts` clears the division on purpose
+     * (`matched * 100 >= ACCURACY_PERCENT * decisions`, an exact integer
+     * comparison), and a half-expand rounding here printed `Accuracy 90%`
+     * directly above the 90-percent milestone shown as unawarded, for 2,435
+     * distinct records between 100 and 1,000 decisions, the earliest at 94 of
+     * 105. Flooring makes the shown figure never overstate the exact one, which
+     * is the stance the rest of the game takes on arithmetic a player acts on:
+     * `Max` floors to the chip grid, and a tap over the ceiling is rejected
+     * rather than clamped. The threshold is untouched.
      */
-    percentOfHundred: (value: number) => share.format(value / PERCENT_SCALE),
+    percentOfHundred: (value: number) => share.format(Math.floor(value) / PERCENT_SCALE),
   };
 }
 
