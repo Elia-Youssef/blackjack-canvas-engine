@@ -33,6 +33,7 @@
           { "context": "Repository policy" },
           { "context": "Blackjack gates" },
           { "context": "Visual baselines" },
+          { "context": "Browser channels" },
           { "context": "Memory soak" }
         ]
       }
