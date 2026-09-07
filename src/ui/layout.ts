@@ -101,7 +101,10 @@ export function createShell(): Shell {
   // controls row's height and the canvas is resized on the frame after. One
   // frame is enough for the scan to catch it, which it did on one run in five,
   // and a Critical gate that fails one run in five is worse than a tab stop. It
-  // is one stop, it is named, and it sits where the game is.
+  // is one stop, it is named, and it sits where the game is. Since `AUDIT-2`
+  // there is a third case that needs it at the default setting: item `E8`'s
+  // fourth regime draws a hand band that outgrows the framing onto a canvas
+  // wider than this box, and a keyboard player reaches the far hand here.
   const stage = el('div', {
     className: 'bj-stage',
     attributes: {

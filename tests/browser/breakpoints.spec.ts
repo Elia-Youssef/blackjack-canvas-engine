@@ -58,7 +58,7 @@
 
 import { expect, test, type Page } from '@playwright/test';
 
-import { MIN_SURFACE_HEIGHT, resolveBreakpoint } from '../../src/ui/breakpoints';
+import { MIN_SURFACE_HEIGHT, SURFACE_FRAMING, resolveBreakpoint } from '../../src/ui/breakpoints';
 // The control census moved to `support/controls.ts` at `BJ-17`, unchanged: item
 // `D2` grades the same list against a different question, and two copies of it
 // is how one of them quietly stops being complete.
@@ -71,6 +71,7 @@ import {
   chip,
   control,
   controlNamed,
+  expectedSurfaceBox,
   intersects,
   layoutReport,
   settle,
@@ -175,20 +176,63 @@ function assertNothingClipped(report: LayoutReport, label: string): void {
     MIN_SURFACE_HEIGHT - 1,
   );
 
-  // And the surface fits the row it is in, on both axes, at 100 percent. This is
-  // `planSurface`'s first property read straight off the page: a stage that
-  // scrolls at the default setting means the plan asked for more than its box.
+  // **The surface takes the row it is given.** `AUDIT-2` finding `J5-02`
+  // measured a 366 x 192 row drawing a 144 px surface and leaving 61 percent of
+  // its width empty, at the one screen whose job is showing the player what
+  // happened, because the framing was chosen from the breakpoint alone and the
+  // row's own shape was not consulted. `expectedSurfaceBox` re-derives DESIGN
+  // section 4's choice from the two framings; the surface may be **wider** than
+  // that, and only wider, because a picture whose bands need more room than the
+  // framing gives is what the stage below scrolls to.
+  const surface = report.regions.surface;
+  expect(surface, `${label}: no play surface`).not.toBeNull();
+  const wanted = expectedSurfaceBox(
+    { width: body?.width ?? 0, height: body?.height ?? 0 },
+    report.breakpoint,
+    SURFACE_FRAMING,
+  );
+  expect(
+    surface?.width ?? 0,
+    `${label}: the surface leaves the row it was given empty`,
+  ).toBeGreaterThanOrEqual(wanted.width - 1);
+  expect(
+    surface?.height ?? 0,
+    `${label}: the surface gave up the height of its row`,
+  ).toBeGreaterThanOrEqual(wanted.height - 1);
+
+  // And the stage scrolls only to a surface larger than itself, at 100 percent.
+  // This was `planSurface`'s first property read straight off the page, and it
+  // is now the same property with its one condition stated: the assertion the
+  // `BJ-16` review named, that a canvas clipped away entirely by a row squeezed
+  // to zero would be caught here, is the first of the two below. The second is
+  // item `E8`'s fourth regime, which gives a band that outgrows the stage
+  // somewhere to be panned to rather than a canvas edge to be cut by;
+  // `fan-floor.spec.ts` is where that case is driven and measured.
   const stage = report.scrollers['.bj-stage'];
   expect(stage, `${label}: no stage`).toBeDefined();
   expect(report.surfaceSize, `${label}: this reading only holds at 100 percent`).toBe('100');
+  if ((surface?.width ?? 0) <= (stage?.clientWidth ?? 0) + 1) {
+    expect(
+      stage?.scrollWidth ?? 0,
+      `${label}: the stage scrolls sideways at 100 percent`,
+    ).toBeLessThanOrEqual((stage?.clientWidth ?? 0) + 1);
+  }
+  if ((surface?.height ?? 0) <= (stage?.clientHeight ?? 0) + 1) {
+    expect(
+      stage?.scrollHeight ?? 0,
+      `${label}: the stage scrolls down at 100 percent`,
+    ).toBeLessThanOrEqual((stage?.clientHeight ?? 0) + 1);
+  }
+  // Whatever it scrolls to is the surface and nothing else: a stage whose
+  // extent exceeds the picture is a layout leaking somewhere.
   expect(
     stage?.scrollWidth ?? 0,
-    `${label}: the stage scrolls sideways at 100 percent`,
-  ).toBeLessThanOrEqual((stage?.clientWidth ?? 0) + 1);
+    `${label}: the stage reaches past the surface`,
+  ).toBeLessThanOrEqual(Math.max(stage?.clientWidth ?? 0, surface?.width ?? 0) + 1);
   expect(
     stage?.scrollHeight ?? 0,
-    `${label}: the stage scrolls down at 100 percent`,
-  ).toBeLessThanOrEqual((stage?.clientHeight ?? 0) + 1);
+    `${label}: the stage reaches past the surface`,
+  ).toBeLessThanOrEqual(Math.max(stage?.clientHeight ?? 0, surface?.height ?? 0) + 1);
 }
 
 /**

@@ -200,11 +200,16 @@ body {
   background: var(--bj-ground);
 }
 
-/* The stage scrolls, and only ever above 100 percent. `planSurface` floors both
- * dimensions, so at the default setting the surface fits its box exactly and no
- * scrollbar exists; above it the surface is deliberately larger, and item `F6`'s
- * "clips nothing" is this container reaching all of it rather than a clamp that
- * would silently refuse the magnification a low-vision player asked for. */
+/* The stage scrolls to a surface larger than itself, and there are exactly two
+ * ways for the surface to be larger. `planSurface` floors both dimensions
+ * against its box, so at the default setting the surface fits the box the
+ * framing gives it and no scrollbar exists; above 100 percent the surface is
+ * deliberately larger, and item `F6`'s "clips nothing" is this container
+ * reaching all of it rather than a clamp that would silently refuse the
+ * magnification a low-vision player asked for. The second way is item `E8`'s
+ * fourth regime, added at `AUDIT-2`: a hand band that needs more room than the
+ * framing gives is drawn onto a wider canvas rather than off the edge of a
+ * narrow one, and "overflows into the pannable stage" is this box again. */
 .bj-stage {
   display: flex;
   width: 100%;

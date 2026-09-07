@@ -55,11 +55,14 @@ import { describe, expect, it } from 'vitest';
 import { acceptIntent as accept } from './support/drive';
 import { stripComments as code } from './support/source-scan';
 
+import type { History } from '../../src/core/history';
+import { NO_HISTORY, record } from '../../src/core/history';
+import { NO_STATISTICS } from '../../src/core/statistics';
 import type { TableReadout } from '../../src/core/table';
 import { createTable } from '../../src/core/table';
 import { STARTING_CHIPS } from '../../src/core/wallet';
 import type { GameDocument } from '../../src/storage/document';
-import { DEFAULT_DOCUMENT, STORAGE_KEY } from '../../src/storage/document';
+import { DEFAULT_DOCUMENT, DEFAULT_SETTINGS, STORAGE_KEY } from '../../src/storage/document';
 import type { Persistence } from '../../src/storage/persistence';
 import {
   createPersistence,
@@ -666,19 +669,35 @@ describe('I3: no bare catch, and the scanner can see one', () => {
 /**
  * Two tabs on the one namespaced key, pinned as the design it is.
  *
- * SPEC 13 and QUALITY-BAR section 8 say nothing about a second tab, so this is
- * not a graded criterion; it is a behaviour a player can reach, and the choice
- * between accepting it and merging the monotone fields at the write is recorded
- * in `persistence.ts`'s header. The pin is here so the decision cannot change by
- * accident: the day someone puts a re-read on the save path, this goes red and
- * says which sentence they are editing.
+ * **This describe used to pin the opposite behaviour, and it went red on
+ * contact, which is what it was for.** Its own words were: "the day someone
+ * puts a re-read on the save path, this goes red and says which sentence they
+ * are editing." That day is `AUDIT-2`, finding `J3-01`. The sentence being
+ * edited is `persistence.ts`'s two-tabs paragraph, and the reason it was edited
+ * is that the accepted design turned out to violate two SPEC sentences rather
+ * than merely to be unhelpful: SPEC 13 says lifetime statistics accumulate, and
+ * measured they decreased; SPEC 6 keys every table unlock to the best chip
+ * balance ever reached, and measured that mark fell, re-locking a table the
+ * player had earned. One press of a settings button in a tab that had played
+ * nothing was enough, and nothing detected it.
+ *
+ * So the pin is inverted rather than deleted: what is asserted below is the
+ * property the cure exists for, on the same two-persistences-over-one-store
+ * fixture, and it will go red the day somebody takes the merge back out.
+ *
+ * **Two persistences over one store is the honest unit shape for two tabs.**
+ * Each holds its own in-memory document from its own construction, which is
+ * exactly what two pages of one origin do, and nothing here can adopt the
+ * other's write through the `storage` event, because that event belongs to a
+ * browser and this runner is `node`. So this file grades the save path alone;
+ * `tests/browser/two-tabs.spec.ts` grades the pair on the built page.
  *
  * Torn reads are deliberately not part of the claim. `setItem` and `getItem`
  * are atomic per key and the document is one key, so what is at stake is which
  * whole document wins, not a half-written one.
  */
-describe('SPEC 13: one key, one document, and the last writer wins', () => {
-  it('lets a stale tab overwrite what the other tab achieved, which is the chosen design', () => {
+describe('SPEC 13: one key, one document, and no write may roll it back', () => {
+  it('keeps the mark, the tallies and the history when a stale tab writes', () => {
     const store = createMemoryStore();
     // Both tabs boot on the same empty document, which is the realistic case:
     // a second tab opened while the first is mid-session.
@@ -690,15 +709,74 @@ describe('SPEC 13: one key, one document, and the last writer wins', () => {
 
     // Tab B writes anything at all: a settings toggle, a round boundary, or the
     // pagehide save `main.ts` wires to `onHidden`. It carries its own boot-time
-    // document, so tab A's mark goes.
+    // document, and under the old design tab A's mark went with it.
     tabB.update({ howToPlaySeen: true });
-    expect(loadDocument(store).document.bestBalance).toBe(STARTING_CHIPS);
+    expect(loadDocument(store).document.bestBalance).toBe(42_000);
 
-    // The other half of the same design: tab A's own view is unaffected, because
-    // the in-memory document is authoritative and nothing re-reads.
+    // Tab A's own view is unaffected either way, because the in-memory document
+    // is authoritative; what changed is that tab B's write no longer contradicts
+    // it. The two now agree about the one field that decides SPEC 6's unlocks.
     expect(tabA.document().bestBalance).toBe(42_000);
     tabA.update({ howToPlaySeen: true });
     expect(loadDocument(store).document.bestBalance).toBe(42_000);
+    // And the stale tab's own copy caught up on the way through the merge, so
+    // its next write cannot roll the mark back either.
+    expect(tabB.document().bestBalance).toBe(42_000);
+  });
+
+  it('lets the stale tab win the fields that are a choice, which is the other half', () => {
+    // A merge that simply kept the stored document would satisfy the test above
+    // and would silently throw away every setting a player pressed in the older
+    // tab. Settings are last-writer-wins on purpose.
+    const store = createMemoryStore();
+    const tabA = createPersistence({ store, durable: true, failure: null });
+    const tabB = createPersistence({ store, durable: true, failure: null });
+
+    tabA.update({ bestBalance: 42_000, table: 'gold' });
+    tabB.update({ settings: { ...DEFAULT_SETTINGS, speed: 'fast', theme: 'dark' } });
+
+    const written = loadDocument(store).document;
+    expect(written.settings.speed).toBe('fast');
+    expect(written.settings.theme).toBe('dark');
+    expect(written.table, 'the seat follows the writer, like every other choice').toBe(
+      DEFAULT_DOCUMENT.table,
+    );
+    expect(written.bestBalance, 'and the mark still did not move').toBe(42_000);
+  });
+
+  it('never lets a stale tab shorten the history or drop a milestone', () => {
+    const store = createMemoryStore();
+    const tabA = createPersistence({ store, durable: true, failure: null });
+    const tabB = createPersistence({ store, durable: true, failure: null });
+
+    // A genuine SPEC 8 entry rather than a hand-written one, so what is being
+    // carried is a row the sanitiser accepts on the way back in: a fabricated
+    // entry that failed `entryOf` would be dropped at the read and the length
+    // below would be zero for a reason that has nothing to do with the merge.
+    const played: History = record(
+      NO_HISTORY,
+      playSaving(101, createPersistence({ store: createMemoryStore(), durable: true, failure: null })),
+      null,
+    );
+    expect(played, 'the round produced no history entry').toHaveLength(1);
+
+    tabA.update({
+      history: played,
+      statistics: {
+        ...NO_STATISTICS,
+        lifetime: { handsPlayed: 4, wins: 2, losses: 2, pushes: 0, blackjacks: 1 },
+        milestones: ['firstNatural', 'reachedSilver'],
+      },
+    });
+
+    tabB.update({ howToPlaySeen: true });
+
+    const written = loadDocument(store).document;
+    expect(written.history).toHaveLength(1);
+    expect(written.statistics.lifetime.handsPlayed).toBe(4);
+    expect(written.statistics.milestones).toEqual(['firstNatural', 'reachedSilver']);
+    // The stale tab's own write still landed: the flag it was writing is set.
+    expect(written.howToPlaySeen).toBe(true);
   });
 });
 

@@ -43,19 +43,38 @@
  *      inconsistent even when neither is corrupt, and `launchTable` is the
  *      function SPEC 13 gives for exactly that.
  *
- * **Two tabs on the one key are last-writer-wins on whole documents, and that
- * is the chosen design rather than an oversight.** Each tab loads the document
- * once at construction and holds it in memory as authoritative, and every save
- * writes the whole of it, so a second tab that merely goes hidden writes the
- * document it booted with over whatever the first tab has since achieved. SPEC
- * 13 and QUALITY-BAR section 8 are silent on more than one tab, and section 8's
- * own framing is that persistence is best-effort: nothing a player would be
- * upset to lose may be gated on storage surviving. The alternative, re-reading
- * on the write path to merge the monotone fields, buys back the unlocks at the
- * cost of putting a read on every save and giving the document two authorities,
- * which is the design this file exists not to have.
- * `tests/unit/storage-write-failure.test.ts` pins the behaviour as the decision
- * it is, so a change to it is deliberate rather than accidental.
+ * **Two tabs on the one key are merged at the write, and the monotone fields
+ * cannot go backwards.** `AUDIT-2`, finding `J3-01`. Each tab still loads the
+ * document once at construction and holds it in memory, and last-writer-wins on
+ * whole documents was the earlier design: a second tab that merely went hidden
+ * wrote the document it had booted with over whatever the first had since
+ * achieved, which measured as the best chip balance falling from 1,100 to
+ * 1,000, the lifetime tallies and the hand history going to zero, and SPEC 6
+ * re-locking a table the player had earned, all from one press of a settings
+ * button in a tab that had played nothing. SPEC 13 says lifetime statistics
+ * accumulate and SPEC 6 keys the unlocks to a high-water mark, so both
+ * sentences were being violated rather than merely stretched, and QUALITY-BAR
+ * section 8's best-effort framing is about storage failing, not about the game
+ * destroying its own record.
+ *
+ * So `save` re-reads the key through `loadDocument`, the same sanitising path a
+ * launch uses, and hands both documents to `mergeDocuments`, which takes the
+ * maximum of everything that only rises and this session's own values for
+ * everything that is a choice. Three consequences are worth stating:
+ *
+ *   1. **The cost is one `getItem` and one parse per save**, and there are two
+ *      save points, a round boundary and a setting change, plus the write on
+ *      the way out of sight.
+ *   2. **Another tab's bytes are never trusted.** The re-read goes through the
+ *      envelope, the migration walk and `sanitiseDocument`, so a corrupt or
+ *      hand-edited document merges as the salvaged one and is then overwritten
+ *      by the merged result, which is SPEC 18's own sentence.
+ *   3. **The in-memory document is still authoritative and still moves first**:
+ *      `current` becomes the merged document before the write is attempted, so
+ *      a `QuotaExceededError` on the way out cannot roll a value back.
+ *
+ * `tests/unit/storage-merge.test.ts` drives the policy field by field and
+ * `tests/browser/two-tabs.spec.ts` drives two real tabs over the built page.
  *
  * **The chip balance is not here, and cannot be.** SPEC 13 does not persist one,
  * `GameDocument` has no field for it, and the wallet this file builds starts at
@@ -72,7 +91,13 @@ import type { LaunchChoice, Wallet, WalletOptions } from '../core/wallet';
 import { createWallet, launchTable } from '../core/wallet';
 
 import type { GameDocument, Repair, Settings } from './document';
-import { DEFAULT_DOCUMENT, STORAGE_KEY, openDocumentSession, sanitiseDocument } from './document';
+import {
+  DEFAULT_DOCUMENT,
+  STORAGE_KEY,
+  mergeDocuments,
+  openDocumentSession,
+  sanitiseDocument,
+} from './document';
 import type { MigrationOptions } from './migrations';
 import { migrate, readEnvelope, sealEnvelope } from './migrations';
 import type { KeyValueStore, StorageSource, StoreFailure, StoreProbe } from './store';
@@ -303,8 +328,8 @@ export interface PersistenceReadout {
 /**
  * SPEC 13's persistence, as the composition root holds it.
  *
- * **Three of the six are the shipped page's, and two of the rest are
- * test-facing seams.** `restored()`, `save()` and `resetAll()` are what
+ * **Five of the seven are the shipped page's, and two are test-facing seams.**
+ * `restored()`, `save()`, `resetAll()`, `stored()` and `readout()` are what
  * `src/main.ts` calls. `document()` and `update()` are consumed by
  * `tests/unit/storage-migration.test.ts` and `tests/unit/storage-corrupt.test.ts`
  * and by nothing under `src/`: the root assembles the whole document from the
@@ -317,6 +342,20 @@ export interface Persistence {
   readout(): PersistenceReadout;
   /** The authoritative in-memory document. A test-facing seam. */
   document(): GameDocument;
+  /**
+   * The document as the store holds it right now, salvaged. `AUDIT-2`.
+   *
+   * The one re-read in the project, and it is a re-read on purpose: the whole
+   * point is to see what another tab has written since this one booted. It goes
+   * through `loadDocument`, so nothing here is trusted, and it is total: a
+   * store that throws, an absent key and an unsalvageable document all answer
+   * with the defaults rather than raising.
+   *
+   * `save` uses it for the merge. The composition root uses it from its
+   * `storage` listener, which fires only in the tabs that did not write, to
+   * fold the same monotone fields into the live session.
+   */
+  stored(): GameDocument;
   /**
    * The launch this load produced. Rebuilt only by `resetAll`.
    *
@@ -342,9 +381,12 @@ export interface Persistence {
 /**
  * Hold one loaded document over one store. Items `I1`, `I2` and `I3`.
  *
- * The load happens here, once, at construction: SPEC 13 reads the document at
- * launch and nothing re-reads it, so a second read would be a second answer to a
- * question that has one.
+ * The launch load happens here, once, at construction: SPEC 13 reads the
+ * document at launch, and the session that is built from it, the wallet, the
+ * seat and the settings, is built from that one answer. The later reads `save`
+ * and `stored` perform are a different question, "what has another tab written
+ * since", and they answer it without rebuilding anything: `restored` is
+ * replaced by `resetAll` alone, for the reason its own comment gives.
  */
 export function createPersistence(probe: StoreProbe): Persistence {
   const loaded = loadDocument(probe.store);
@@ -370,11 +412,22 @@ export function createPersistence(probe: StoreProbe): Persistence {
     return result;
   }
 
+  function stored(): GameDocument {
+    return loadDocument(probe.store).document;
+  }
+
   function save(next: GameDocument): SaveResult {
+    // The re-read is immediately before the write and after everything the
+    // caller assembled, so the window in which another tab could land a write
+    // this one misses is the two statements below rather than the whole session.
+    // The platform store is synchronous and one key is written whole, so there
+    // is no torn document to read; what is at stake is only which whole document
+    // wins, and the merge is what decides that.
+    const merged = mergeDocuments(stored(), next);
     // Authoritative first, written second. A write that throws below cannot
     // take this assignment back, which is item `I3` in one line.
-    current = next;
-    return record(saveDocument(probe.store, next));
+    current = merged;
+    return record(saveDocument(probe.store, merged));
   }
 
   function update(patch: Partial<GameDocument>): SaveResult {
@@ -415,6 +468,7 @@ export function createPersistence(probe: StoreProbe): Persistence {
     document(): GameDocument {
       return current;
     },
+    stored,
     /**
      * The launch, and deliberately not rebuilt on every save.
      *

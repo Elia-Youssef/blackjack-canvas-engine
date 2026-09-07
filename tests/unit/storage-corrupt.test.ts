@@ -1049,6 +1049,21 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
   });
 
   describe('overwritten on the next successful write', () => {
+    /**
+     * The mark this test writes to show that its own write landed.
+     *
+     * **Above every mark any fixture holds, and that is a requirement rather
+     * than a spare digit.** The witness used to be 3,000, which is below
+     * `HEALTHY`'s 12,500, and since the `J3-01` cure the save path merges the
+     * high-water mark monotonically: a lower witness is discarded by the merge
+     * and the reader cannot tell "our write landed" from "nothing was written
+     * at all", which is exactly what this test is for. A value above every
+     * stored mark survives the merge, so the assertion below still separates
+     * the two. What is being graded is unchanged: the corrupt document is
+     * replaced and the next load repairs nothing.
+     */
+    const REPLACEMENT_MARK = 40_000;
+
     it('replaces the corrupt document, so the next load repairs nothing', () => {
       // Over every fixture that has something stored to replace. The two whose
       // store refuses the read have nothing to overwrite and nothing to read
@@ -1056,13 +1071,20 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
       for (const fixture of STORED) {
         const store = fixture.store();
         const persistence = createPersistence({ store, durable: true, failure: null });
-        const next: GameDocument = { ...persistence.document(), bestBalance: 3_000 };
+        const next: GameDocument = { ...persistence.document(), bestBalance: REPLACEMENT_MARK };
         expect(persistence.save(next).ok, fixture.name).toBe(true);
 
         const again = loadDocument(store);
         expect(again.report.source, fixture.name).toBe('stored');
         expect(again.report.repairs, fixture.name).toEqual([]);
-        expect(again.document.bestBalance, fixture.name).toBe(3_000);
+        expect(again.document.bestBalance, fixture.name).toBe(REPLACEMENT_MARK);
+        // The witness is only a witness while it is above what was stored, so
+        // the premise is asserted rather than assumed: a fixture whose salvaged
+        // mark ever reached it would make the line above pass for free.
+        expect(
+          persistence.document().bestBalance,
+          `${fixture.name} stores a mark the witness cannot outrank`,
+        ).toBe(REPLACEMENT_MARK);
       }
     });
   });

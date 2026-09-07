@@ -100,6 +100,7 @@ import { createWallet, tableLimits, type TableId } from './core/wallet';
 import { PACING_NAMES, resolveMotion, type Motion } from './render/animate';
 import {
   createPlaySurface,
+  requiredSurfaceWidth,
   type FanReading,
   type PlaySurface,
   type SceneState,
@@ -146,7 +147,7 @@ import type {
   Notice,
   OverlayId,
 } from './ui/state';
-import type { GameDocument } from './storage/document';
+import { STORAGE_KEY, mergeDocuments, type GameDocument } from './storage/document';
 import { openPersistence, type Persistence } from './storage/persistence';
 
 import './ui/tokens.css';
@@ -541,6 +542,23 @@ function pixelRatio(): number {
 }
 
 /**
+ * How wide the picture on the felt needs the surface to be. Item `E8`.
+ *
+ * The one number that crosses from the machine's snapshot into the surface
+ * plan, and it crosses here because this is the only place that holds both.
+ * `src/render/scene.ts` owns the arithmetic and the reasoning; what is decided
+ * here is that the bands are counted from the same readout the frame is about
+ * to be drawn from, so the canvas cannot be planned for a round other than the
+ * one on the felt.
+ */
+function surfaceDemand(snapshot: TableReadout): number {
+  return requiredSurfaceWidth(
+    snapshot.hands.map((hand) => hand.cards.length),
+    snapshot.dealerVisible.length + snapshot.dealerConcealed,
+  );
+}
+
+/**
  * What the two bars need, so `barsStick` can say whether they fit.
  *
  * Three content heights, read off the rendering the previous frame produced.
@@ -745,10 +763,21 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
    * high-water mark is the document's `bestBalance`, and the machine's own
    * table names the seat. A write that throws degrades only the carry, which
    * is `persistence.ts`'s contract and not this function's business.
+   *
+   * **The assembly is its own function because two callers need it.** The save
+   * below is one; the `storage` listener further down is the other, and it must
+   * fold what another tab wrote against the session as it stands right now
+   * rather than against the document the last save happened to leave behind,
+   * which can be several coach decisions old inside a round. One assembly, so
+   * the two cannot describe different sessions.
    */
   function save(): void {
+    persistence.save(documentNow());
+  }
+
+  function documentNow(): GameDocument {
     const snapshot = table.readout();
-    const document: GameDocument = Object.freeze({
+    return Object.freeze({
       bestBalance: snapshot.wallet.bestBalance,
       table: snapshot.table,
       statistics,
@@ -766,7 +795,43 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       }),
       howToPlaySeen,
     });
-    persistence.save(document);
+  }
+
+  /**
+   * What another tab wrote, folded into this session. `AUDIT-2`, `J3-01`.
+   *
+   * The `storage` event fires in every tab of the origin EXCEPT the one that
+   * wrote, so this runs exactly when this session's copy of the record has just
+   * gone stale. Without it a background tab kept showing the counters it booted
+   * with while the played tab moved on, and the two disagreed on screen until
+   * one of them was reloaded.
+   *
+   * **Only the fields that cannot go backwards, and never the settings.**
+   * `mergeDocuments` is the one policy, shared with the save path, so what is
+   * adopted here is exactly what a save would have preserved: the lifetime
+   * tallies, the milestones, the longer history and the seen flag. The merge
+   * returns THIS session's settings, Speed, theme, sound, coach mode and the
+   * staged rules, and they are deliberately not read back: taking a player's
+   * controls out from under them because a window they may not be looking at
+   * changed something is worse than the staleness it would cure, and SPEC 14
+   * scopes a settings change to the panel that made it.
+   *
+   * **The high-water mark is not adopted either, and that is a limit rather
+   * than a choice.** SPEC 6's mark lives in the wallet the machine holds, and
+   * `core/wallet.ts` offers no way to raise it from outside a round; the stored
+   * mark is protected by the merge at the save, and this tab's own readout
+   * catches up at its next launch.
+   */
+  function adoptForeignWrite(): void {
+    const merged = mergeDocuments(persistence.stored(), documentNow());
+    statistics = Object.freeze({
+      ...statistics,
+      lifetime: merged.statistics.lifetime,
+      milestones: merged.statistics.milestones,
+    });
+    coach = Object.freeze({ ...coach, lifetime: merged.coach.lifetime });
+    history = merged.history;
+    howToPlaySeen = merged.howToPlaySeen;
   }
 
   const actions: ChromeActions = {
@@ -899,6 +964,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     layout.breakpoint,
     layout.surfaceSize,
     pixelRatio(),
+    surfaceDemand(table.readout()),
   );
   const surface: PlaySurface = createPlaySurface({
     canvas: chrome.shell.canvas,
@@ -1122,7 +1188,10 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     // The shape of the page, then the surface that has to fit inside it. The
     // breakpoint is resolved from the viewport, which no layout of ours can
     // change, and the box is a grid track of a shell with a definite height, so
-    // neither reading can be moved by what this frame is about to draw. A
+    // neither reading can be moved by what this frame is about to draw. The
+    // third input, the picture's own demand, is a count of cards rather than a
+    // measurement of the page, and the row it is planned into clips rather than
+    // grows, so it cannot feed back either. A
     // resize is one frame behind a rotation, because the attribute that selects
     // the new layout is written in the chrome sync at the end of this frame and
     // the box is measured at the top of the next one; the machine's state is
@@ -1133,6 +1202,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       layout.breakpoint,
       layout.surfaceSize,
       pixelRatio(),
+      surfaceDemand(readout),
     );
     if (!sameSizing(wanted.sizing, plan.sizing)) {
       surface.resize(wanted.sizing);
@@ -1173,6 +1243,32 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     },
     onHidden: save,
   });
+
+  /**
+   * The product's one `storage` listener. `AUDIT-2`, finding `J3-01`.
+   *
+   * Bound on the global scope by name, the way the viewport and the device
+   * pixel ratio are read above: `tests/unit/storage-write-failure.test.ts`
+   * requires that exactly one file under `src/` names the platform globals, and
+   * the seam it means is `src/storage/store.ts`.
+   *
+   * It is an observation of the origin rather than an input a player made,
+   * which is the class `visibilitychange`, `pagehide` and `pageshow` are
+   * already in, and it comes off in `dispose` beside them so a game that has
+   * been replaced cannot answer for a page it no longer owns.
+   */
+  const onForeignWrite = (event: StorageEvent): void => {
+    // `key` is `null` when a whole origin is cleared, which takes this game's
+    // document with it; any other key belongs to something else on the origin
+    // and is none of this game's business.
+    if (event.key !== null && event.key !== STORAGE_KEY) {
+      return;
+    }
+    // Wrapped like the frame callback, for item `M4`'s reason: a page-level
+    // hook is a route into this game that no wrapper above it covers.
+    boundary.run(adoptForeignWrite);
+  };
+  addEventListener('storage', onForeignWrite);
 
   const game: Game = {
     readout: () => table.readout(),
@@ -1241,6 +1337,10 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       // reset action spells out: a dispose-time write would race the very
       // reset that disposed it.
       loop.dispose();
+      // The origin listener goes with the loop's, and for the same reason: a
+      // game that has been replaced must not fold another tab's write into a
+      // session nothing is drawing.
+      removeEventListener('storage', onForeignWrite);
       preference.dispose();
       // The audio engine's listeners come off with the rest. It listens on the
       // document rather than in the shell, so a game disposed by a second

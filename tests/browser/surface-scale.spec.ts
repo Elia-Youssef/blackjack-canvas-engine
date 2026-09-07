@@ -60,6 +60,7 @@ import {
   layoutProbe,
   layoutReport,
   pageMetrics,
+  readout,
   session,
   settle,
   surfaceMetrics,
@@ -319,6 +320,13 @@ test.describe('F6: the page and the arithmetic agree about the scale', () => {
       // The scale, the framing and the rendered box are one statement. The box
       // is the floor of the product, because a plan that rounded up could ask
       // for one pixel more than its row at 100 percent.
+      //
+      // **This is the whole rule at this phase and only at this phase.** Since
+      // `AUDIT-2`'s findings `Z3-01` and `J5-01` the picture's own demand is a
+      // second floor under the width, so a felt with cards on it can be drawn
+      // wider than framing times scale; the betting screen has no card on it,
+      // which the premise below pins rather than assumes.
+      expect((await readout(page)).hands, 'the felt is not empty at betting').toHaveLength(0);
       expect(dom.cssWidth, 'the rendered box is not the planned one').toBeCloseTo(
         probe.cssWidth,
         0,

@@ -290,6 +290,56 @@ export function fanCardWidth(bands: readonly FanBand[], natural: number): number
 }
 
 /**
+ * The room one band of `count` cards needs to be drawn at both floors.
+ *
+ * A floored card, plus one floored pitch for each card behind the first. It is
+ * the room below which `fanFor` has nothing left to give: the pitch is already
+ * the corner-index column and the width is already 60, so a band with less than
+ * this reports the criterion's fourth state.
+ */
+export function bandRoomFloor(count: number): number {
+  return count <= 0 ? 0 : CARD_WIDTH_FLOOR * (1 + (count - 1) * FAN_PITCH_FLOOR);
+}
+
+/**
+ * The narrowest surface that draws this frame with no band past both floors.
+ *
+ * **This is item `E8`'s fourth regime, built.** The criterion ends "past both
+ * floors the hand band overflows into the pannable stage rather than breaking
+ * either", and `AUDIT-2`'s findings `Z3-01`, `J5-01`, `J1-06` and `J5-02`
+ * measured that there was nothing behind it: each band was centred on its equal
+ * share of a canvas nobody had asked to hold it, so the excess ran off **both**
+ * ends of the bitmap, where a canvas clips its own drawing and no scroll
+ * container can reach it. A card whose reported width was exactly 60 composited
+ * at 45.10 px with its corner index at negative x, and one split on a phone was
+ * enough to reach it.
+ *
+ * So the surface is sized to the picture instead: the composition root asks for
+ * this width, `planSurface` never plans a narrower one, and a picture that
+ * needs more than the stage can show is drawn onto a canvas wider than the
+ * stage, which `src/ui/chrome.css` already scrolls to. The band then overflows
+ * **into the pannable stage**, which is the clause as written, rather than off
+ * the edge of the bitmap, which is what a canvas does with pixels outside it.
+ *
+ * The arithmetic is exact rather than an estimate, and it does not depend on
+ * the natural width: `fanCardWidth` shrinks the frame's one card width toward
+ * the floor until the tightest band fits, so a frame overflows exactly when
+ * some band's room is below `bandRoomFloor` of its own count. The dealer's band
+ * has the whole surface; each hand has an equal share of it, which is the room
+ * `handCentre` lays the hands out in.
+ */
+export function requiredSurfaceWidth(
+  handCounts: readonly number[],
+  dealerCount: number,
+): number {
+  let needed = bandRoomFloor(dealerCount);
+  for (const count of handCounts) {
+    needed = Math.max(needed, handCounts.length * bandRoomFloor(count));
+  }
+  return needed;
+}
+
+/**
  * One band's fan, at the width the frame resolved.
  *
  * The criterion's order, taken literally and in this sequence:
@@ -479,8 +529,9 @@ export function handLayout(
   fan: Fan,
   faceUpCount: number,
   total: number = laidWidth(cards.length, fan.cardWidth, fan.pitch),
+  surfaceWidth?: number,
 ): readonly CardSpec[] {
-  const left = centreX - total / 2;
+  const left = bandLeft(centreX, total, surfaceWidth);
   return cards.map((card, index) => ({
     rank: card.rank,
     suit: card.suit,
@@ -505,6 +556,31 @@ export function laidWidth(count: number, cardWidth: number, pitch: number): numb
 /** The horizontal centre of hand `index` of `count`, in logical units. */
 export function handCentre(index: number, count: number, width: number): number {
   return (width * (index * 2 + 1)) / (count * 2);
+}
+
+/**
+ * Where a band of `total` width starts, centred on `centreX` and on the canvas.
+ *
+ * **The clamp is for the frames between two arrangements, not for the resting
+ * one.** `requiredSurfaceWidth` is what keeps a settled band inside the surface,
+ * and where it has done its job this returns the centred position unchanged.
+ * What it cannot cover is SPEC 5's hand re-centre: the width a hand is laid out
+ * from eases toward its new value, so for the length of one tween a hand that
+ * has just been split is drawn at a width between the share it had and the
+ * share it now has. That intermediate width can exceed the new share, and a card
+ * drawn past the canvas edge for 0.18 s is still a card nobody can see.
+ *
+ * Given no width, the position is the centred one and nothing is clamped, which
+ * is what the headless armour lays hands out with.
+ */
+export function bandLeft(centreX: number, total: number, surfaceWidth?: number): number {
+  const centred = centreX - total / 2;
+  if (surfaceWidth === undefined) {
+    return centred;
+  }
+  // A band wider than the whole canvas has one place to start: a clamp that
+  // preferred the right edge would cut the cards a player reads first.
+  return Math.min(Math.max(centred, 0), Math.max(0, surfaceWidth - total));
 }
 
 // ---------------------------------------------------------------------------
@@ -1244,6 +1320,14 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
       // composited pixels against, and a second derivation beside the one the
       // cards are laid out from would let the probe report a fan the scene did
       // not draw.
+      //
+      // Since `AUDIT-2` the surface arriving here is never narrower than
+      // `requiredSurfaceWidth` says this picture needs, so no band reaches the
+      // criterion's fourth state on the shipped page: what overflows is the
+      // stage's window onto the canvas, which is pannable, rather than the
+      // canvas itself, which clips. `fanFor` still resolves and reports that
+      // state, because it is the arithmetic the demand above is derived from
+      // and the headless armour sweeps it directly.
       const handCount = Math.max(1, state.hands.length);
       const handRoom = width / handCount;
       const natural = naturalCardWidth(width);
@@ -1315,7 +1399,7 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
         if (laid.moving) {
           moving += 1;
         }
-        const specs = handLayout(cards, centre, topY, fan, faceUpCount, laid.value);
+        const specs = handLayout(cards, centre, topY, fan, faceUpCount, laid.value, width);
         return specs.map((spec, index) => {
           const progress = progressOf(
             memory.cards,

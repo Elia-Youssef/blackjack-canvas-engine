@@ -19,6 +19,14 @@
  * and compared, so a floor changed in the code without the contract moving is a
  * red suite rather than a silently different game.
  *
+ * **The last block is `AUDIT-2`'s.** Findings `Z3-01`, `J5-01`, `J1-06` and
+ * `J5-02` measured that the clause's fourth state had no implementation behind
+ * it: the band overflowed the **canvas** rather than the stage, so cards left
+ * the bitmap entirely while every assertion above stayed green. What is added is
+ * the room a picture needs, the surface it is therefore drawn on, and the
+ * property those exist for, which is that every band of every frame a round can
+ * reach is inside the canvas it is drawn on.
+ *
  * @vitest-environment node
  */
 
@@ -29,21 +37,26 @@ import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
 import { resolveMotion } from '../../src/render/animate';
-import { CARD_GEOMETRY } from '../../src/render/card';
+import { CARD_GEOMETRY, cardHeight } from '../../src/render/card';
 import {
   CARD_WIDTH_FLOOR,
   FAN_PITCH_FLOOR,
   SCENE_GEOMETRY,
+  bandLeft,
+  bandRoomFloor,
   createPlaySurface,
   fanCardWidth,
   fanFor,
+  handCentre,
   handLayout,
   laidWidth,
   naturalCardWidth,
+  requiredSurfaceWidth,
   type Fan,
   type FanBand,
 } from '../../src/render/scene';
 import { STANDARD_PALETTE } from '../../src/render/tokens';
+import { MIN_SURFACE_HEIGHT, planSurface, type BreakpointName } from '../../src/ui/breakpoints';
 
 import { createStyleFreeCanvas } from './support/recording-context';
 
@@ -355,5 +368,320 @@ describe('E8: the fan reading is a snapshot, not a window onto the scene', () =>
 
     expect(surface.fan().cardWidth).toBe(reading.cardWidth);
     expect(surface.fan().regimes.length).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// E8's fourth regime: the room the picture needs, and the canvas it is drawn on
+// ---------------------------------------------------------------------------
+
+/**
+ * The criterion's last clause, as arithmetic over the two floors.
+ *
+ *   "past both floors the hand band overflows into the pannable stage rather
+ *    than breaking either"
+ *
+ * `AUDIT-2`'s findings `Z3-01`, `J5-01`, `J1-06` and `J5-02` measured what the
+ * page did instead: each band was centred on its equal share of a canvas that
+ * was never asked to hold it, so the excess ran off **both** ends of the
+ * bitmap, where a canvas clips its own drawing and no scroll container can
+ * reach it. A card whose reported width was exactly the 60 px floor composited
+ * at 45.10 px with its corner index drawn at negative x, and at the round
+ * result on a 390 x 844 phone the leftmost card of a four-way split was drawn
+ * at x = -51 on a 144 px canvas.
+ *
+ * The property below is what "overflows into the pannable stage" means when it
+ * is measured rather than assumed: **the surface is never narrower than the
+ * room its own bands need**, so every card is drawn onto the bitmap, and the
+ * stage scrolls to whatever part of it the viewport cannot show.
+ *
+ * Both derivations here are written from the criterion and from `SCENE_GEOMETRY`
+ * rather than imported from the cure, on `tests/unit/reference/`'s rule: a
+ * second implementation that shares the first one's misreading agrees with it
+ * for ever. `requiredSurfaceWidth` is compared against this one below.
+ */
+function roomForBand(count: number): number {
+  return count <= 0 ? 0 : CARD_WIDTH_FLOOR * (1 + (count - 1) * FAN_PITCH_FLOOR);
+}
+
+/** The narrowest surface on which no band of this frame overflows its room. */
+function widthNeededBy(handCounts: readonly number[], dealerCount: number): number {
+  // The dealer's band has the whole surface; each hand has an equal share of
+  // it, which is the room `handCentre` lays the hands out in.
+  let needed = roomForBand(dealerCount);
+  for (const count of handCounts) {
+    needed = Math.max(needed, handCounts.length * roomForBand(count));
+  }
+  return needed;
+}
+
+/** One band as the scene draws it: the extent its cards occupy, in CSS px. */
+interface DrawnBand {
+  readonly label: string;
+  readonly left: number;
+  readonly right: number;
+  readonly fan: Fan;
+}
+
+const FACE = { rank: 'K', suit: 'clubs' } as const;
+
+/**
+ * Lay a whole frame out through the functions the renderer itself uses.
+ *
+ * `handLayout` is called rather than reimplemented, because the claim is about
+ * where a card is **drawn**: a test that added up widths of its own would agree
+ * with the criterion while the scene disagreed with both.
+ */
+function drawnBands(
+  surfaceWidth: number,
+  handCounts: readonly number[],
+  dealerCount: number,
+): DrawnBand[] {
+  const natural = naturalCardWidth(surfaceWidth);
+  const share = surfaceWidth / Math.max(1, handCounts.length);
+  const bands: FanBand[] = [
+    { count: dealerCount, room: surfaceWidth },
+    ...handCounts.map((count) => ({ count, room: share })),
+  ];
+  const cardWidth = fanCardWidth(bands, natural);
+  return bands.map((band, index) => {
+    const fan = fanFor(band.count, band.room, cardWidth, natural);
+    const centre =
+      index === 0 ? surfaceWidth / 2 : handCentre(index - 1, handCounts.length, surfaceWidth);
+    const specs = handLayout(
+      Array.from({ length: band.count }, () => FACE),
+      centre,
+      0,
+      fan,
+      0,
+      fan.laid,
+      surfaceWidth,
+    );
+    const first = specs[0];
+    const last = specs[specs.length - 1];
+    return {
+      label: index === 0 ? 'dealer' : `hand ${String(index - 1)}`,
+      left: first?.x ?? 0,
+      right: (last?.x ?? 0) + fan.cardWidth,
+      fan,
+    };
+  });
+}
+
+/**
+ * The stage boxes the shipped page hands the middle row, measured.
+ *
+ * Every one of them is a reading from `AUDIT-2`'s journeys rather than a shape
+ * chosen here: `J5-02` measured the three portrait boxes on the shipped page at
+ * 390 x 844, and `Z3-01` and `J1-06` measured the 320-wide and 667 x 375 ones.
+ */
+const STAGE_BOXES: readonly {
+  readonly label: string;
+  readonly width: number;
+  readonly height: number;
+  readonly breakpoint: BreakpointName;
+}[] = [
+  { label: 'phone betting', width: 366, height: 355, breakpoint: 'portrait' },
+  { label: "phone player's turn", width: 366, height: 411, breakpoint: 'portrait' },
+  { label: 'phone round result', width: 366, height: 192, breakpoint: 'portrait' },
+  { label: 'smallest', width: 288, height: 192, breakpoint: 'portrait' },
+  { label: 'phone landscape', width: 643, height: 192, breakpoint: 'compact' },
+  { label: 'desktop', width: 1256, height: 560, breakpoint: 'wide' },
+];
+
+/** Every hand shape a round can reach: SPEC 4.6 caps a split at four hands. */
+const HAND_COUNTS = [1, 2, 3, 4];
+const CARD_COUNTS = [2, 3, 4, 5, 6];
+
+describe('E8: the surface is never narrower than the room its own bands need', () => {
+  it('agrees with a second reading of the criterion about how much room that is', () => {
+    // The module's arithmetic against this file's own, over every shape a round
+    // can reach and a few it cannot. Two implementations written from the same
+    // sentence, so a change to either that the other does not make is red.
+    for (let dealer = 0; dealer <= 8; dealer += 1) {
+      for (let hands = 0; hands <= 4; hands += 1) {
+        for (let count = 0; count <= 12; count += 1) {
+          const handCounts = Array.from({ length: hands }, () => count);
+          expect(
+            requiredSurfaceWidth(handCounts, dealer),
+            `${String(hands)} hands of ${String(count)} against ${String(dealer)}`,
+          ).toBeCloseTo(widthNeededBy(handCounts, dealer), 9);
+        }
+      }
+    }
+    // And the two ends of it, stated: an empty table needs nothing, and the
+    // dealer's own band is counted even when no hand is on the felt.
+    expect(requiredSurfaceWidth([], 0)).toBe(0);
+    expect(requiredSurfaceWidth([], 2)).toBeCloseTo(roomForBand(2), 9);
+    // The room one band needs is the floor pair and nothing else.
+    expect(bandRoomFloor(1)).toBe(CARD_WIDTH_FLOOR);
+    expect(bandRoomFloor(0)).toBe(0);
+    expect(bandRoomFloor(3)).toBeCloseTo(CARD_WIDTH_FLOOR * (1 + 2 * FAN_PITCH_FLOOR), 9);
+  });
+
+  it('draws every band of every reachable frame onto the bitmap', () => {
+    let checked = 0;
+    for (const box of STAGE_BOXES) {
+      for (const hands of HAND_COUNTS) {
+        for (const count of CARD_COUNTS) {
+          for (const dealer of [2, 5]) {
+            const handCounts = Array.from({ length: hands }, () => count);
+            const needed = widthNeededBy(handCounts, dealer);
+            const plan = planSurface(box, box.breakpoint, 100, 2, needed);
+            const width = plan.sizing.width;
+            const where = `${box.label}: ${String(hands)} hands of ${String(count)}`;
+            expect(width, `${where}: the surface is narrower than the picture`)
+              .toBeGreaterThanOrEqual(needed);
+            for (const band of drawnBands(width, handCounts, dealer)) {
+              expect(band.left, `${where}: ${band.label} starts off the canvas`)
+                .toBeGreaterThanOrEqual(0);
+              expect(band.right, `${where}: ${band.label} ends off the canvas`)
+                .toBeLessThanOrEqual(width);
+              // And no card in it is below the floor the criterion names, which
+              // is what makes the room above the right amount of room.
+              expect(band.fan.cardWidth, `${where}: ${band.label} shrank past the floor`)
+                .toBeGreaterThanOrEqual(CARD_WIDTH_FLOOR);
+              expect(band.fan.overflow, `${where}: ${band.label} still overflows`).toBe(0);
+            }
+            checked += 1;
+          }
+        }
+      }
+    }
+    // The sweep is the claim, so its size is asserted rather than assumed.
+    expect(checked).toBe(STAGE_BOXES.length * HAND_COUNTS.length * CARD_COUNTS.length * 2);
+  });
+
+  it('keeps one hand clear of the next, so no band paints over its neighbour', () => {
+    // `Z3-01` measured the other half of the same defect: at 308 x 410 with four
+    // hands of four cards each band reached 29.80 px into its neighbour's, and
+    // hands are drawn in index order, so the right hand painted over the left.
+    for (const box of STAGE_BOXES) {
+      for (const hands of [2, 3, 4]) {
+        for (const count of CARD_COUNTS) {
+          const handCounts = Array.from({ length: hands }, () => count);
+          const width = planSurface(
+            box,
+            box.breakpoint,
+            100,
+            2,
+            widthNeededBy(handCounts, 2),
+          ).sizing.width;
+          const bands = drawnBands(width, handCounts, 2).slice(1);
+          for (let index = 1; index < bands.length; index += 1) {
+            const left = bands[index - 1];
+            const right = bands[index];
+            expect(
+              right?.left ?? 0,
+              `${box.label}: ${String(hands)} hands of ${String(count)} overlap`,
+            ).toBeGreaterThanOrEqual((left?.right ?? 0) - 1e-9);
+          }
+        }
+      }
+    }
+  });
+
+  it('holds a band inside the canvas while SPEC 5s re-centre is still running', () => {
+    // The width a hand is laid out from eases toward its new value, so a split
+    // draws the hand it is dividing at a width between the old one and the new
+    // one for the length of one tween. That intermediate width can exceed the
+    // share the hand has just been given, which would put a card off the canvas
+    // for as long as the tween runs.
+    const width = 320;
+    const fan = fanFor(2, width / 2, CARD_WIDTH_FLOOR, CARD_WIDTH_FLOOR);
+    for (const total of [fan.laid, fan.laid * 1.5, width * 1.2]) {
+      for (const index of [0, 1]) {
+        const specs = handLayout(
+          [FACE, FACE],
+          handCentre(index, 2, width),
+          0,
+          fan,
+          0,
+          total,
+          width,
+        );
+        const first = specs[0];
+        const last = specs[specs.length - 1];
+        expect(first?.x ?? -1, `eased to ${String(total)}`).toBeGreaterThanOrEqual(0);
+        if (total <= width) {
+          expect((last?.x ?? 0) + fan.cardWidth, `eased to ${String(total)}`)
+            .toBeLessThanOrEqual(width);
+        }
+      }
+    }
+  });
+
+  it('holds a re-centring hand inside the canvas on a real frame of the tween', () => {
+    // The same property as the test above, through `createPlaySurface` rather
+    // than through `handLayout`, because the clamp is only worth anything if the
+    // renderer hands it the canvas it is drawing on. The frame measured is the
+    // one after a hand is split four ways: hand 0's cards have not moved, so
+    // they are settled rather than travelling, while its laid width is still
+    // easing down from the width it had with the whole felt to itself.
+    const width = 303;
+    const main = createStyleFreeCanvas();
+    const surface = createPlaySurface({
+      canvas: main.canvas,
+      offscreen: () => createStyleFreeCanvas().canvas,
+      // The felt bakes onto a canvas of the layer's own, which keeps its frame
+      // and its four printed lines out of the stream measured below.
+      feltLayer: {
+        acquire: () => createStyleFreeCanvas().canvas,
+        show: () => undefined,
+        release: () => undefined,
+      },
+      sizing: { width, height: 192, dpr: 1 },
+    });
+    const cards = [FACE, { rank: '9', suit: 'hearts' }] as const;
+    const frame = (hands: number): Parameters<typeof surface.render>[0] => ({
+      felt: 'bronze',
+      limits: { minimum: 10, maximum: 100 },
+      dealer: [],
+      dealerConcealed: 0,
+      hands: Array.from({ length: hands }, () => ({ cards, wager: 0, won: null })),
+      pendingWager: 0,
+      motion: resolveMotion({ reducedMotion: false, speed: 'normal' }),
+      palette: STANDARD_PALETTE,
+    });
+
+    // One hand, settled: the second frame's delta is longer than any tween.
+    surface.render(frame(1), 0);
+    surface.render(frame(1), 5);
+    main.recording.entries.length = 0;
+    surface.render(frame(4), 1 / 60);
+
+    // `roundedRectPath` traces a card as one `moveTo` and four `arcTo`s, two of
+    // which carry the left edge itself, so the smallest x any arc was given is
+    // the leftmost edge of any card drawn this frame.
+    const edges = main.recording
+      .calls('arcTo')
+      .map((call) => Number(call.args[0]))
+      .filter((value) => Number.isFinite(value));
+    expect(edges.length, 'no card was drawn at all').toBeGreaterThan(0);
+    expect(Math.min(...edges), 'a card was drawn off the left edge').toBeGreaterThanOrEqual(0);
+
+    // The control, so the assertion above is not passing on a frame with no
+    // pressure on it: centred on its new share, the width this hand is easing
+    // **from** starts left of the canvas.
+    const before = laidWidth(2, CARD_WIDTH_FLOOR, CARD_WIDTH_FLOOR * SCENE_GEOMETRY.cardStep);
+    expect(bandLeft(handCentre(0, 4, width), before)).toBeLessThan(0);
+  });
+
+  it('leaves room under the dealers row for a floored card at the rows own minimum', () => {
+    // The vertical half of the same property, and the one number it rests on:
+    // a floored card is 1.4 times 60 px tall whatever the surface is, and the
+    // play-surface row's minimum height is what the shell guarantees the plan.
+    // Derived rather than stated, so a change to either number is a red test
+    // rather than a row of cards drawn through the bottom edge.
+    const bottom = (height: number): number =>
+      Math.max(
+        height * SCENE_GEOMETRY.handY,
+        height * SCENE_GEOMETRY.dealerY + cardHeight(CARD_WIDTH_FLOOR),
+      ) + cardHeight(CARD_WIDTH_FLOOR);
+    expect(bottom(MIN_SURFACE_HEIGHT)).toBeLessThanOrEqual(MIN_SURFACE_HEIGHT);
+    // And the claim is not vacuous: one row shorter and it does not hold.
+    expect(bottom(MIN_SURFACE_HEIGHT - cardHeight(CARD_WIDTH_FLOOR))).toBeGreaterThan(
+      MIN_SURFACE_HEIGHT - cardHeight(CARD_WIDTH_FLOOR),
+    );
   });
 });

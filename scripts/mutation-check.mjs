@@ -12,7 +12,20 @@
  * at BJ-18, `K1`, `K2`, `K3` and `K5` at BJ-19, `C1`, `C3`, `C4`, `C6`,
  * `C7`, `E2`, `I4`, `I5`, `J4` and `J7` at BJ-20, and `M2`, `M4`, `A5`, `L1`,
  * `L2`, `L3` and `L5` at BJ-21, `E8`, `G9`, `G2`, `D3`, `H1` to `H5` and
- * `H7` at BJ-22, and `A3` at BJ-23.
+ * `H7` at BJ-22, `A3` at BJ-23, and for AUDIT-2 a second `I4` block for
+ * finding `J3-01` and a second `E8` block for findings `Z3-01`, `J5-01`,
+ * `J1-06` and `J5-02`.
+ *
+ * The AUDIT-2 block breaks the two-tab cure. Finding `J3-01` measured a second
+ * tab of the shipped game destroying the first tab's persisted record on one
+ * press of a settings button, so its ten edits take the merge apart field by
+ * field, the mark, each lifetime tally, the count's own consistency, the
+ * milestones, the coach's accuracy and the history, then take the merge off the
+ * save path altogether and make it keep the stored settings instead of the
+ * player's; the last two unregister the `storage` listener and empty the fold
+ * it performs. They are filed under `I4`, whose criterion names the persisted
+ * set that was being destroyed, and they sit at the end of the list beside
+ * their own block comment.
  *
  * The `BJ-23` block breaks the browser matrix itself, which is the one gate in
  * this file whose subject is the harness rather than the product: item `A3`
@@ -392,6 +405,14 @@ const DOUBLE_BUST = browserGate('double-bust.spec.ts');
 // `F4`, `D6` and `G4` are already handled. Five sheets load a seeded game
 // through that route, and the review found it serving an unseeded one.
 const CAPTURE_ROUTE = browserGate('capture-route.spec.ts');
+
+// AUDIT-2's one browser gate, for finding `J3-01`. The cure has two halves and
+// only one of them is visible to `npm run test`: the merge on the save path is
+// a pure function over two documents and is graded by the unit suite, while the
+// `storage` event fires only in a second real tab of a real origin, which no
+// unit runner has. The entries below say which of the two each mutation is
+// required red by, and the browser ones are the listener's.
+const TWO_TABS = browserGate('two-tabs.spec.ts');
 
 /**
  * One measurement report, as a gate. `BJ-22`.
@@ -4170,12 +4191,17 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // AUDIT-2 re-pointed this find: the save now merges what is stored into
+    // what the caller assembled before it writes, so the document that becomes
+    // authoritative is the merged one. The property is unchanged, and it is the
+    // one the entry always broke: the assignment happens before the write, so a
+    // refusal cannot roll a value back.
     item: 'I3',
     name: 'the in-memory document only moves when the write lands',
     file: 'src/storage/persistence.ts',
-    find: '    current = next;\n    return record(saveDocument(probe.store, next));',
+    find: '    current = merged;\n    return record(saveDocument(probe.store, merged));',
     replace:
-      '    const attempt = record(saveDocument(probe.store, next));\n    if (attempt.ok) {\n      current = next;\n    }\n    return attempt;',
+      '    const attempt = record(saveDocument(probe.store, merged));\n    if (attempt.ok) {\n      current = merged;\n    }\n    return attempt;',
     detectedBy: UNIT,
   },
   {
@@ -4785,8 +4811,11 @@ const EDITS = [
     item: 'M1',
     name: 'a hand stops being centred on the point it is laid out at',
     file: 'src/render/scene.ts',
-    find: '  const left = centreX - total / 2;',
-    replace: '  const left = centreX;',
+    // Re-pointed at `AUDIT-2`: the centring moved into `bandLeft`, which is
+    // where the clamp that keeps a re-centring band on the canvas had to go.
+    // The property is the same one, and it is broken the same way.
+    find: '  const centred = centreX - total / 2;',
+    replace: '  const centred = centreX;',
     detectedBy: UNIT,
   },
   {
@@ -5267,8 +5296,13 @@ const EDITS = [
     item: 'F3',
     name: 'portrait is framed as a squashed landscape',
     file: 'src/ui/breakpoints.ts',
-    find: "  return breakpoint === 'portrait' ? SURFACE_FRAMING.portrait : SURFACE_FRAMING.landscape;",
-    replace: '  return SURFACE_FRAMING.landscape;',
+    // Re-pointed at `AUDIT-2`: the preference is now the first half of a rule
+    // whose second half is the row's own shape, so the line that carries "only
+    // portrait turns the space" is this one. What it breaks is unchanged.
+    find:
+      "  const preferred =\n" +
+      "    breakpoint === 'portrait' ? SURFACE_FRAMING.portrait : SURFACE_FRAMING.landscape;",
+    replace: '  const preferred = SURFACE_FRAMING.landscape;',
     detectedBy: UNIT,
   },
   {
@@ -6199,11 +6233,15 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // AUDIT-2 re-pointed this find: the document assembly moved out of `save`
+    // into `documentNow`, so that the `storage` listener folding another tab's
+    // write compares against one assembly rather than a second spelling of it.
+    // The mutant is what it always was, a save that assembles and writes nothing.
     item: 'I4',
     name: 'the save assembles a document and writes nothing',
     file: 'src/main.ts',
-    find: 'persistence.save(document);',
-    replace: 'void document;',
+    find: '    persistence.save(documentNow());',
+    replace: '    void documentNow();',
     detectedBy: PERSISTENCE,
   },
   {
@@ -7308,6 +7346,207 @@ const EDITS = [
       '    `    <script src=".${support}"></script>\\n` +\n' +
       '    `    <script src=".${ROUTES.boot}"></script>\\n`;',
     detectedBy: CAPTURE_ROUTE,
+  },
+
+  // ------------------------------------------------------------------------
+  // AUDIT-2, finding `J3-01`: two tabs on one persisted document
+  // ------------------------------------------------------------------------
+  //
+  // The defect these entries put back, one piece at a time: the document was
+  // read once per page at boot and every write replaced the whole key, so a
+  // second tab held a private copy from the moment it booted and any write in
+  // it, a round boundary or one press of a settings button, overwrote
+  // everything the other tab had achieved. Measured on the shipped page: the
+  // best chip balance fell from 1,100 to 1,000, the lifetime tallies and the
+  // hand history went to zero, and SPEC 6 re-locked a table the player had
+  // earned. They are filed under `I4`, whose criterion names the persisted set
+  // exactly, "best balance, statistics, milestones and unlocks are persisted",
+  // which is the set that was being destroyed.
+  //
+  // The first eight break the merge, which is a pure function over two
+  // documents and is therefore the unit suite's; the last two break the
+  // `storage` listener, which needs a second real tab and is the browser
+  // gate's. Each one is a way of satisfying the property vacuously or of
+  // dropping one field out of it, so a merge that kept only the fields
+  // somebody remembered would still go red.
+  {
+    item: 'I4',
+    name: 'the save writes what the caller assembled without re-reading the store',
+    file: 'src/storage/persistence.ts',
+    find: '    const merged = mergeDocuments(stored(), next);',
+    replace: '    const merged = next;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I4',
+    name: 'the stored high-water mark is overwritten instead of raised',
+    file: 'src/storage/document.ts',
+    find: '    bestBalance: Math.max(stored.bestBalance, ours.bestBalance),',
+    replace: '    bestBalance: ours.bestBalance,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I4',
+    name: 'the lifetime tallies take the lower of the two documents',
+    file: 'src/storage/document.ts',
+    find:
+      '  const wins = Math.max(stored.wins, ours.wins);\n' +
+      '  const losses = Math.max(stored.losses, ours.losses);\n' +
+      '  const pushes = Math.max(stored.pushes, ours.pushes);',
+    replace:
+      '  const wins = Math.min(stored.wins, ours.wins);\n' +
+      '  const losses = Math.min(stored.losses, ours.losses);\n' +
+      '  const pushes = Math.min(stored.pushes, ours.pushes);',
+    detectedBy: UNIT,
+  },
+  {
+    // The repair, not the maximum. Without the third term the merged count can
+    // sit below the outcomes it is the sum of, and `countersOf` then refuses
+    // the whole scope on the next read: the cure would throw away exactly what
+    // it was built to protect, and every per-counter assertion would still pass.
+    item: 'I4',
+    name: 'the merged hand count stops following the outcomes it is the sum of',
+    file: 'src/storage/document.ts',
+    find: '    handsPlayed: Math.max(stored.handsPlayed, ours.handsPlayed, wins + losses + pushes),',
+    replace: '    handsPlayed: Math.max(stored.handsPlayed, ours.handsPlayed),',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I4',
+    name: 'the awarded milestones stop being unioned, so a permanent award is dropped',
+    file: 'src/storage/document.ts',
+    find:
+      '      milestones: mergeMilestones(stored.statistics.milestones, ours.statistics.milestones),',
+    replace: '      milestones: ours.statistics.milestones,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I4',
+    name: "the coach's lifetime accuracy is overwritten instead of merged",
+    file: 'src/storage/document.ts',
+    find: '      lifetime: mergeAccuracy(stored.coach.lifetime, ours.coach.lifetime),',
+    replace: '      lifetime: ours.coach.lifetime,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I4',
+    name: 'the shorter hand history wins, so a stale tab truncates SPEC 8s list',
+    file: 'src/storage/document.ts',
+    find:
+      '    history: ours.history.length >= stored.history.length ? ours.history : stored.history,',
+    replace: '    history: ours.history,',
+    detectedBy: UNIT,
+  },
+  {
+    // The other direction, and the reason the merge is not simply "keep what is
+    // stored": a merge that never took our settings would satisfy every
+    // monotonicity assertion above and would silently discard every press a
+    // player made in the older tab.
+    item: 'I4',
+    name: 'the merge keeps the stored settings, so a settings press is discarded',
+    file: 'src/storage/document.ts',
+    find: '    settings: ours.settings,',
+    replace: '    settings: stored.settings,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'I4',
+    name: 'nothing listens for another tab writing the document',
+    file: 'src/main.ts',
+    find: "  addEventListener('storage', onForeignWrite);",
+    replace: '  void onForeignWrite;',
+    detectedBy: TWO_TABS,
+  },
+  {
+    item: 'I4',
+    name: 'the fold adopts nothing, so a stale tab keeps understating its own record',
+    file: 'src/main.ts',
+    find:
+      '    statistics = Object.freeze({\n' +
+      '      ...statistics,\n' +
+      '      lifetime: merged.statistics.lifetime,\n' +
+      '      milestones: merged.statistics.milestones,\n' +
+      '    });',
+    replace: '    void merged.statistics;',
+    detectedBy: TWO_TABS,
+  },
+
+  // ------------------------------------------------------------------------
+  // AUDIT-2, findings `Z3-01`, `J5-01`, `J1-06` and `J5-02`: the surface the
+  // picture is drawn on
+  // ------------------------------------------------------------------------
+  //
+  // The defect these entries put back: item `E8`'s last clause says that past
+  // both floors "the hand band overflows into the pannable stage rather than
+  // breaking either", and nothing implemented it. Each band was centred on its
+  // equal share of a canvas nobody had asked to hold it, so the excess ran off
+  // **both** ends of the bitmap, where a canvas clips its own drawing and the
+  // stage has no range to pan: at the default surface size the plan floored the
+  // canvas to the stage box, so `scrollWidth === clientWidth` everywhere
+  // measured. On the shipped page at 390 x 844, one split was enough, and at
+  // SPEC 10's round result the row's 366 x 192 box drew a 144 px surface on
+  // which the leftmost card of a four-way split sat at x = -51.
+  //
+  // The cure has three pieces and each entry takes one away: the arithmetic
+  // that says how much room the picture needs, the plan that never draws
+  // narrower than that, and the framing choice that stops a row wider than the
+  // widest framing being drawn a fifth of the way across itself. The fourth and
+  // fifth are the clamp under them, which keeps a band on the canvas for the
+  // frames of SPEC 5's re-centre where the eased width is wider than the share
+  // the hand has just been given, at the rule and at the one call site that
+  // hands it the canvas.
+  {
+    item: 'E8',
+    name: 'the room a split needs stops counting the hands sharing the felt',
+    file: 'src/render/scene.ts',
+    find: '    needed = Math.max(needed, handCounts.length * bandRoomFloor(count));',
+    replace: '    needed = Math.max(needed, bandRoomFloor(count));',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E8',
+    name: 'the plan draws the surface its framing wants and ignores the picture',
+    file: 'src/ui/breakpoints.ts',
+    find: '      width: Math.max(Math.floor(framing.width * scale), demanded),',
+    replace: '      width: Math.floor(framing.width * scale),',
+    detectedBy: FAN_FLOOR,
+  },
+  {
+    item: 'E8',
+    name: 'the composition root stops asking the picture how much room it needs',
+    file: 'src/main.ts',
+    find:
+      '  return requiredSurfaceWidth(\n' +
+      '    snapshot.hands.map((hand) => hand.cards.length),\n' +
+      '    snapshot.dealerVisible.length + snapshot.dealerConcealed,\n' +
+      '  );',
+    replace: '  return snapshot.hands.length * 0;',
+    detectedBy: FAN_FLOOR,
+  },
+  {
+    item: 'F3',
+    name: 'the framing is chosen from the breakpoint alone, whatever shape the row is',
+    file: 'src/ui/breakpoints.ts',
+    find: '  if (aspect > framingAspect(SURFACE_FRAMING.landscape)) {',
+    replace: '  if (aspect > Number.POSITIVE_INFINITY) {',
+    detectedBy: BREAKPOINTS,
+  },
+  {
+    item: 'E8',
+    name: 'a band that has not finished re-centring is left off the canvas',
+    file: 'src/render/scene.ts',
+    find: '  return Math.min(Math.max(centred, 0), Math.max(0, surfaceWidth - total));',
+    replace: '  return centred;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E8',
+    name: 'the scene stops telling the layout which canvas it is drawing on',
+    file: 'src/render/scene.ts',
+    find:
+      '        const specs = handLayout(cards, centre, topY, fan, faceUpCount, laid.value, width);',
+    replace: '        const specs = handLayout(cards, centre, topY, fan, faceUpCount, laid.value);',
+    detectedBy: UNIT,
   },
 ];
 
