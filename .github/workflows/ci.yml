@@ -109,7 +109,11 @@ jobs:
         run: npm run report:perf
 
       - name: Run browser tests
-        run: npm run test:browser -- --ignore-snapshots
+        run: >-
+          npm run test:browser --
+          --project=timing-chromium --project=timing-firefox --project=timing-webkit
+          --project=chromium --project=firefox --project=webkit
+          --ignore-snapshots
 
       - name: Measure the bundle size
         run: npm run report:bundle-size
@@ -140,6 +144,43 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: browser-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  browser-channels:
+    name: Browser channels
+    needs: repository-policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the proposed commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 20.19.0
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install the stable channel browsers
+        run: npx playwright install --with-deps chrome msedge
+
+      - name: Run the suite on Chrome and Edge stable
+        run: npx playwright test --project=chrome --project=msedge --no-deps
+
+      - name: Upload browser diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: channel-diagnostics
           path: |
             playwright-report/
             test-results/

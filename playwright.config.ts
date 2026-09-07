@@ -74,6 +74,34 @@ const TIMING_SPEC = /motion-demo\.spec\.ts/;
 const VISUAL_SPEC = /visual\.spec\.ts/;
 
 /**
+ * The desktop framing, taken from the descriptor without its identity. `BJ-23`.
+ *
+ * **A device descriptor's `userAgent` is true of the engine Playwright bundles
+ * and false of an installed one.** `devices['Desktop Chrome']` carries the UA
+ * string of the Chromium build shipped with the pinned Playwright, which is
+ * what the `chromium` project actually runs, so spreading it there states a
+ * fact. Spreading it on a stable channel states the opposite: at the pinned
+ * version the descriptor says Chrome 151 while the installed channels on this
+ * machine are 152, so the page would be told it is a browser it is not.
+ * QUALITY-BAR section 2 names a descriptor's identity a spoof and refuses it
+ * as evidence, and item `A3` is about the browser a player has.
+ * `devices['Desktop Edge']` is that same stale string with `Edg/` appended and
+ * is deliberately unused for the same reason.
+ *
+ * What is kept is everything else the descriptor carries, because the five
+ * projects have to be measuring one layout: the responsive sweep, the
+ * touch-target report and the hit-testing specs all read boxes. Subtracted
+ * rather than re-listed, so a Playwright release that adds a framing field
+ * reaches the channels the same day it reaches the three mains.
+ *
+ * Both halves are exported because `tests/unit/browser-matrix.test.ts` asserts
+ * the subtraction from the other side: that what was taken out is exactly the
+ * identity and that what is left is exactly the rest of the descriptor.
+ * Playwright reads the default export below and ignores these two.
+ */
+export const { userAgent: BUNDLED_IDENTITY, ...DESKTOP_FRAMING } = devices['Desktop Chrome'];
+
+/**
  * Browser gate.
  *
  * The server here is `vite preview` over the built `dist/`, never the dev
@@ -81,10 +109,12 @@ const VISUAL_SPEC = /visual\.spec\.ts/;
  * static files, so the browser gate has to exercise that directory and not a
  * transform pipeline that will not exist in production.
  *
- * Chromium, Firefox and WebKit per STACK section 6. Playwright's `webkit` is a
- * WebKit build and not Safari, and it cannot drive iOS. Real Safari, iOS and
- * Android are a release-gate demonstration on physical devices and are never a
- * merge gate; part BJ-23 owns that matrix.
+ * Chromium, Firefox and WebKit per STACK section 6, plus the Chrome and Edge
+ * stable channels at `BJ-23`, which is item `A3`'s five. Playwright's `webkit`
+ * is a WebKit build and not Safari, and it cannot drive iOS. Real Safari, iOS
+ * and Android are a release-gate demonstration on physical devices and are
+ * never a merge gate; the demonstration script in `BlackJack/ACCEPTANCE.md`
+ * section 4 owns those, and nothing in this file may be read as covering them.
  */
 export default defineConfig({
   testDir: './tests/browser',
@@ -206,6 +236,74 @@ export default defineConfig({
       // Keep unrelated WebKit assertions out of Retina backing-store throughput
       // while the dedicated surface cases exercise high density explicitly.
       use: { ...devices['Desktop Safari'], deviceScaleFactor: 1 },
+    },
+
+    // ------------------------------------------------------------------
+    // The two stable channels. Item `A3` at `BJ-23`, Critical.
+    // ------------------------------------------------------------------
+    //
+    // **What a channel is, and why it is not a fourth engine.** These two
+    // projects drive the browsers the machine has installed, Google Chrome
+    // stable and Microsoft Edge stable, rather than the Chromium build
+    // Playwright ships. QUALITY-BAR section 2 puts both in Tier 1 and item
+    // `A3` names them, and the reason is that a shipping browser is not its
+    // upstream engine: the release channel carries origin trials, enterprise
+    // policy, an installed font stack, a different media pipeline and, on
+    // Edge, a second vendor's patches. A green `chromium` project says the
+    // engine works; it does not say the browser a player has does.
+    //
+    // **Their composition is the `firefox` and `webkit` composition, and that
+    // is a decision rather than a copy.** Item `A3` asks for "the full
+    // automated suite" on five projects, and the suite has been a composed
+    // thing since `BJ-18`: two files run in exactly one place each, for
+    // reasons that are about the instrument rather than about coverage, and
+    // both of those places were fixed before this part existed. Adding the
+    // channels under the same rule is the honest reading; giving them
+    // exceptions of their own would not be.
+    //
+    //   - `motion-demo.spec.ts` is excluded, as it is from all three mains.
+    //     It measures a real frame interval and cannot share a machine, which
+    //     is the whole of the timing chain above. Two more single-worker links
+    //     would lengthen the one serial section every other test waits behind
+    //     and would add two more chances for a loaded machine to redden it,
+    //     and they would be measuring the machine rather than the product: the
+    //     assertion is that the game's two peek arms take the same time, the
+    //     frame delivery it is measured through is a property of the engine on
+    //     this machine, and `timing-chromium` already measures that engine.
+    //     What the channels do run is every behavioural motion assertion, in
+    //     `reduced-motion.spec.ts`, `speed-setting.spec.ts` and
+    //     `visibility.spec.ts`, so the Speed multiplier, the reduced-motion
+    //     switch and the frame loop are all exercised on both of them.
+    //   - `visual.spec.ts` is excluded, as it is from `firefox` and `webkit`.
+    //     Its assertion is a bitmap compared against a committed baseline, and
+    //     baselines are per project and per platform. A channel with no
+    //     baseline set would fail on a missing file rather than on a drawing,
+    //     and minting two more sets would grade two more font stacks against
+    //     one drawing. The drawing itself is measured on every project by
+    //     `render-surface.spec.ts` and `fan-floor.spec.ts`.
+    //
+    // Everything else runs, on both, including the axe scan, the whole round
+    // flow, persistence, the responsive sweep and the CSP demonstration.
+    // `tests/unit/browser-matrix.test.ts` holds that sentence to its word: it
+    // reads this file, resolves what each project would run against the specs
+    // on disk, and fails if a channel ever runs a different set from the
+    // `chromium` main beyond the one baseline file. Without it, deleting a
+    // project here would make the suite smaller and still green.
+    //
+    // `dependencies` is the mains' own, for the mains' own reason: nothing may
+    // run while the timing chain measures. In a job that runs the channels
+    // alone, `--no-deps` skips the chain, which is what the CI patch does.
+    {
+      name: 'chrome',
+      testIgnore: [TIMING_SPEC, VISUAL_SPEC],
+      dependencies: ['timing-webkit'],
+      use: { ...DESKTOP_FRAMING, channel: 'chrome' },
+    },
+    {
+      name: 'msedge',
+      testIgnore: [TIMING_SPEC, VISUAL_SPEC],
+      dependencies: ['timing-webkit'],
+      use: { ...DESKTOP_FRAMING, channel: 'msedge' },
     },
   ],
 

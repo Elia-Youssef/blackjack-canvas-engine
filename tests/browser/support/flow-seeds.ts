@@ -6,7 +6,7 @@
  * `boot` takes a seed and never a scripted deck, so a spec that needs a
  * particular round has to find it. This module imports `core/` alone, drives
  * the real machine headlessly in Node, and reports the first seed on each of
- * three shapes:
+ * four shapes:
  *
  *   - **an Ace-up round that asks the insurance question and plays on**: the
  *     up card is an Ace, the hole card is not a natural, the player's own
@@ -21,15 +21,23 @@
  *     left hand wins and whose right hand loses against the one dealer hand,
  *     which is item `C3`'s "each settles independently" as a literal round
  *     rather than an inference from two equal ones.
+ *   - **two bust-outs in one session, whose offers differ**, added at `BJ-23`.
+ *     `doubleBustJourney` below carries the whole reasoning.
  *
  * Nothing here reads a clock or a random source: the shoe is `BJ-3`'s seeded
  * stream, so the answers are stable across runs and across engines.
  */
 
 import { handValue } from '../../../src/core/hand';
-import { createTable, splitRefusal } from '../../../src/core/table';
+import { createTable, doubleRefusal, splitRefusal } from '../../../src/core/table';
 import type { PhaseKind } from '../../../src/core/types';
-import { canFund } from '../../../src/core/wallet';
+import {
+  bustOut,
+  canFund,
+  createWallet,
+  tableLimits,
+  type TableId,
+} from '../../../src/core/wallet';
 
 /** How far each search looks before failing loudly rather than returning less. */
 const SEED_LIMIT = 6000;
@@ -39,6 +47,15 @@ const SEARCH_STEP = 0.25;
 
 /** No round needs more frames than this to reach its next decision point. */
 const SEARCH_FRAMES = 600;
+
+/**
+ * How many hits one hand is offered before the search gives its seed up.
+ *
+ * A hand cannot take more than eight cards without passing 21, since the four
+ * lowest ranks in the shoe are Aces and twos, so a limit of ten is past every
+ * reachable hand and is a guard against a loop rather than a rule about play.
+ */
+const HIT_LIMIT = 10;
 
 /** The wager every search bets: Bronze-legal, and splittable twice over. */
 export const FLOW_WAGER = 50;
@@ -351,4 +368,241 @@ export function differingSplit(): SplitSeed {
     }
   }
   throw new Error('no seed inside the search limit splits into differing outcomes');
+}
+
+// ---------------------------------------------------------------------------
+// BJ-23: the double-bust journey, and the second offer a first one cannot see
+// ---------------------------------------------------------------------------
+
+/**
+ * The high-water mark the journey boots with, so Gold is seated at all.
+ *
+ * The same figure `tests/browser/support/action-seeds.ts` brings for the same
+ * reason: SPEC 6 keys the unlocks to the best balance ever reached, and a
+ * session that has to earn 10,000 before it can sit at Gold is not a browser
+ * test.
+ */
+export const JOURNEY_MARK = 10_000;
+
+/** Where the journey starts. Gold, because it is the only table with two below it. */
+export const JOURNEY_TABLE: TableId = 'gold';
+
+/** Where the first offer is taken. The middle table, so the second offer is shorter. */
+export const JOURNEY_DROP: TableId = 'silver';
+
+/**
+ * The chips the first round taps, and the wager they build. SPEC 4.11's grid.
+ *
+ * **460 is derived rather than chosen.** The bankroll starts at
+ * `STARTING_CHIPS`, a doubled hand that busts loses `2 x wager`, and the
+ * balance left has to land in one band: below Gold's minimum, which is what
+ * SPEC 4.12 fires the bust-out on, and at or above Silver's minimum, so the
+ * screen offers **both** lower tables rather than one. That is `1000 - 2w`
+ * inside `[50, 100)`, so `w` inside `(450, 475]`, and on the 10 grid that
+ * leaves 460 and 470. 460 is the lower of the two and leaves 80 chips, which
+ * funds the second round's wager with something over.
+ *
+ * **The double is a choice, not a necessity, and the counterexample is
+ * recorded here so the next reader does not rediscover it as a bug.** An
+ * earlier version of this comment said no plain loss could reach the band.
+ * That is false: the same arithmetic on an undoubled wager needs `w` inside
+ * `(900, 950]`, and on the grid that band holds **five** wagers, 910 to 950,
+ * not only the 950 `action-seeds.ts` takes. The `BJ-23` review constructed one
+ * by driving the real machine: seed 3, an undoubled 910 lost at Gold, leaves 90
+ * chips and offers `[bronze, silver]`; drop to Silver, lose 50, and 40 chips
+ * offer `[bronze]`. Two differing offers, no double anywhere.
+ *
+ * **What the double buys is a second property in the same journey.** SPEC 4.5
+ * records a doubled hand that busts as `bust` rather than as `doubled`, and
+ * `double-bust.spec.ts` asserts both halves off the machine, that the hand
+ * carried `2 x JOURNEY_WAGER` and that the cards ended it. No plain loss
+ * reaches that, so the doubled route grades the rebuild coupling `BJ-20`
+ * recorded **and** the doubled-bust recording in one seeded session, which is
+ * why it is the route taken.
+ */
+export const JOURNEY_WAGER = 460;
+
+/** The tap sequence that builds it, on SPEC 4.11's four denominations. */
+export const JOURNEY_CHIPS = [100, 100, 100, 100, 50, 10] as const;
+
+/**
+ * The second round's wager: Silver's own minimum, which 80 chips can fund.
+ *
+ * It cannot be doubled and is not meant to be. After the commit the balance
+ * holds 30, which is less than the equal wager `commitDouble` asks for, so the
+ * second round busts its hand by hitting instead. Silver's minimum is also its
+ * floor, so there is no smaller legal wager to leave more behind.
+ */
+export const JOURNEY_SECOND_WAGER = 50;
+
+/** What the double-bust search reports back to the spec that replays it. */
+export interface DoubleBustSeed {
+  readonly seed: number;
+  /** Hits the second round needs before its hand busts. Pinned by the spec. */
+  readonly hits: number;
+  /** The lower tables the first bust-out offers, lowest first. */
+  readonly firstOffer: readonly TableId[];
+  /** The lower tables the second offers, after the drop. A strict subset. */
+  readonly secondOffer: readonly TableId[];
+}
+
+let doubleBust: DoubleBustSeed | null = null;
+
+/**
+ * A session that busts out twice, and whose second offer is not its first.
+ *
+ * **What this closes.** `BJ-20` shipped the bust-out screen's lower-table list
+ * behind a rebuild key: `src/ui/components/screens.ts` joins the offer's table
+ * ids and rebuilds the buttons only when that string changes. Its `C4` ledger
+ * entry originally mutated the key itself, and the sweep at `BJ-20` recorded
+ * the entry as an evidence defect: **no single-bust-out spec can observe a
+ * broken key at all.** The cached string starts `null`, so the first offer is
+ * built whatever the key says, and a session that reaches the screen once
+ * never asks the cache a second question. The entry was re-pointed at the
+ * build loop, which one bust-out does grade, and the coupling was recorded as
+ * an open gap with this part as its home.
+ *
+ * **What makes the gap observable.** Two bust-outs in one session whose offers
+ * differ. The first is at Gold with 80 chips left, which both lower tables can
+ * still be entered on; the drop takes the player to Silver, and the second is
+ * at Silver with 30 chips left, which only Bronze can. A stale cache therefore
+ * leaves a Drop to Silver button on the screen of a player who is sitting at
+ * Silver, which is the exact defect the key exists to prevent and the exact
+ * thing one bust-out cannot show.
+ *
+ * **The search states the property rather than the answer.** A qualifying seed
+ * has to leave the two offers overlapping but not equal: the first carries the
+ * table the journey drops to, the second is non-empty and a strict subset of
+ * the first, and it no longer names the seat the player is in. A retune of
+ * SPEC 6's tables that broke any of those fails here, loudly, rather than
+ * quietly handing back a journey whose second screen happens to look like its
+ * first. The two balances are checked against `tableLimits` for the same
+ * reason, so no figure in this file is a number the search trusts twice.
+ */
+export function doubleBustJourney(): DoubleBustSeed {
+  if (doubleBust !== null) {
+    return doubleBust;
+  }
+  const start = tableLimits(JOURNEY_TABLE);
+  const dropped = tableLimits(JOURNEY_DROP);
+  for (let seed = 1; seed <= SEED_LIMIT; seed += 1) {
+    const table = createTable({
+      seed,
+      table: JOURNEY_TABLE,
+      wallet: createWallet({ bestBalance: JOURNEY_MARK }),
+    });
+    table.apply({ kind: 'start' });
+    for (const denomination of JOURNEY_CHIPS) {
+      table.apply({ kind: 'tapChip', chip: denomination });
+    }
+    if (table.readout().wallet.wager !== JOURNEY_WAGER) {
+      throw new Error('the double-bust search could not build its wager');
+    }
+    table.apply({ kind: 'deal' });
+    if (settle(table) !== 'playerTurn') {
+      continue;
+    }
+
+    // The double has to be legal on the cards and funded by the balance, which
+    // are the two questions `src/ui/components/actions.ts` greys the control
+    // with. Asked of `core/` rather than re-derived from the ranks.
+    const dealt = table.readout();
+    const hand = dealt.hands[0];
+    if (hand === undefined) {
+      continue;
+    }
+    if (doubleRefusal(hand, { rules: dealt.rules, splits: dealt.splits }) !== null) {
+      continue;
+    }
+    if (!canFund(hand.wager, dealt.wallet.chips)) {
+      continue;
+    }
+
+    table.apply({ kind: 'double' });
+    // SPEC 4.5 gives a doubled hand exactly one card, and `table.ts` records a
+    // doubled hand that busts as `bust` rather than as `doubled`. A hand that
+    // survived its card would leave the round's outcome to the dealer, and the
+    // journey needs a loss it does not have to hope for.
+    if (table.readout().hands[0]?.state !== 'bust') {
+      continue;
+    }
+    if (settle(table) !== 'roundResult') {
+      continue;
+    }
+    const afterFirst = table.readout().wallet.chips;
+    if (afterFirst >= start.minimum || afterFirst < dropped.minimum) {
+      continue;
+    }
+
+    table.apply({ kind: 'nextHand' });
+    if (table.readout().phase.kind !== 'bustOut') {
+      continue;
+    }
+    const firstOffer = bustOut(JOURNEY_TABLE, JOURNEY_MARK, afterFirst).lowerTables;
+    if (!firstOffer.includes(JOURNEY_DROP)) {
+      continue;
+    }
+
+    table.apply({ kind: 'dropTable', table: JOURNEY_DROP });
+    if (table.readout().phase.kind !== 'betting') {
+      continue;
+    }
+    table.apply({ kind: 'tapChip', chip: JOURNEY_SECOND_WAGER });
+    if (table.readout().wallet.wager !== JOURNEY_SECOND_WAGER) {
+      continue;
+    }
+    table.apply({ kind: 'deal' });
+    if (settle(table) !== 'playerTurn') {
+      continue;
+    }
+
+    // Hit until the hand is over 21. A hand that reached exactly 21 stands
+    // automatically, per SPEC 4.5, and leaves the round for the dealer to
+    // decide, so such a seed is skipped rather than played on.
+    let hits = 0;
+    let busted = false;
+    for (let attempt = 0; attempt < HIT_LIMIT; attempt += 1) {
+      table.apply({ kind: 'hit' });
+      hits += 1;
+      const kind = settle(table);
+      if (table.readout().hands[0]?.state === 'bust') {
+        busted = true;
+        break;
+      }
+      if (kind !== 'playerTurn') {
+        break;
+      }
+    }
+    if (!busted || settle(table) !== 'roundResult') {
+      continue;
+    }
+    const afterSecond = table.readout().wallet.chips;
+    if (afterSecond >= dropped.minimum) {
+      continue;
+    }
+
+    table.apply({ kind: 'nextHand' });
+    if (table.readout().phase.kind !== 'bustOut') {
+      continue;
+    }
+    const secondOffer = bustOut(JOURNEY_DROP, JOURNEY_MARK, afterSecond).lowerTables;
+    if (secondOffer.length === 0 || secondOffer.length >= firstOffer.length) {
+      continue;
+    }
+    if (secondOffer.includes(JOURNEY_DROP)) {
+      continue;
+    }
+    if (!secondOffer.every((id) => firstOffer.includes(id))) {
+      continue;
+    }
+
+    doubleBust = Object.freeze({
+      seed,
+      hits,
+      firstOffer: Object.freeze([...firstOffer]),
+      secondOffer: Object.freeze([...secondOffer]),
+    });
+    return doubleBust;
+  }
+  throw new Error('no seed inside the search limit busts out twice with differing offers');
 }
