@@ -22,11 +22,21 @@
  *     the product to three input listeners and `BJ-18` and `BJ-19` added their
  *     own; what matters here is that the count does not climb.
  *   - **Timers** have no representation a snapshot can be asked for, so they are
- *     counted by a shim installed **before** the game boots, which increments on
- *     `setTimeout` and `setInterval` and decrements on their clears and on a
- *     timeout firing. The shim is disclosed rather than hidden: it is two
- *     wrappers and a counter, it runs in the page being measured, and its cost
- *     is a function call on a path the game takes a few times a round.
+ *     counted by a shim, which increments on `setTimeout` and `setInterval` and
+ *     decrements on their clears and on a timeout firing. The shim is disclosed
+ *     rather than hidden: it is two wrappers and a counter, it runs in the page
+ *     being measured, and its cost is a function call on a path the game takes a
+ *     few times a round.
+ *
+ *     **It is installed on the page the game is already running on, not before
+ *     the boot.** `main` boots, walks to the betting screen and settles first,
+ *     so the seed search's boots and the measured boot are outside the census.
+ *     That is the criterion's own scope rather than a shortfall: what it names
+ *     is a timer *accumulating*, which is a property of the soak between the
+ *     first checkpoint and the last, and both readings are taken after the shim
+ *     is in. A timer created before it and never cleared is a constant that both
+ *     checkpoints carry and the growth column subtracts away; one cleared after
+ *     it is the unmatched-clear case the wrappers name below.
  *
  * The interval is the criterion's 30 minutes. `BJ_MEMORY_MINUTES` shortens it for
  * development and the report says which was used, because a report that did not
@@ -134,6 +144,18 @@ async function startPlaying(page) {
       note(1);
       return realInterval(...args);
     };
+    // **Both clears decrement unconditionally, and that is a stated limit
+    // rather than a checked one.** A clear of an id this census never issued,
+    // or a second clear of a timeout that already fired and already
+    // decremented, takes `live` below zero, and the growth column would then
+    // read a page leaking one timer per round as one leaking none. It is
+    // unreachable on this tree and is not claimed otherwise: `src/` creates no
+    // timer at all, every `setTimeout`, `setInterval`, `clearTimeout` and
+    // `clearInterval` in it being inside a comment, which is why the column
+    // reads zero. The control below exercises only the matched
+    // `setInterval`/`clearInterval` pair, so it would not see this either. The
+    // day the product creates its first timer, the fix is to issue ids from
+    // this shim and decrement only for one of its own.
     window.clearTimeout = (id) => {
       note(-1);
       realClearTimeout(id);

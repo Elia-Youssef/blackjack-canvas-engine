@@ -453,6 +453,84 @@ test.describe('D4: closing an overlay restores focus', () => {
       'data-open-overlay=howToPlay',
     );
   });
+
+  test('and the same switch driven by press, which is the case the fallback is for', async ({
+    page,
+  }) => {
+    // `AUDIT-2`, finding `Z5-05`. The test above drives the switch by
+    // `focus()` then `Enter`, which puts focus on the opener on every engine
+    // and so takes the branch that never needed a fallback. Driven by press
+    // the two engine families split, and the capture was wrong for both: on an
+    // engine that focuses a button when it is pressed the opener is what the
+    // capture found, which is right; on one that does not, focus was still on
+    // the dialog from the first panel's open, the dialog is inside the shell
+    // and is not `<body>`, so the capture answered the dialog itself and the
+    // fallback never ran. The close then read a host that `Overlays.update`
+    // had already hidden, found it unfocusable and fell to the controls
+    // anchor. Both engines land on the opener the player last pressed, which
+    // is what the branch's comment claims and now what it does.
+    await atBettingScreen(page);
+    await page.locator('[data-open-overlay="settings"]').click();
+    await expect(page.locator('[data-overlay-host="true"]')).toBeVisible();
+    await settle(page);
+
+    await page.locator('[data-open-overlay="statistics"]').click();
+    await settle(page);
+    await expect(page.locator('[data-overlay-host="true"]')).toHaveAttribute(
+      'data-open',
+      'statistics',
+    );
+
+    await control(page, 'close-overlay').click();
+    await expect(page.locator('[data-overlay-host="true"]')).toBeHidden();
+    await settle(page);
+    expect((await focusedStop(page)).key, 'the close did not restore the opener').toBe(
+      'data-open-overlay=statistics',
+    );
+  });
+
+  test('and a switch whose press moved no focus, which is the fallback itself', async ({
+    page,
+  }) => {
+    // The same finding, with the engine premise supplied rather than assumed.
+    // All five projects focus a button when Playwright presses it, so the arm
+    // above exercises the capture and never the fallback; the engines the
+    // fallback was written for cannot be driven here. A programmatic `click()`
+    // is that behaviour exactly: the handler runs and focus does not move, so
+    // the sync step meets a switch with focus still on the dialog the first
+    // panel opened. The dialog is inside the shell and is not `<body>`, so a
+    // capture that asks only "is the focused element one of ours" answers with
+    // the dialog, and the close then reads a host `Overlays.update` has
+    // already hidden. Anything but the opener here is the anchor fallback
+    // firing on a switch that had a perfectly good control to go back to.
+    await atBettingScreen(page);
+    await page.locator('[data-open-overlay="settings"]').click();
+    await expect(page.locator('[data-overlay-host="true"]')).toBeVisible();
+    await settle(page);
+    expect((await focusedStop(page)).key, 'the first panel took focus').toBe(
+      'data-overlay-host=true',
+    );
+
+    await page.evaluate(() => {
+      const opener = document.querySelector('[data-open-overlay="statistics"]');
+      if (!(opener instanceof HTMLElement)) {
+        throw new Error('no statistics opener on this page');
+      }
+      opener.click();
+    });
+    await settle(page);
+    await expect(page.locator('[data-overlay-host="true"]')).toHaveAttribute(
+      'data-open',
+      'statistics',
+    );
+
+    await control(page, 'close-overlay').click();
+    await expect(page.locator('[data-overlay-host="true"]')).toBeHidden();
+    await settle(page);
+    expect((await focusedStop(page)).key, 'the close fell past the opener').toBe(
+      'data-open-overlay=statistics',
+    );
+  });
 });
 
 // ---------------------------------------------------------------------------
@@ -518,6 +596,59 @@ test.describe('D4: focus survives a change of screen', () => {
     expect((await focusedStop(page)).key, 'focus fell to the body when the disclosure went').toBe(
       'data-focus-anchor=controls',
     );
+  });
+
+  test('lands there when a control is skipped by content-visibility', async ({ page }) => {
+    // The third way a control can go, and the one the rendered-fact test used to
+    // miss. `AUDIT-2`, finding `J4-03`: a subtree skipped by `content-visibility`
+    // keeps its layout boxes, so `getClientRects()` answers for it while the
+    // browser refuses to focus it. The chrome contains the case already, in
+    // `BJ-16`'s closed readout disclosure; no control lives in there today,
+    // which is why this is constructed rather than driven.
+    //
+    // The construction is one property on the ancestor of a control that is on
+    // every screen: the browser blurs the focused descendant, and the custodian
+    // then has to decide whether the control it was holding can still take
+    // focus. Answering yes leaves the caret on `<body>`, which is the sentence
+    // QUALITY-BAR section 3 forbids and the one this file's other two arms are
+    // about.
+    await atBettingScreen(page);
+    await resizeTo(page, 390, 844);
+    const mute = page.locator('[data-control="mute"]');
+    await expect(mute).toBeVisible();
+    await mute.focus();
+    expect((await focusedStop(page)).key, 'the mute control did not take focus').toBe(
+      'data-control=mute',
+    );
+    // The custodian remembers the element that holds focus on the frame after
+    // it takes it, and what it does here is decide whether the element it is
+    // holding can still take focus. Skipping the subtree before that frame
+    // measures nothing: there would be nothing held to ask about.
+    await settle(page);
+
+    const measured = await page.evaluate(() => {
+      const node = document.querySelector('[data-control="mute"]');
+      const holder = node?.parentElement ?? null;
+      if (node === null || holder === null) {
+        return null;
+      }
+      holder.style.contentVisibility = 'hidden';
+      // The premise, measured on this engine rather than assumed: the boxes
+      // survive the skip, so a rect test still answers yes.
+      return {
+        rects: node.getClientRects().length,
+        visible: node.checkVisibility({ contentVisibilityAuto: true, visibilityProperty: true }),
+      };
+    });
+    expect(measured, 'the mute control has no parent to skip').not.toBeNull();
+    expect(measured?.rects ?? 0, 'the skip removed the boxes, so this proves nothing').toBe(1);
+    expect(measured?.visible ?? true, 'this engine does not skip the subtree at all').toBe(false);
+
+    await settle(page);
+    expect(
+      (await focusedStop(page)).key,
+      'focus stayed on the body when the control was skipped',
+    ).toBe('data-focus-anchor=controls');
   });
 
   test('keeps a greyed control focusable, and refuses the press', async ({ page }) => {

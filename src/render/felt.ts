@@ -487,10 +487,24 @@ export function bakeFelt(
     // record below is not a description of the bake: it is what decides whether
     // the next frame pays for another one. `PlaySurface.feltSpec()` hands it out
     // to anything that asks, and a four-byte edit from outside was enough to
-    // make the cache miss forever and pay a 176 ms bake per frame. Copying keeps
-    // the caller's own literal separate; freezing is what the readout contract
-    // the rest of this codebase follows already promises.
-    spec: Object.freeze({ ...spec }),
+    // make the cache miss. Copying keeps the caller's own literal separate;
+    // freezing is what the readout contract the rest of this codebase follows
+    // already promises.
+    //
+    // **The nested record is copied and frozen too, and the palette
+    // deliberately is not** (`AUDIT-2`, finding `Z3-06`). A spread is one level
+    // deep, so `limits` used to be the caller's own object, unfrozen, reachable
+    // through `feltSpec()`: an outside write to it edited the live key, and
+    // `needsRebake` compares those two numbers, so the entry became one no spec
+    // could ever match again and sat in a cache bounded at four holding a
+    // full-size backing store alive. What that costs is a slot rather than a
+    // bake per frame, which is item `H5`'s subject. The shipped page happened to
+    // be safe because `wallet.ts` freezes its three table rows; a capture
+    // harness or a hand-built `SceneState` is not, and this makes the sentence
+    // above true rather than lucky. The palette is left alone because
+    // `needsRebake` compares it by identity, against module constants that are
+    // already frozen: a copy here would never match again either.
+    spec: Object.freeze({ ...spec, limits: Object.freeze({ ...spec.limits }) }),
     drawShapes(target: CanvasRenderingContext2D): void {
       // The one per-frame cost of the felt. The cast is the seam between the
       // structural canvas this module tests against and the platform type

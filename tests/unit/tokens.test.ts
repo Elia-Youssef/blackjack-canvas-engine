@@ -44,12 +44,16 @@ import {
   RADIUS,
   SPACE,
   SURFACE,
-  duration,
 } from '../../src/render/tokens';
 import {
   CHIP_DENOMINATIONS as WALLET_CHIP_DENOMINATIONS,
   WAGER_GRID,
 } from '../../src/core/wallet';
+import { contrastOf, luminanceOf, type Rgba } from '../browser/support/png';
+import {
+  contrastOf as reportContrastOf,
+  luminance as reportLuminance,
+} from '../../scripts/report/support.mjs';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const CSS = readFileSync(join(PROJECT_ROOT, 'src', 'ui', 'tokens.css'), 'utf8');
@@ -138,23 +142,25 @@ function declared(name: string): string {
 // Contrast, re-derived rather than trusted.
 // ---------------------------------------------------------------------------
 
-function channel(value: number): number {
-  const c = value / 255;
-  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-}
-
-function luminance(hex: string): number {
+/**
+ * A committed hex as the four channels the shared reading takes.
+ *
+ * Parsing a hex is not the formula, which is why it is still here: the formula
+ * itself is `tests/browser/support/png.ts`'s, the TypeScript side's one reading
+ * of it (`AUDIT-2`, finding `X3-05`). This file used to carry a third copy.
+ */
+function rgbaOf(hex: string): Rgba {
   const h = hex.replace('#', '');
-  const r = Number.parseInt(h.slice(0, 2), 16);
-  const g = Number.parseInt(h.slice(2, 4), 16);
-  const b = Number.parseInt(h.slice(4, 6), 16);
-  return 0.2126 * channel(r) + 0.7152 * channel(g) + 0.0722 * channel(b);
+  return [
+    Number.parseInt(h.slice(0, 2), 16),
+    Number.parseInt(h.slice(2, 4), 16),
+    Number.parseInt(h.slice(4, 6), 16),
+    255,
+  ];
 }
 
 function contrast(a: string, b: string): number {
-  const la = luminance(a);
-  const lb = luminance(b);
-  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+  return contrastOf(rgbaOf(a), rgbaOf(b));
 }
 
 // ---------------------------------------------------------------------------
@@ -623,6 +629,238 @@ describe('E1: the numeric scales match QUALITY-BAR section 15', () => {
     expect(`cubic-bezier(${EASE.out.join(', ')})`).toBe(QB_TOKENS.get('--ease-out'));
     expect(`cubic-bezier(${EASE.inOut.join(', ')})`).toBe(QB_TOKENS.get('--ease-in-out'));
   });
+
+  // -------------------------------------------------------------------------
+  // The same walk in the other direction. `AUDIT-2`, finding `Z7-03`.
+  // -------------------------------------------------------------------------
+  //
+  // Every walk above starts at a contract row and asks the stylesheet or the
+  // renderer record for it, so a declaration the contract does not own is
+  // invisible: an unowned number can be added to either file, or left behind
+  // after the thing that spent it is deleted, and nothing here noticed. Measured
+  // at `AUDIT-2`: `--space-9: 80px` in the stylesheet and `9: 80` in `SPACE`
+  // passed the whole file, because the renderer walk iterates the contract's
+  // rows and the contract has no such row.
+  //
+  // So the declarations are enumerated too, and each must be a contract row or a
+  // named derivation of one. `satisfies Record<number, number>` on the renderer
+  // records constrains the value type and not the key set, which is why they are
+  // walked here as well.
+
+  /** Every token name the contract names, in any of its three tables. */
+  function contractNames(): Set<string> {
+    const owned = new Set<string>(QB_TOKENS.keys());
+    for (const name of CHROME.keys()) {
+      owned.add(name);
+    }
+    for (const name of PLAY.keys()) {
+      owned.add(name);
+    }
+    return owned;
+  }
+
+  const OWNED = contractNames();
+
+  /**
+   * The declarations no contract row names, each with the row it comes from.
+   *
+   * A derivation is not an exemption: every entry below is asserted against the
+   * contract value it derives from, in the test after next. What is here is the
+   * reason the name itself is absent from a table, which in every case is that
+   * the contract states the quantity and the stylesheet spells it differently.
+   */
+  const DERIVED: Readonly<Record<string, string>> = Object.freeze({
+    // The two halves of each chrome row, which the row gives as Dark and Light.
+    ...Object.fromEntries(
+      [...CHROME.keys()].flatMap((name) => {
+        const suffix = name.replace('--bj-', '');
+        return [
+          [`--bj-dark-${suffix}`, `the Dark column of ${name}`],
+          [`--bj-light-${suffix}`, `the Light column of ${name}`],
+        ];
+      }),
+    ),
+    // One row, `--focus-ring`, spelled as the four properties a rule spends.
+    '--focus-ring-width': 'the width half of --focus-ring',
+    '--focus-ring-style': 'the style half of --focus-ring',
+    '--focus-ring-offset': 'the offset half of --focus-ring',
+    '--focus-ring-color': 'the ring colour, which is --bj-accent',
+    // The chip table, whose rows are keyed by denomination rather than by token.
+    ...Object.fromEntries(
+      [...CHIPS.keys()].map((denomination) => [
+        `--chip-${String(denomination)}-fill`,
+        `the fill column of the ${String(denomination)} chip`,
+      ]),
+    ),
+    '--chip-glyph': 'the white glyph the chip table measures against each fill',
+    // The platform's own insets. There is no number for the contract to own.
+    '--bj-safe-top': 'env(safe-area-inset-top), which the platform supplies',
+    '--bj-safe-right': 'env(safe-area-inset-right), which the platform supplies',
+    '--bj-safe-bottom': 'env(safe-area-inset-bottom), which the platform supplies',
+    '--bj-safe-left': 'env(safe-area-inset-left), which the platform supplies',
+    // Section 6's thresholds, which the layout has to know as CSS lengths too.
+    '--surface-min-height': 'section 6 threshold surface-min-height',
+    '--target-min': 'section 6 threshold touch-target-px',
+    '--target-clearance': 'section 6 threshold touch-clearance-px',
+    // The one declaration that is not a design value at all, and says so at its
+    // own declaration: the smallest box that is still a box.
+    '--hidden-size': 'the visually hidden clip, which is not on any scale',
+  });
+
+  /**
+   * The named numeric thresholds, which four of the derivations come from.
+   *
+   * Sections 5 and 6 both carry them: 6 is the measurement set and 5 is the
+   * layout's, and `surface-min-height` is section 5's. A row whose value is not
+   * a bare number, a breakpoint range or the surface-size list, does not match
+   * and is not one of these.
+   */
+  function thresholds(): Map<string, string> {
+    const found = new Map<string, string>();
+    for (const heading of ['5. Responsive and adaptive layout', '6. Measured thresholds']) {
+      for (const match of section(CONTRACT, heading).matchAll(
+        /\|\s*`([a-z0-9-]+)`\s*\|\s*([\d.]+)(?:px)?\s*\|/g,
+      )) {
+        const [, name, value] = match;
+        if (name !== undefined && value !== undefined) {
+          found.set(name, value);
+        }
+      }
+    }
+    return found;
+  }
+
+  const THRESHOLDS = thresholds();
+
+  /** Which of the given names no contract row and no derivation accounts for. */
+  function unowned(names: Iterable<string>): string[] {
+    return [...names].filter((name) => !OWNED.has(name) && DERIVED[name] === undefined);
+  }
+
+  it('declares nothing the contract does not own, in the stylesheet', () => {
+    expect(unowned(DECLARED.keys())).toEqual([]);
+    // And no stale derivation: a name listed above that the stylesheet stopped
+    // declaring would be an exemption for something that is not there.
+    for (const name of Object.keys(DERIVED)) {
+      expect(DECLARED.has(name), `${name} is derived from nothing that exists`).toBe(true);
+    }
+  });
+
+  it('declares nothing the contract does not own, in the renderer records', () => {
+    const keys = [
+      ...Object.keys(SPACE).map((step) => `--space-${step}`),
+      ...Object.keys(RADIUS).map((step) => `--radius-${step}`),
+      ...Object.keys(BORDER).map((step) => `--border-${step}`),
+      ...Object.keys(DURATION).map((step) => `--dur-${step.replace('d', '')}`),
+    ];
+    expect(unowned(keys)).toEqual([]);
+  });
+
+  it('reports a declaration no row owns, on either side', () => {
+    // The can-see control. Both halves of the measured escape: one extra
+    // stylesheet declaration and one extra renderer key, neither of which the
+    // contract names.
+    expect(unowned([...DECLARED.keys(), '--space-9'])).toEqual(['--space-9']);
+    expect(unowned([...Object.keys({ ...SPACE, 9: 80 }).map((step) => `--space-${step}`)])).toEqual([
+      '--space-9',
+    ]);
+    // And a derivation stops being one if its row goes: `--target-clearance` is
+    // owned by section 6's row and by nothing else.
+    expect(OWNED.has('--target-clearance')).toBe(false);
+  });
+
+  it('spends every derivation on the contract value it derives from', () => {
+    for (const side of ['top', 'right', 'bottom', 'left']) {
+      expect(declared(`--bj-safe-${side}`)).toBe(`env(safe-area-inset-${side}, 0)`);
+    }
+
+    // Section 6 states the two touch numbers and the stylesheet writes both, the
+    // minimum as a length and the clearance as the spacing step QUALITY-BAR
+    // section 15 says it is. **The clearance is spent by no rule today**: its
+    // twin `--target-min` is, and the clearance that gates the build is
+    // `scripts/report/touch-targets.mjs`'s, measured off rendered boxes and
+    // pinned to the same row by `report-gates.test.ts`. It is declared here
+    // because section 3 fixes the pair and the stylesheet is where the pair is
+    // written down; what this assertion adds is that it cannot drift from the
+    // row while it waits for a rule to spend it.
+    expect(declared('--target-min')).toBe(`${THRESHOLDS.get('touch-target-px') ?? ''}px`);
+    expect(declared('--target-clearance')).toBe('var(--space-2)');
+    expect(declared('--space-2')).toBe(`${THRESHOLDS.get('touch-clearance-px') ?? ''}px`);
+
+    // The surface floor, as a length and as the number the sticky-bar decision
+    // is made against.
+    expect(declared('--surface-min-height')).toBe('calc(var(--space-8) * 3)');
+    expect(Number.parseInt(declared('--space-8'), 10) * 3).toBe(
+      Number(THRESHOLDS.get('surface-min-height') ?? Number.NaN),
+    );
+
+    // The focus ring's four properties against its one row, and the chip glyph
+    // against the column the chip table measures every fill under.
+    expect(QB_TOKENS.get('--focus-ring')).toBe('2px solid, 2px offset');
+    expect(declared('--chip-glyph')).toBe('#ffffff');
+    expect(CHIPS.size).toBe(4);
+
+    // And the one declaration that derives from no number: it is a clip, and it
+    // is spent, which is what stops it being a leftover.
+    expect(declared('--hidden-size')).toBe('1px');
+    const chrome = readFileSync(join(PROJECT_ROOT, 'src', 'ui', 'chrome.css'), 'utf8');
+    expect(chrome).toContain('var(--hidden-size)');
+  });
+});
+
+describe('G2: the two readings of the WCAG formula agree', () => {
+  /**
+   * `AUDIT-2`, finding `X3-05`.
+   *
+   * The sRGB transfer function and the 0.2126/0.7152/0.0722 weights were
+   * written out four times, all agreeing, under a comment saying three
+   * instruments should not each carry their own reading. Three of the four are
+   * now one: every TypeScript instrument imports
+   * `tests/browser/support/png.ts`, this file included. The fourth cannot be,
+   * because `scripts/report/contrast.mjs` is node running `.mjs` with no
+   * TypeScript step, and it is the reading that matters most: it is what the
+   * `H2` gate measures its 132 rows with, so a one-character slip there moved
+   * the gate's quantity alone with every suite green.
+   *
+   * So the two are held to each other over a fixed table instead. Exact
+   * equality, not a tolerance: they are the same arithmetic in two languages
+   * and any difference at all is a difference in the formula.
+   */
+  const COLOURS: readonly Rgba[] = Array.from({ length: 4096 }, (_unused, i) => [
+    (i * 37) % 256,
+    (i * 91) % 256,
+    (i * 173) % 256,
+    255,
+  ]);
+
+  it('gives the same luminance for every colour in a fixed table', () => {
+    for (const colour of COLOURS) {
+      expect(
+        reportLuminance([colour[0], colour[1], colour[2]]),
+        `luminance disagrees at ${colour.join(',')}`,
+      ).toBe(luminanceOf(colour));
+    }
+  });
+
+  it('gives the same contrast ratio for every pair the table makes', () => {
+    for (let i = 0; i < COLOURS.length; i += 1) {
+      const a = COLOURS[i];
+      const b = COLOURS[COLOURS.length - 1 - i];
+      if (a === undefined || b === undefined) {
+        throw new Error('the colour table is short');
+      }
+      expect(reportContrastOf([a[0], a[1], a[2]], [b[0], b[1], b[2]])).toBe(contrastOf(a, b));
+    }
+  });
+
+  it('measures a table with something in it', () => {
+    // A sweep over an empty table would agree perfectly, and the endpoints are
+    // where a transfer-function boundary slip shows.
+    expect(COLOURS.length).toBe(4096);
+    expect(luminanceOf([0, 0, 0, 255])).toBe(0);
+    expect(luminanceOf([255, 255, 255, 255])).toBeCloseTo(1, 10);
+    expect(contrastOf([0, 0, 0, 255], [255, 255, 255, 255])).toBeCloseTo(21, 10);
+  });
 });
 
 describe('H4: the timed-phase pin names the row it stands in for', () => {
@@ -769,13 +1007,27 @@ describe('E1: reduced motion and theme resolution', () => {
     expect(body).not.toMatch(/!important/);
   });
 
-  it('resolves the renderer duration to zero under reduced motion', () => {
-    expect(duration('d4', false)).toBe(DURATION.d4);
-    expect(duration('d4', true)).toBe(0);
-    for (const name of Object.keys(DURATION) as (keyof typeof DURATION)[]) {
-      expect(duration(name, true)).toBe(0);
-      expect(duration(name, false)).toBe(DURATION[name]);
+  it('zeroes every duration token in both reduced-motion blocks, not just one', () => {
+    // What the deleted `duration(name, reducedMotion)` helper claimed to do,
+    // asserted where it is really done (`AUDIT-2`, finding `Z3-05`): the
+    // stylesheet redefines the tokens, in the media query and again under the
+    // settings attribute, so a caller reading `var(--dur-2)` gets zero without
+    // knowing the flag and no code path has to be told about it.
+    const blocks = [
+      /@media \(prefers-reduced-motion: reduce\) \{([\s\S]*?)\n\}/.exec(CSS)?.[1] ?? '',
+      /:root\[data-motion='reduce'\][^{]*\{([\s\S]*?)\n\s*\}/.exec(CSS)?.[1] ?? '',
+    ];
+    for (const body of blocks) {
+      expect(body.length, 'a reduced-motion block is missing').toBeGreaterThan(0);
+      for (const name of Object.keys(DURATION) as (keyof typeof DURATION)[]) {
+        if (name === 'd0') {
+          continue;
+        }
+        const token = `--dur-${name.slice(1)}`;
+        expect(body, `${token} is not zeroed`).toContain(`${token}: var(--dur-0)`);
+      }
     }
+    expect(declared('--dur-0')).toBe('0ms');
   });
 
   it('flips the chrome with the theme and leaves the play surface alone', () => {

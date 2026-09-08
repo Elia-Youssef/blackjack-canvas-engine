@@ -10,11 +10,27 @@
  * a screenshot, and none of them needs a page to be checked.
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, join, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
+
+import { stripComments } from './support/source-scan';
 
 import { INTENT_KINDS, createTable } from '../../src/core/table';
 import type { Rank, Suit } from '../../src/core/cards';
-import { STARTING_CHIPS, TABLES, canEnter, createWallet, isUnlocked } from '../../src/core/wallet';
+import {
+  CHIP_DENOMINATIONS,
+  STARTING_CHIPS,
+  TABLES,
+  canEnter,
+  canFund,
+  chipEnabled,
+  createWallet,
+  isUnlocked,
+  tableLimits,
+} from '../../src/core/wallet';
 import type { FeltSpec } from '../../src/render/felt';
 import {
   SCENE_GEOMETRY,
@@ -25,7 +41,12 @@ import {
   type Fan,
 } from '../../src/render/scene';
 import { HIGH_CONTRAST_PALETTE, STANDARD_PALETTE } from '../../src/render/tokens';
-import { tableFigures, tableRefusal } from '../../src/ui/availability';
+import {
+  chipRefusal,
+  insuranceRefusal,
+  tableFigures,
+  tableRefusal,
+} from '../../src/ui/availability';
 import { chips } from '../../src/ui/format';
 import { createFrameLoop } from '../../src/ui/loop';
 import { OVERLAY_IDS, OVERLAY_TITLES, wagerAtStake } from '../../src/ui/state';
@@ -37,6 +58,8 @@ import {
   rungText,
   type DisplayReason,
 } from '../../src/ui/text';
+
+const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 
 // ---------------------------------------------------------------------------
 // SPEC 4.11's "with a reason surfaced to the player"
@@ -212,6 +235,79 @@ describe('BJ-21 rider: which chooser refusal each table earns', () => {
         }
       }
     }
+  });
+});
+
+describe('AUDIT-2 Z1-02: the insurance offer greys on the one funding reading', () => {
+  it('refuses an ordinary stake exactly when canFund refuses it, and never even money', () => {
+    // SPEC 4.7 puts one comparison on the ordinary stake and none on even
+    // money. The property, rather than examples: the chrome's answer is
+    // `canFund`'s answer on the ordinary arm at every boundary, and is `null`
+    // on the even-money arm at every one of them, so an inline `<` here could
+    // not drift from the wallet's reading without this going red.
+    for (const stake of [0, 10, 50, 250, 1_000]) {
+      for (const chips of [0, 9, 10, 49, 50, 249, 250, 999, 1_000, 5_000]) {
+        const where = `stake ${String(stake)} against ${String(chips)}`;
+        expect(insuranceRefusal({ stake, evenMoney: false }, chips) === null, where).toBe(
+          canFund(stake, chips),
+        );
+        expect(insuranceRefusal({ stake, evenMoney: true }, chips), where).toBeNull();
+      }
+    }
+  });
+
+  it('agrees with the machine on the one boundary that decides the control', () => {
+    // The chrome greys the control and the machine refuses the intent. They
+    // are two layers over one rule, so the boundary they turn at has to be the
+    // same one: at exactly the stake the wallet can fund, both say yes.
+    expect(insuranceRefusal({ stake: 250, evenMoney: false }, 250)).toBeNull();
+    expect(canFund(250, 250)).toBe(true);
+    expect(insuranceRefusal({ stake: 250, evenMoney: false }, 249)).toBe('insufficient-chips');
+    expect(canFund(250, 249)).toBe(false);
+  });
+});
+
+describe('AUDIT-2 Z5-06: the greyed chip and its sentence are one pairing', () => {
+  it('answers the wallet exactly, in both directions, at every boundary', () => {
+    // The property rather than examples: `chipRefusal` is `chipEnabled`'s
+    // answer at every denomination against every balance a table can see, and
+    // the reason it carries is the one the mirror and the control both print.
+    for (const id of ['bronze', 'silver', 'gold'] as const) {
+      const limits = tableLimits(id);
+      for (const denomination of CHIP_DENOMINATIONS) {
+        for (const chips of [0, 9, 10, 49, 50, 99, 100, 499, 500, 5_000, 50_000]) {
+          const where = `${id} ${String(denomination)} against ${String(chips)}`;
+          const refusal = chipRefusal(denomination, limits, chips);
+          expect(refusal === null, where).toBe(chipEnabled(denomination, limits, chips));
+          if (refusal !== null) {
+            expect(refusal, where).toBe('chip-over-ceiling');
+          }
+        }
+      }
+    }
+  });
+
+  it('greys at least one chip somewhere, so the sweep is not vacuous', () => {
+    const limits = tableLimits('bronze');
+    expect(chipRefusal(500, limits, 0)).toBe('chip-over-ceiling');
+    expect(chipRefusal(10, limits, 5_000)).toBeNull();
+  });
+
+  it('is the reading the betting bar takes, rather than a second one beside it', () => {
+    // The census, and it is the finding: the control and the mirror were two
+    // independent (predicate, reason) pairings that agreed because both were
+    // written the same way. A `betting.ts` that went back to asking the wallet
+    // itself would pass every assertion above.
+    const betting = stripComments(
+      readFileSync(join(PROJECT_ROOT, 'src', 'ui', 'components', 'betting.ts'), 'utf8'),
+    );
+    expect(betting, 'the betting bar stopped reading the shared pairing').toContain('chipRefusal(');
+    expect(betting, 'the betting bar pairs the predicate itself again').not.toContain(
+      'chipEnabled(',
+    );
+    expect(betting, 'the betting bar names the refusal literal itself again').not.toContain(
+      "'chip-over-ceiling'",
+    );
   });
 });
 

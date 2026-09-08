@@ -84,6 +84,7 @@ import {
   milestoneRowText,
   outcomeText,
   playerActionText,
+  storageDegradedText,
   tableText,
   verdictText,
 } from '../text';
@@ -382,9 +383,11 @@ function settingsPanel(actions: ChromeActions): SettingsPanel {
    * The staged house rules as the panel holds them between frames.
    *
    * The toggles' inversions read against a copy because a click handler has no
-   * access to the frame's state; the copy is re-taken from `stagedRules`
-   * whenever the composition root replaces the record, which is every change
-   * any control made, so the copy and the real stage cannot come apart.
+   * access to the frame's state. The copy is re-taken from `stagedRules` in the
+   * sync step below, which is the authority; **between two frames the toggles
+   * advance it themselves**, because a frame is not the grain a press arrives
+   * at and two presses inside one frame otherwise read the same stale value
+   * (`AUDIT-2`, finding `Z4-01`). Each handler carries that half.
    */
   let held: {
     decks: DeckCount;
@@ -412,7 +415,19 @@ function settingsPanel(actions: ChromeActions): SettingsPanel {
     const control = button(
       RULE_TOGGLE_LABELS[key],
       () => {
-        actions.setRules({ [key]: !held[key] });
+        // **The copy advances with the press, not with the frame.** `AUDIT-2`,
+        // finding `Z4-01`: these three are the only controls in the chrome that
+        // send a negation rather than an absolute value, and the value they
+        // negated was refreshed only by the sync step below, so two presses
+        // that landed between the same two frames both read the same state,
+        // both sent the same patch, and the second one was lost. The panel's
+        // own copy is therefore advanced here, before the call goes out, so a
+        // second press in the same frame reads what the first one sent.
+        // `update`'s re-take from the machine's staged record stays the
+        // authority: this only has to be right until the next frame.
+        const next = !held[key];
+        held = { ...held, [key]: next };
+        actions.setRules({ [key]: next });
       },
       { className: 'bj-button', attributes: { 'data-rule': key } },
     );
@@ -471,6 +486,18 @@ function settingsPanel(actions: ChromeActions): SettingsPanel {
   // of the track, which is a storm SPEC 14's "take effect immediately" never
   // asked for: immediacy is the gain, and the document needs only the value
   // the finger settled on.
+  //
+  // **A pointer gesture is one write; a keyboard step is one write each, and
+  // that is accepted rather than debounced** (`AUDIT-2`, finding `J6-03`). The
+  // platform fires `change` once per arrow key on a range input, so twenty
+  // presses are twenty commits and a full sweep of the track at this step is a
+  // hundred. Measured on the shipped page at the audit: 0.6 ms for 100
+  // round trips over the live 635-byte document and 5.1 ms over a
+  // 12,475-byte one carrying SPEC 13's full 50 rounds, so roughly 0.05 ms a
+  // keystroke, and a save has re-read and merged since `J3-01`. Debouncing it
+  // would buy that back with a timer this project would then have to hold, and
+  // a value that is not durable until the timer fires; the asymmetry is
+  // written down here instead, which is what the paragraph above was missing.
   volume.addEventListener('input', () => {
     const value = Number.parseFloat(volume.value);
     if (Number.isFinite(value)) {
@@ -559,13 +586,18 @@ function settingsPanel(actions: ChromeActions): SettingsPanel {
    * `durable: false` only on the arm where its probe was refused, and
    * `persistence.ts` runs a memory fallback behind it so the round still
    * plays.
+   *
+   * **Both routes to that loss since `AUDIT-2`**, finding `J3-02`: the write
+   * that throws on a full origin loses exactly as much as the probe that was
+   * refused, and the sync step below reads the carry rather than the probe.
+   * The sentence itself lives in `text.ts`, because the announcement queue
+   * says the same words at the moment the carry starts failing and two copies
+   * of one sentence is how they come to differ.
    */
   const notDurableNote = el('p', {
     className: 'bj-panel__note',
     attributes: { 'data-field': 'storage-blocked' },
-    text:
-      'This browser is refusing to store anything, so nothing from this session ' +
-      'will be here next time.',
+    text: storageDegradedText(),
   });
   notDurableNote.hidden = true;
 
@@ -794,10 +826,14 @@ function settingsPanel(actions: ChromeActions): SettingsPanel {
         setAttribute(control, 'aria-pressed', String(setting === state.reducedMotion));
       }
 
-      // The one session where SPEC 14's sentence above is true and unhelpful.
-      // `state.durable` is read once at boot, so this is a constant for the
-      // life of the page and the write below is idempotent.
-      setHidden(notDurableNote, state.durable);
+      // The sessions where SPEC 14's sentence above is true and unhelpful.
+      // `state.carryDegraded` covers both of them, the store the browser
+      // refused at boot and the store that has started throwing on every
+      // write, and unlike the probe's own answer it can move mid-session, so
+      // this is a real per-frame reading rather than a constant written
+      // sixty times a second (`AUDIT-2`, finding `J3-02`). `setHidden` writes
+      // only when the value moved.
+      setHidden(notDurableNote, !state.carryDegraded);
 
       // The confirmation, hidden until asked, and the disclosure state that
       // says so on the control a player pressed to ask. This frame only shows

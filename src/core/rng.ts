@@ -11,7 +11,7 @@
  * ENG-1's job and the engine package is deliberately empty until then. STACK
  * section 5 settles that order.
  *
- * **`split()` is the load-bearing operation, not `nextFloat()`.** SPEC 4.1
+ * **`split()` is the load-bearing operation, not the draw itself.** SPEC 4.1
  * requires the shoe to take its own stream so that adding a future consumer
  * cannot shift the deal. That guarantee only holds if a child stream is derived
  * from the parent rather than copied from it, and if taking a child does not
@@ -26,29 +26,37 @@
  * identical on every platform without a 64-bit integer type anywhere.
  *
  * One note for whoever cross-checks this against published reference vectors:
- * the counter `d` is incremented **before** it is folded into the output, which
- * is canonical sfc32 but reads as a start of `d + 1`. The first word out of a
- * stream seeded with `d` uses `d + 1`, so a vector table expecting the seeded
- * value to appear first will look one step off. Nothing downstream depends on
- * which convention is used, only on it not changing.
+ * the counter `d` is incremented **before** it is folded into the output, where
+ * the published form folds it and then increments. This stream is therefore one
+ * counter step ahead of a reference table seeded with the same `d`: the first
+ * word out uses `d + 1`, so a vector expecting the seeded value to appear first
+ * will look one step off. It is a valid sfc32 stream either way, and nothing
+ * downstream depends on which convention is used, only on it not changing.
  *
  * No DOM, no canvas, no renderer import, no `Math.random()`, and no clock: the
  * seed always arrives as a parameter. A generator that reached for the wall
  * clock would be unseedable in exactly the cases the seed exists for.
  */
 
-/** One independent stream of random numbers. */
+/**
+ * One independent stream of random numbers.
+ *
+ * **Four members, and no float draw** (`AUDIT-2`, finding `Z2-03`). This
+ * contract carried a `nextFloat()` returning `k / 2^32`; nothing in the game
+ * ever called it, and because the object below is frozen and returned whole it
+ * could not be dropped from the bundle either. The two reductions the game does
+ * use, `nextInt` and `shuffle`, are both built on the word, and a float draw
+ * added back for a real consumer would be one line beside them.
+ */
 export interface Rng {
   /**
    * The raw generator word, uniform over 0 to 2^32 - 1.
    *
-   * Exposed because it is the primitive the other three are built from, and a
+   * Exposed because it is the primitive the other two are built from, and a
    * uniformity check that cannot see it would be testing the reductions rather
    * than the generator.
    */
   nextUint32(): number;
-  /** A value in [0, 1), with 2^32 outcomes evenly spaced across the interval. */
-  nextFloat(): number;
   /** A uniform integer in 0 to `bound - 1`. Unbiased, and never by modulo. */
   nextInt(bound: number): number;
   /** An unbiased Fisher-Yates shuffle, in place. */
@@ -57,7 +65,7 @@ export interface Rng {
   split(): Rng;
 }
 
-/** 2^32. The size of the generator's output range, and of `nextFloat`'s grid. */
+/** 2^32. The size of the generator's output range, and `nextInt`'s ceiling. */
 const UINT32_SPAN = 0x1_0000_0000;
 
 /** The odd 32-bit increment splitmix uses to walk a seed. */
@@ -164,10 +172,6 @@ function createFrom(wordA: number, wordB: number, wordC: number, wordD: number):
     return out >>> 0;
   }
 
-  function nextFloat(): number {
-    return nextUint32() / UINT32_SPAN;
-  }
-
   /**
    * A uniform integer in 0 to `bound - 1`, by rejection and never by modulo.
    *
@@ -231,7 +235,7 @@ function createFrom(wordA: number, wordB: number, wordC: number, wordD: number):
     return fromWords(seedWords(derived));
   }
 
-  return Object.freeze({ nextUint32, nextFloat, nextInt, shuffle, split });
+  return Object.freeze({ nextUint32, nextInt, shuffle, split });
 }
 
 /** A stream over four state words, warmed. */

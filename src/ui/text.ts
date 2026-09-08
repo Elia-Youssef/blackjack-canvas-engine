@@ -750,6 +750,31 @@ export function recoveryReloadLabel(): string {
 }
 
 /**
+ * QUALITY-BAR section 8's last clause, as the one sentence that states it.
+ *
+ * **One string with two sinks**, on the volume reading's precedent: the
+ * Settings panel prints it as the sibling line under SPEC 14's own graded
+ * sentence, and the announcement queue says it once at the moment the carry
+ * starts failing, which on the origin that refuses site data is the first frame
+ * of the session, so a player who is not in the panel is told at all. It says
+ * what SPEC 14's sentence cannot: "stored in this browser only" is true and
+ * useless in the session where nothing is being stored.
+ *
+ * It is deliberately about the carry rather than about a mechanism. A store the
+ * browser refused to hand over and a store that throws on every write are one
+ * outcome for a player, and finding `J3-02` measured the product disclosing
+ * only the first: on a quota-full origin the game played on, the theme went
+ * dark, three rounds were counted, and a reload found a light theme, no
+ * statistics and no explanation anywhere.
+ */
+export function storageDegradedText(): string {
+  return (
+    'This browser is refusing to store anything, so nothing from this session ' +
+    'will be here next time.'
+  );
+}
+
+/**
  * One milestone row, with whether it has been awarded stated in words.
  *
  * Item `G3`: "no state is conveyed by colour alone". `BJ-18` found this row

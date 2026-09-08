@@ -129,25 +129,47 @@ function mustOk(table: Table, intent: Parameters<Table['apply']>[0]): void {
 }
 
 /**
- * The state a transcript compares, serialised without the two fields that are
- * legitimately clock-shaped: the accumulator, which quantises differently per
- * rate, and the intent queue, which this driver never uses. Everything else,
- * the cards, the phases and their payloads, the shoe's counters and the
- * wallet's four-term identity, must be identical across every clock.
+ * The two readout fields that are legitimately clock-shaped: the accumulator,
+ * which quantises differently per rate, and the intent queue, which this driver
+ * never uses.
+ */
+const CLOCK_SHAPED = ['elapsed', 'queued'] as const;
+
+/**
+ * The state a transcript compares: the whole readout minus those two.
+ *
+ * **Derived from the readout rather than listed, and that is the finding.**
+ * `AUDIT-2`, `Z7-04`: this was a closed object literal naming ten fields against
+ * a twelve-field readout, with nothing comparing the two key sets, so the
+ * sentence below was true of `TableReadout` by coincidence of maintenance. A
+ * thirteenth field would have been outside `M5`'s comparison from the day it
+ * landed, and one that genuinely differed per clock would not have moved the
+ * transcript at all. Measured: `still({ ...readout, differsPerClock })` was
+ * byte-identical to `still(readout)`. Every other census in this suite is
+ * written the other way round, `phase-legality.test.ts` building its sweep from
+ * the two unions and `browser-matrix.test.ts` refusing a descriptor field
+ * outside its list, and this is the one file that did not meet that standard.
+ *
+ * So a field added to the readout joins the transcript by itself, and the
+ * decision it forces, clock-shaped or not, is made by whoever adds it rather
+ * than defaulted to "ignored". Key order is the readout's own, which is one
+ * literal in `table.ts` and therefore identical for every run in a process, so
+ * the serialisation is stable without sorting; the assertion below pins the
+ * derivation both ways in case it ever is not.
+ *
+ * Everything it compares, the cards, the phases and their payloads, the shoe's
+ * counters and the wallet's four-term identity, must be identical across every
+ * clock.
  */
 function still(state: TableReadout): string {
-  return JSON.stringify({
-    phase: state.phase,
-    table: state.table,
-    rules: state.rules,
-    hands: state.hands,
-    dealerVisible: state.dealerVisible,
-    dealerConcealed: state.dealerConcealed,
-    rounds: state.rounds,
-    splits: state.splits,
-    shoe: state.shoe,
-    wallet: state.wallet,
-  });
+  const excluded = new Set<string>(CLOCK_SHAPED);
+  const compared: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(state)) {
+    if (!excluded.has(key)) {
+      compared[key] = value;
+    }
+  }
+  return JSON.stringify(compared);
 }
 
 /** One decision, pure in the readout, identical at every rate. */
@@ -344,6 +366,30 @@ describe('M5: the same seeded session at 15, 30, 60, 144, 240 and 1000 fps', () 
       expect(run.steps.length, `${String(rate)} fps`).toBe(reference.run.steps.length);
       expect(scheduleViolations(run.steps, 1 / rate), `${String(rate)} fps`).toBe(0);
     }
+  });
+
+  it('compares every readout field except the two that are clock-shaped', () => {
+    const state = createTable({ seed: 1 }).readout();
+    const keys = Object.keys(state);
+    for (const excluded of CLOCK_SHAPED) {
+      expect(keys, `the readout no longer carries ${excluded}`).toContain(excluded);
+    }
+    const compared = Object.keys(JSON.parse(still(state)) as Record<string, unknown>);
+    // The two names are written out again rather than read from the constant:
+    // an assertion that added `CLOCK_SHAPED` back to what `still` dropped would
+    // hold for any exclusion list at all, which is the shape of the defect this
+    // pin exists for. It caught itself once, here, before it shipped.
+    expect([...CLOCK_SHAPED]).toEqual(['elapsed', 'queued']);
+    expect([...compared].sort()).toEqual(
+      keys.filter((key) => key !== 'elapsed' && key !== 'queued').sort(),
+    );
+    expect(compared.length).toBeGreaterThan(0);
+
+    // The can-see control, and it is the measured defect: a thirteenth field
+    // that differed per clock has to move the transcript.
+    expect(still({ ...state, differsPerClock: 'yes' } as unknown as TableReadout)).not.toBe(
+      still(state),
+    );
   });
 
   it('transcribed a session with something in it', () => {

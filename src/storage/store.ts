@@ -87,7 +87,6 @@ export type StoreOperation = 'probe' | 'read' | 'write' | 'remove';
 export interface StoreFailure {
   readonly operation: StoreOperation;
   readonly name: string;
-  readonly message: string;
 }
 
 /**
@@ -118,19 +117,9 @@ export function isRecord(value: unknown): value is Readonly<Record<string, unkno
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
-function messageOf(error: unknown): string {
-  if (error instanceof Error) {
-    return error.message;
-  }
-  if (typeof error === 'string') {
-    return error;
-  }
-  return 'a value that is not an Error was thrown';
-}
-
 /** Describe a caught value. Never bare: the binding is read, not discarded. */
 export function describeFailure(operation: StoreOperation, error: unknown): StoreFailure {
-  return Object.freeze({ operation, name: errorName(error), message: messageOf(error) });
+  return Object.freeze({ operation, name: errorName(error) });
 }
 
 // ---------------------------------------------------------------------------

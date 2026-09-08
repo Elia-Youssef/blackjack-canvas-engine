@@ -204,6 +204,57 @@ test.describe('F5: an orientation change preserves the game', () => {
     await control(page, 'deal').click();
     await expect(page.locator('.bj-shell')).not.toHaveAttribute('data-phase', 'betting');
   });
+
+  test('keeps the readouts disclosure the player opened across a turn and back', async ({
+    page,
+  }) => {
+    // `AUDIT-2`, finding `J5-03`. SPEC 11's below-768 clause puts eleven of the
+    // fourteen readouts one press behind this disclosure, and the component
+    // wrote its open state on a change of what the breakpoint decides. A phone
+    // turn crosses 768, so the policy genuinely changes and the writer
+    // legitimately closed the disclosure on the way back: what was lost is the
+    // player's own press, which nothing remembered. The negative control is the
+    // resize that does not cross a policy, which passed before the cure and
+    // proves the assertion is about the policy change rather than about resizing
+    // at all.
+    await page.setViewportSize(UPRIGHT);
+    await atShippedBetting(page);
+    const more = page.locator('[data-readouts="more"]');
+    await expect(more).toHaveJSProperty('open', false);
+
+    await page.locator('[data-control="more-readouts"]').click();
+    await settle(page);
+    await expect(more).toHaveJSProperty('open', true);
+
+    // The control: a resize inside the same policy leaves it alone.
+    await resizeTo(page, UPRIGHT.width - 10, UPRIGHT.height);
+    await expect(more).toHaveJSProperty('open', true);
+
+    await resizeTo(page, TURNED.width, TURNED.height);
+    expect((await layoutReport(page)).breakpoint, 'the turn was not a re-arrangement').toBe(
+      'medium',
+    );
+
+    await resizeTo(page, UPRIGHT.width, UPRIGHT.height);
+    expect((await layoutReport(page)).breakpoint).toBe('portrait');
+    await expect(more, 'the turn closed the disclosure the player opened').toHaveJSProperty(
+      'open',
+      true,
+    );
+
+    // And the player's answer is theirs to change back: a close at this width
+    // survives the same round trip, so what is remembered is the press and not
+    // a preference for open.
+    await page.locator('[data-control="more-readouts"]').click();
+    await settle(page);
+    await expect(more).toHaveJSProperty('open', false);
+    await resizeTo(page, TURNED.width, TURNED.height);
+    await resizeTo(page, UPRIGHT.width, UPRIGHT.height);
+    await expect(more, 'the turn reopened a disclosure the player closed').toHaveJSProperty(
+      'open',
+      false,
+    );
+  });
 });
 
 test.describe('F5: the reload detector can see a reload', () => {

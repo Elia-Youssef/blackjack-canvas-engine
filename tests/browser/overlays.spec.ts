@@ -306,3 +306,94 @@ test.describe('C5: the Settings panel and its own sentence agree about the house
     await expectPressed(page, '[data-rule="surrender"]', false);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AUDIT-2, finding J5-04: the way out of a scrolled panel
+// ---------------------------------------------------------------------------
+
+/**
+ * A panel scrolled to its end still shows the control that closes it.
+ *
+ * SPEC 10's overlays are dismissible, and on a phone `Escape` is not a key
+ * anybody has: the Settings panel is 1,464 px of content in a 351 px window at
+ * 390 x 844, so reading it to the end meant 1,113 px of scrolling and Close was
+ * then 814 px above the viewport. Nothing else dismisses the panel from touch,
+ * and the control nearest an exit at that point is Reset all data.
+ *
+ * The assertion is made at the panel's own scroll extreme and in rendered
+ * pixels, with the hit test the engine's own: a Close inside the panel's box is
+ * not enough if something else is painted over it. The vacuity guard is the
+ * first assertion, that the panel really has somewhere to scroll to; on a
+ * viewport where it does not, this would pass having measured nothing.
+ *
+ * **Two viewports, because the rule's scope was measured rather than assumed.**
+ * The phone is the finding's own. The tablet is the review's: `medium` is 768 to
+ * 1023 px of width, which is where every tablet in portrait lands, those are
+ * touch devices with no `Escape` either, and at 768 x 1024 the panel still hid
+ * 542 px with Close 306 px above the fold and nothing at its coordinates. The
+ * breakpoint each viewport resolves to is asserted here, so a threshold moved in
+ * `breakpoints.ts` cannot quietly turn either arm into a second copy of the
+ * other. `wide` is out of scope on purpose: a keyboard is the assumption there
+ * and it is the one viewport every visual baseline is taken at.
+ */
+test.describe('C5: a scrolled overlay keeps its way out', () => {
+  const TOUCH_VIEWPORTS = [
+    { name: 'on a phone', breakpoint: 'portrait', viewport: { width: 390, height: 844 } },
+    { name: 'on a tablet in portrait', breakpoint: 'medium', viewport: { width: 768, height: 1024 } },
+  ] as const;
+
+  for (const { name, breakpoint, viewport } of TOUCH_VIEWPORTS) {
+    test(`shows Close at the bottom of the Settings panel, ${name}`, async ({ page }) => {
+      await page.setViewportSize(viewport);
+      await atShippedBetting(page);
+      await expect(
+        shell(page),
+        'this viewport no longer resolves to the breakpoint this arm exists for',
+      ).toHaveAttribute('data-breakpoint', breakpoint);
+      await page.locator('[data-open-overlay="settings"]').click();
+      await expect(overlayHost(page)).toBeVisible();
+
+      const scrolled = await page.evaluate(() => {
+        const panel = document.querySelector('.bj-overlay');
+        if (!(panel instanceof HTMLElement)) {
+          throw new Error('no overlay on this page');
+        }
+        panel.scrollTop = panel.scrollHeight;
+        return { scrollHeight: panel.scrollHeight, clientHeight: panel.clientHeight };
+      });
+      expect(
+        scrolled.scrollHeight,
+        'the panel fits its window here, so this measures nothing',
+      ).toBeGreaterThan(scrolled.clientHeight + 1);
+
+      const close = control(page, 'close-overlay');
+      await expect(close, 'Close scrolled off the panel').toBeInViewport();
+      const closeBox = await boxOf(close, 'Close');
+      const panelBox = await boxOf(overlayHost(page), 'the panel');
+      expect(closeBox.y, 'Close is above the panel').toBeGreaterThanOrEqual(panelBox.y - 1);
+      expect(
+        closeBox.y + closeBox.height,
+        'Close is below the panel',
+      ).toBeLessThanOrEqual(panelBox.y + panelBox.height + 1);
+
+      // The engine's own hit test at the control's centre, which is what a finger
+      // lands on, and then the press itself: a control that is on screen and
+      // covered is not a way out either.
+      const hit = await page.evaluate(
+        (box: { x: number; y: number; width: number; height: number }) => {
+          const at = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);
+          if (!(at instanceof Element)) {
+            return '';
+          }
+          return at.closest('[data-control]')?.getAttribute('data-control') ?? '';
+        },
+        closeBox,
+      );
+      expect(hit, 'something else is painted over Close').toBe('close-overlay');
+
+      await close.click();
+      await expect(overlayHost(page)).toBeHidden();
+      await expect(shell(page)).not.toHaveAttribute('data-overlay', /.+/);
+    });
+  }
+});

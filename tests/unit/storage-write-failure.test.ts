@@ -60,7 +60,8 @@ import { NO_HISTORY, record } from '../../src/core/history';
 import { NO_STATISTICS } from '../../src/core/statistics';
 import type { TableReadout } from '../../src/core/table';
 import { createTable } from '../../src/core/table';
-import { STARTING_CHIPS } from '../../src/core/wallet';
+import type { Wallet } from '../../src/core/wallet';
+import { STARTING_CHIPS, createWallet } from '../../src/core/wallet';
 import type { GameDocument } from '../../src/storage/document';
 import { DEFAULT_DOCUMENT, DEFAULT_SETTINGS, STORAGE_KEY } from '../../src/storage/document';
 import type { Persistence } from '../../src/storage/persistence';
@@ -69,6 +70,7 @@ import {
   loadDocument,
   openPersistence,
   saveDocument,
+  walletOptionsFor,
 } from '../../src/storage/persistence';
 import type { StorageLike } from '../../src/storage/store';
 import { createMemoryStore, probeStore } from '../../src/storage/store';
@@ -87,6 +89,18 @@ const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..'
 
 /** SPEC 4.11: what a launch starts at, however badly storage is behaving. */
 const SPEC_STARTING_CHIPS = 1000;
+
+/**
+ * The wallet a launch produces, built the way the composition root builds it.
+ *
+ * Since `AUDIT-2`'s `Z6-01` the loader constructs none: the mark is a number on
+ * the restored document and `src/main.ts` makes the one `createWallet` call,
+ * through `walletOptionsFor`. This is that call, so what these tests read is
+ * the wallet the shipped game would be playing on.
+ */
+function launchWallet(persistence: Persistence): Wallet {
+  return createWallet(walletOptionsFor(persistence.restored().document.bestBalance));
+}
 
 /** SPEC 5: a frame long enough to pay for any one timed step. */
 const TICK = 0.25;
@@ -270,25 +284,44 @@ describe('I3: and the panel says so, in the one session where it matters', () =>
    *
    * **The graded sentence is untouched.** Item `I5` grades SPEC 14's own
    * wording and `scripts/mutation-check.mjs` anchors it character for character;
-   * this is a sibling line under it, shown only when `durable` is false, so the
-   * graded sentence reads identically in every ordinary session.
+   * this is a sibling line under it, shown only where the carry is degraded, so
+   * the graded sentence reads identically in every ordinary session.
+   *
+   * **What this describe pinned, and why it changed at `AUDIT-2`.** It required
+   * the composition root to read the answer **once at boot** and the panel to
+   * key its line on `durable`, which is the boot probe's answer to "did the
+   * platform hand over a store". Finding `J3-02` measured the other route to the
+   * identical loss: on a quota-full origin the property access resolves, every
+   * `setItem` throws, the session stores nothing, and `durable` is `true`. The
+   * arm that discloses is now `carryDegraded`, which is both routes and which
+   * genuinely moves during a session, so the read is per frame by necessity and
+   * the once-at-boot assertion below is inverted on purpose.
    */
   const MAIN = code(readFileSync(join(PROJECT_ROOT, 'src', 'main.ts'), 'utf8'));
   const OVERLAYS = code(
     readFileSync(join(PROJECT_ROOT, 'src', 'ui', 'components', 'overlays.ts'), 'utf8'),
   );
+  const TEXT = code(readFileSync(join(PROJECT_ROOT, 'src', 'ui', 'text.ts'), 'utf8'));
+  const ANNOUNCE = code(readFileSync(join(PROJECT_ROOT, 'src', 'ui', 'announce.ts'), 'utf8'));
 
-  it('reads the store answer once at boot and puts it on the frame', () => {
+  it('reads the carry on the frame it renders, rather than the probe at boot', () => {
     expect(MAIN, 'the composition root reads no degradation answer').toContain(
+      'carryDegraded: persistence.readout().carryDegraded,',
+    );
+    // In the frame's own state, which is the one place a per-frame reading can
+    // reach the panel from.
+    expect(MAIN, 'the answer is read outside the frame state').not.toContain(
+      'const carryDegraded = persistence.readout()',
+    );
+    // And the boot-probe reading is gone rather than kept beside it: two
+    // answers to "will this session carry" is how one of them goes stale.
+    expect(MAIN, 'the boot probe answer is still on the frame').not.toContain(
       'const durable = persistence.readout().durable;',
     );
-    expect(MAIN, 'the answer never reaches the chrome').toContain('      durable,');
-    // Once, not per frame: the probe ran at boot and the answer cannot move.
-    expect(MAIN.split('persistence.readout()').length - 1).toBe(1);
   });
 
   it('renders the note conditionally, and leaves the graded sentence alone', () => {
-    expect(OVERLAYS).toContain('setHidden(notDurableNote, state.durable);');
+    expect(OVERLAYS).toContain('setHidden(notDurableNote, !state.carryDegraded);');
     // The condition is the whole of it: an unconditional line would tell every
     // ordinary session its progress is being thrown away.
     expect(OVERLAYS, 'the note is shown unconditionally').not.toContain(
@@ -302,9 +335,28 @@ describe('I3: and the panel says so, in the one session where it matters', () =>
 
   it('states a different fact from the graded sentence, or it is not worth a line', () => {
     // A note that paraphrased the sentence above would be a second copy of a
-    // wording clause rather than an answer to it.
-    expect(OVERLAYS).toContain('This browser is refusing to store anything');
+    // wording clause rather than an answer to it. The words moved to `text.ts`
+    // at `AUDIT-2`, because the announcement queue says the same sentence at
+    // the edge and two copies of one sentence is how they come to differ.
+    expect(TEXT).toContain('This browser is refusing to store anything');
     expect(OVERLAYS).toContain("attributes: { 'data-field': 'storage-blocked' }");
+    expect(OVERLAYS).toContain('text: storageDegradedText(),');
+  });
+
+  it('says it once as an event as well, so a player never in the panel is told', () => {
+    // `AUDIT-2`, finding `J3-02`. The panel's line is the standing half and is
+    // reached by opening a panel; QUALITY-BAR section 4's queue is the event
+    // half. The rising edge is what makes it once rather than once per failed
+    // write, and `tests/unit/announce.test.ts` drives both directions.
+    //
+    // The edge is read against the frame before, and an absent frame counts as
+    // an undegraded one: on the origin that refuses site data the carry is
+    // degraded from the first frame, and an edge that demanded a real previous
+    // frame could never be satisfied there, which is what the cure round's
+    // review measured on the shipped page.
+    expect(ANNOUNCE).toContain('  const wasDegraded = prior?.context.carryDegraded ?? false;');
+    expect(ANNOUNCE).toContain('if (!next.context.carryDegraded || wasDegraded) {');
+    expect(ANNOUNCE).toContain("kind: 'storage', text: storageDegradedText()");
   });
 });
 
@@ -315,7 +367,7 @@ describe('I3: without preventing the game from starting', () => {
 
     expect(persistence.readout().durable).toBe(false);
     expect(reachesBetting(persistence.restored())).toBe(true);
-    expect(persistence.restored().wallet.readout().chips).toBe(SPEC_STARTING_CHIPS);
+    expect(launchWallet(persistence).readout().chips).toBe(SPEC_STARTING_CHIPS);
   });
 
   it('starts the game when the store refuses the read', () => {
@@ -444,6 +496,60 @@ function playSaving(seed: number, persistence: Persistence): TableReadout {
   throw new RangeError(`a round did not finish inside ${String(LOOP_LIMIT)} turns`);
 }
 
+describe('AUDIT-2 X4-04: the write handler answers for the platform and not for us', () => {
+  /**
+   * A document the encoder cannot encode.
+   *
+   * A cycle is the cheapest stand-in for any throw out of the three calls that
+   * used to sit inside the handler's `try`, and all three are equivalent from
+   * the handler's point of view: they are this project's own code running
+   * before the store is touched. The cast is the whole point of the fixture,
+   * since the type system is what stops this arriving from the live root.
+   */
+  function circularDocument(): GameDocument {
+    // The cycle is planted on a field the projection keeps, since
+    // `openDocumentSession` rebuilds the document from SPEC 13's named set and
+    // an extra key would simply be dropped before the encoder saw it.
+    const history: unknown[] = [];
+    history.push(history);
+    return { ...DEFAULT_DOCUMENT, history } as unknown as GameDocument;
+  }
+
+  it('lets a document-layer throw out rather than reporting a storage failure', () => {
+    const store = createMemoryStore();
+    // Before the cure this returned `{ ok: false, failure: { operation:
+    // 'write', name: 'TypeError' } }` over a store that was working perfectly,
+    // and the only trace was a degraded-carry flag. A defect in our own encoder
+    // is not a platform refusal, so it propagates to the error boundary.
+    expect(() => saveDocument(store, circularDocument())).toThrow(TypeError);
+    // Nothing reached the store, so nothing can be blamed on it.
+    expect(store.read(STORAGE_KEY)).toBeNull();
+  });
+
+  it('leaves the counters and the carry alone, because no write was attempted', () => {
+    const store = createMemoryStore();
+    const persistence = createPersistence({ store, durable: true, failure: null });
+    expect(persistence.save(DEFAULT_DOCUMENT).ok).toBe(true);
+
+    expect(() => persistence.save(circularDocument())).toThrow(TypeError);
+
+    const readout = persistence.readout();
+    expect(readout.failedWrites).toBe(0);
+    expect(readout.carryDegraded).toBe(false);
+    expect(readout.lastFailure).toBeNull();
+  });
+
+  it('still catches the platform, which is the failure the handler is written for', () => {
+    // The negative control: with the encoder out of the block, a store that
+    // refuses the write is still described rather than thrown.
+    const store = storeThatThrows('write', quotaError());
+    const result = saveDocument(store, DEFAULT_DOCUMENT);
+    expect(result.ok).toBe(false);
+    expect(result.ok ? null : result.failure.operation).toBe('write');
+    expect(result.ok ? null : result.failure.name).toBe('QuotaExceededError');
+  });
+});
+
 describe('I3: a write that throws does not interrupt the round', () => {
   const SEED = 21;
 
@@ -541,7 +647,7 @@ describe('I3: reset all data degrades the same way', () => {
     const result = persistence.resetAll();
     expect(result.ok).toBe(false);
     expect(persistence.document()).toEqual(DEFAULT_DOCUMENT);
-    expect(persistence.restored().wallet.readout().bestBalance).toBe(STARTING_CHIPS);
+    expect(launchWallet(persistence).readout().bestBalance).toBe(STARTING_CHIPS);
     expect(persistence.readout().carryDegraded).toBe(true);
   });
 
@@ -560,7 +666,7 @@ describe('I3: reset all data degrades the same way', () => {
     createPersistence({ store, durable: true, failure: null }).save(carried);
 
     const persistence = createPersistence({ store, durable: true, failure: null });
-    expect(persistence.restored().wallet.readout().bestBalance).toBe(11_000);
+    expect(launchWallet(persistence).readout().bestBalance).toBe(11_000);
     expect(persistence.restored().launch.table).toBe('gold');
     expect(persistence.restored().howToPlaySeen).toBe(true);
     expect(store.read(STORAGE_KEY)).not.toBeNull();
@@ -570,7 +676,7 @@ describe('I3: reset all data degrades the same way', () => {
     expect(persistence.document()).toEqual(DEFAULT_DOCUMENT);
     // SPEC 14's "clears every persisted value": a fresh wallet at the starting
     // mark, back at the table SPEC 6 never locks, with nothing seen.
-    expect(persistence.restored().wallet.readout().bestBalance).toBe(STARTING_CHIPS);
+    expect(launchWallet(persistence).readout().bestBalance).toBe(STARTING_CHIPS);
     expect(persistence.restored().launch.table).toBe('bronze');
     expect(persistence.restored().history).toHaveLength(0);
     expect(persistence.restored().howToPlaySeen).toBe(false);

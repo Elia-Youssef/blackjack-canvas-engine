@@ -22,11 +22,13 @@
  * **The loader is the one place three core contracts are honoured**, and each
  * would be a silent defect anywhere else:
  *
- *   1. **`createWallet` throws on a bad persisted mark, by contract.** It is
- *      called here and nowhere else with a stored figure, and `document.ts`
- *      sanitises the mark first. The corrupt matrix in
+ *   1. **`createWallet` throws on a bad persisted mark, by contract.** The
+ *      composition root is the one caller that hands it a stored figure, and it
+ *      does so through `walletOptionsFor` below over the mark this loader
+ *      sanitised: `document.ts`'s `markOf` is the predicate, ahead of the
+ *      constructor. The corrupt matrix in
  *      `tests/unit/storage-corrupt.test.ts` requires every mark this loader
- *      produces to be one the wallet accepts.
+ *      produces to be one the wallet accepts, over that same call.
  *   2. **A loaded `Statistics` document must have a session opened on it.**
  *      `BJ-10` left this as a binding handoff and the reason is SPEC 9 row 11:
  *      `belowLowWater` is a session latch, and a document carrying it into a
@@ -87,8 +89,8 @@
 import type { History } from '../core/history';
 import type { Statistics } from '../core/statistics';
 import type { CoachRecord } from '../core/strategy';
-import type { LaunchChoice, Wallet, WalletOptions } from '../core/wallet';
-import { createWallet, launchTable } from '../core/wallet';
+import type { LaunchChoice, WalletOptions } from '../core/wallet';
+import { launchTable } from '../core/wallet';
 
 import type { GameDocument, Repair, Settings } from './document';
 import {
@@ -176,7 +178,7 @@ function defaulted(
  * out, the three lines below that turn a walked payload into a `migrated`
  * report with a `migratedFrom` version would run for the very first time on the
  * day a real schema bump shipped, against a live player's document, which is
- * the one moment they must not be running for the first time. `BJ-19`'s
+ * the one moment they must not be running for the first time. `BJ-20`'s
  * composition root passes nothing and gets `DOCUMENT_VERSION` and `MIGRATIONS`,
  * which is what a real bump will already have moved.
  */
@@ -229,10 +231,20 @@ export function loadDocument(
  * projected out, so what reaches storage is SPEC 13's persisted set and nothing
  * else. A throw is caught, described and returned; it is never propagated,
  * because SPEC 18 says a failed write must not interrupt a round.
+ *
+ * **Encoded above the `try`, written inside it** (`AUDIT-2`, finding `X4-04`).
+ * The handler answers for the platform: a store that refuses the write, which
+ * QUALITY-BAR section 8 names by exception class. `openDocumentSession`,
+ * `sealEnvelope` and `JSON.stringify` are this project's own code, and a throw
+ * out of any of them is a defect here rather than a refusal out there. Inside
+ * the block it would be labelled `write`, counted as a failed write and flipped
+ * into `carryDegraded`, which reports a working store as full and loses the
+ * defect; outside it, it reaches the error boundary as what it is.
  */
 export function saveDocument(store: KeyValueStore, document: GameDocument): SaveResult {
+  const encoded = JSON.stringify(sealEnvelope(openDocumentSession(document)));
   try {
-    store.write(STORAGE_KEY, JSON.stringify(sealEnvelope(openDocumentSession(document))));
+    store.write(STORAGE_KEY, encoded);
     return Object.freeze({ ok: true });
   } catch (error) {
     // Typed and read: `QuotaExceededError` is the one QUALITY-BAR section 8
@@ -248,17 +260,19 @@ export function saveDocument(store: KeyValueStore, document: GameDocument): Save
 /**
  * What a launch is handed. SPEC 13, and item `I4`'s subject at `BJ-20`.
  *
- * A wallet rather than a number, because `createWallet` is the only thing that
- * can hold a high-water mark and the loader is the only caller allowed to give
- * it a persisted one. The four read-through fields are on the document too; they
- * are repeated here so a composition root wiring up a table, a coach and an
- * overlay does not have to know which of them came from where.
+ * The read-through fields are on the document too; they are repeated here so a
+ * composition root wiring up a table, a coach and an overlay does not have to
+ * know which of them came from where.
+ *
+ * **No wallet.** This shape carried one until `AUDIT-2`'s finding `Z6-01`: a
+ * real `Wallet` was constructed on every load and on every reset, and the round
+ * was played on the composition root's own instead, so the object here was
+ * complete, live and orphaned. The mark is a number on the document and the one
+ * construction happens at the root, through `walletOptionsFor` below.
  */
 export interface RestoredSession {
   /** The document these were built from, already session-opened. */
   readonly document: GameDocument;
-  /** SPEC 4.11's 1,000 chips, carrying SPEC 6's persisted unlock mark. */
-  readonly wallet: Wallet;
   /** SPEC 13's seat, through the fallback SPEC 13 names. */
   readonly launch: LaunchChoice;
   /** SPEC 11's counters, with the session scope opened. */
@@ -280,6 +294,10 @@ export interface RestoredSession {
  * wallet's `options.bestBalance ?? STARTING_CHIPS` would read the first as a
  * missing mark while the type system refuses to accept it at all. One helper, so
  * a caller with no mark still has a legal call and the trap is written down once.
+ *
+ * The composition root is the caller. It is exported for that, and the corrupt
+ * matrix binds `markOf`'s output to `createWallet` through this same call, so
+ * the armour runs over the path the shipped game takes (`AUDIT-2`, `Z6-01`).
  */
 export function walletOptionsFor(mark: number | undefined): WalletOptions {
   return mark === undefined ? {} : { bestBalance: mark };
@@ -289,7 +307,6 @@ export function walletOptionsFor(mark: number | undefined): WalletOptions {
 function restoreFrom(document: GameDocument): RestoredSession {
   return Object.freeze({
     document,
-    wallet: createWallet(walletOptionsFor(document.bestBalance)),
     launch: launchTable(document.table, document.bestBalance),
     statistics: document.statistics,
     coach: document.coach,
@@ -303,7 +320,17 @@ function restoreFrom(document: GameDocument): RestoredSession {
 // The one object the composition root holds
 // ---------------------------------------------------------------------------
 
-/** What the game can say about its own storage. Item `I3`'s degradation value. */
+/**
+ * What the game can say about its own storage. Item `I3`'s degradation value.
+ *
+ * **Two of the seven are the chrome's and the rest are evidence.** `durable` is
+ * the boot probe's answer, read once, and `carryDegraded` is the one that moves
+ * during a session, read per frame: SPEC 14's note and `BJ-18`'s announcement
+ * are both keyed on it (`AUDIT-2`, findings `Z6-02` and `J3-02`). The counters
+ * and the two failures below are how the write-failure suite grades `I3`, and
+ * they have no consumer under `src/`; they are named here as what they are
+ * rather than read by the page to make the shape look busy.
+ */
 export interface PersistenceReadout {
   /** True when the startup probe found the platform's own store. */
   readonly durable: boolean;
@@ -313,9 +340,9 @@ export interface PersistenceReadout {
    * when a write lands, because every write sends the whole document.
    */
   readonly carryDegraded: boolean;
-  /** Writes that landed. */
+  /** Writes that landed. A test-facing count. */
   readonly writes: number;
-  /** Writes and removes that threw. */
+  /** Writes and removes that threw. A test-facing count. */
   readonly failedWrites: number;
   /** Why the probe fell back, or `null` when it did not. */
   readonly probeFailure: StoreFailure | null;
@@ -490,10 +517,11 @@ export function createPersistence(probe: StoreProbe): Persistence {
     /**
      * The launch, and deliberately not rebuilt on every save.
      *
-     * The wallet handed out here is the one the round is being played on, so
-     * rebuilding it when the document is written would put the balance back to
-     * 1,000 mid-session. Only `resetAll` replaces it, because that is the one
-     * operation whose whole point is that everything starts again.
+     * This is what the session was opened from, so rebuilding it when the
+     * document is written would replace a launch decision the game has already
+     * acted on with one taken from figures that have since moved. Only
+     * `resetAll` replaces it, because that is the one operation whose whole
+     * point is that everything starts again.
      */
     restored(): RestoredSession {
       return restored;

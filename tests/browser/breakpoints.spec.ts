@@ -58,16 +58,24 @@
 
 import { expect, test, type Page } from '@playwright/test';
 
-import { MIN_SURFACE_HEIGHT, SURFACE_FRAMING, resolveBreakpoint } from '../../src/ui/breakpoints';
+import type { PhaseKind } from '../../src/core/types';
+import {
+  MIN_SURFACE_HEIGHT,
+  SURFACE_FRAMING,
+  resolveBreakpoint,
+  surfaceFloorFor,
+} from '../../src/ui/breakpoints';
 // The control census moved to `support/controls.ts` at `BJ-17`, unchanged: item
 // `D2` grades the same list against a different question, and two copies of it
 // is how one of them quietly stops being complete.
 import { scrollToTop } from './support/flow';
 import { SCREEN_CONTROLS, selectorFor } from './support/controls';
 import {
+  DESIGNED_SCROLLERS_ANY_AXIS,
   atBetting,
   atShippedBetting,
   bootGame,
+  openShippedPage,
   chip,
   control,
   controlNamed,
@@ -109,8 +117,16 @@ const VIEWPORTS = [
   { label: 'portrait 320x480', breakpoint: 'portrait', width: 320, height: 480, sticky: false },
 ] as const;
 
-/** The containers that scroll on purpose. Everything else must not. */
-const DESIGNED_SCROLLERS = new Set(['.bj-chips', '.bj-stage']);
+/**
+ * The containers that scroll on purpose. Everything else must not, on either
+ * axis. `AUDIT-2`, finding `J7-02`.
+ *
+ * Imported rather than written out again: this file used to hold its own copy,
+ * narrower than the exported one and with the sentence above it claiming a
+ * guard neither list could give. `.bj-overlay` is in the imported set and was in
+ * neither, which is why `support/game.ts` carries the reasoning.
+ */
+const DESIGNED = new Set(DESIGNED_SCROLLERS_ANY_AXIS);
 
 /** WCAG 2.2 section 3's minimum target, which `--target-min` carries. */
 const TARGET_MIN = 44;
@@ -155,14 +171,35 @@ async function reachableByPageScroll(page: Page, selector: string): Promise<stri
 
 /** Clause 1, on the regions, on every label, and on the play-surface row. */
 function assertNothingClipped(report: LayoutReport, label: string): void {
+  // **The scroller clause, over a DOM census, on both axes.** This was five
+  // literal selectors compared on `scrollWidth` alone, so "everything else" was
+  // three elements once the two designated ones were skipped and a container
+  // that scrolled vertically inside itself passed unseen. `report.overflowing`
+  // is every rendered element under the shell that absorbs its own overflow in
+  // either direction, and each one must be a scroller by design.
+  for (const entry of report.overflowing) {
+    expect(
+      entry.designated,
+      `${label}: ${entry.key} scrolls its own content ` +
+        `(${String(entry.overflowX)} px across, ${String(entry.overflowY)} px down) ` +
+        'and is not a scroller by design',
+    ).not.toBeNull();
+    expect(DESIGNED.has(entry.designated ?? ''), `${label}: ${entry.key}`).toBe(true);
+  }
+
+  // And the horizontal spill clause on the named rows, which is a different
+  // question and is kept: an element at `overflow: visible` scrolls nothing, so
+  // the census above does not look at it, but content wider than a row is still
+  // a row that stopped wrapping. `BJ-16`'s ledger measured exactly that.
   for (const [selector, metrics] of Object.entries(report.scrollers)) {
-    if (DESIGNED_SCROLLERS.has(selector)) {
+    if (DESIGNED.has(selector)) {
       continue;
     }
     expect(metrics.scrollWidth, `${label}: ${selector} is wider than its box`).toBeLessThanOrEqual(
       metrics.clientWidth + 1,
     );
   }
+
   for (const entry of report.controls) {
     expect(entry.textClipped, `${label}: ${entry.key} has a clipped label`).toBe(false);
   }
@@ -170,10 +207,21 @@ function assertNothingClipped(report: LayoutReport, label: string): void {
   // The play-surface row is never squeezed below the surface's own minimum, so
   // `planSurface` is never handed a box it cannot fit. The review measured a row
   // of zero at 320 x 420 and a canvas clipped away whole.
+  //
+  // **The minimum is the screen's own since `AUDIT-2`, finding `J7-01`.** SPEC
+  // 10's start and bust-out screens are reached with the felt swept, so the row
+  // is holding room for a picture that does not exist, and paying for it is what
+  // put the start screen's own controls below the fold at 360 x 640.
+  // `surfaceFloorFor` is the shipped rule and is asked here rather than
+  // restated, because the assertion is that the row keeps the floor the layout
+  // claims to give it; the arm below pins what the two quiet screens then do
+  // with the room, which is where a floor quietly dropped everywhere would be
+  // caught.
+  const floor = surfaceFloorFor(report.phase as PhaseKind, report.overlay !== null);
   const body = report.regions.body;
   expect(body, `${label}: no play-surface row`).not.toBeNull();
   expect(body?.height ?? 0, `${label}: the play-surface row was squeezed`).toBeGreaterThanOrEqual(
-    MIN_SURFACE_HEIGHT - 1,
+    floor - 1,
   );
 
   // **The surface takes the row it is given.** `AUDIT-2` finding `J5-02`
@@ -515,6 +563,179 @@ test.describe('F1: the play surface keeps its minimum height where the shell has
     );
     expect(surface?.width ?? 0, 'the surface collapsed').toBeGreaterThan(0);
   });
+
+  test('and gives it up on the screens with nothing on the felt', async ({ page }) => {
+    // `AUDIT-2`, finding `J7-01`, from the other side: the floor above is for a
+    // picture, and SPEC 10's start screen has none. The same viewport that
+    // holds the row at the token length while a hand is in play must let it go
+    // here, or the cure is a comment. Measured at the viewport where the two
+    // bars leave less than the floor but more than nothing.
+    await page.setViewportSize({ width: 360, height: 640 });
+    // The shipped page with SPEC 17's first-run panel dismissed, which is the
+    // state the finding measured after the panel and the state every return
+    // visit boots in. While a panel is open the row keeps the floor, because
+    // the panel is what the row is showing.
+    await openShippedPage(page);
+    await settle(page);
+    const report = await layoutReport(page);
+    expect(report.phase, 'this arm is about the start screen').toBe('start');
+    const height = report.regions.body?.height ?? 0;
+    expect(height, 'the row still holds room for a picture that is not there').toBeLessThan(
+      MIN_SURFACE_HEIGHT,
+    );
+    // And it kept what there was, rather than collapsing: the felt is smaller,
+    // not gone, wherever the two bars leave anything at all.
+    expect(height, 'the felt was dropped where there was room for it').toBeGreaterThan(0);
+    expect(report.regions.surface?.height ?? 0, 'nothing was drawn').toBeGreaterThan(0);
+  });
+});
+
+/**
+ * The start screen's own controls, on the first viewport of a short phone.
+ *
+ * `AUDIT-2`, finding `J7-01`. Item `F1` measures reachability, and reachability
+ * held: the page scrolled 128 px at 360 x 640 and every control could be
+ * reached. What a first-time player met was the readouts, four panel buttons, a
+ * decorative felt, the words "Choose a table" and two clipped button edges, with
+ * **Start** 72 px below the fold and nothing on screen to press. First-view
+ * visibility is the question this asserts, and it is asserted where the cure
+ * claims it: at the viewports where the two bars and no floor fit.
+ *
+ * The invariants `BJ-16` proved are asserted here too rather than assumed,
+ * because this arm moves exactly the decision they rest on: sticky implies the
+ * page does not scroll, and every control is fully inside the first viewport.
+ */
+test.describe('F1: the start screen fits the first viewport on a short phone', () => {
+  for (const viewport of [
+    { label: '360x640', width: 360, height: 640 },
+    { label: '412x732', width: 412, height: 732 },
+  ] as const) {
+    test(`shows the chooser and Start without scrolling at ${viewport.label}`, async ({ page }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await openShippedPage(page);
+      await settle(page);
+
+      const report = await layoutReport(page);
+      expect(report.phase).toBe('start');
+      expect(report.stickyBars, 'the sticky layout did not fit').toBe('on');
+      // `BJ-16`'s first invariant, at a viewport that has just started sticking.
+      expect(report.doc.scrollHeight, 'a sticky page that scrolls').toBeLessThanOrEqual(
+        report.doc.clientHeight + 1,
+      );
+
+      // SPEC 10's own list for this screen, minus the four panel controls in
+      // the top bar: what a first-time player has to be able to press is the
+      // chooser and Start.
+      for (const key of (SCREEN_CONTROLS['start'] ?? []).filter(
+        (name) => !name.includes('overlay'),
+      )) {
+        const box = await page.evaluate((selector: string) => {
+          const node = document.querySelector(selector);
+          if (node === null) {
+            return null;
+          }
+          const rect = node.getBoundingClientRect();
+          return { top: rect.top, bottom: rect.bottom, height: rect.height };
+        }, selectorFor(key));
+        expect(box, `${key} is not on the page`).not.toBeNull();
+        if (box === null) {
+          continue;
+        }
+        expect(box.height, `${key} has no box`).toBeGreaterThan(0);
+        expect(box.top, `${key} starts above the viewport`).toBeGreaterThanOrEqual(0);
+        expect(box.bottom, `${key} ends below the first fold`).toBeLessThanOrEqual(
+          viewport.height + 1,
+        );
+      }
+    });
+
+    test(`keeps SPEC 17s first-run panel usable at ${viewport.label}`, async ({ page }) => {
+      // The other side of the same rule, and the reason the floor is about what
+      // the row is **showing** rather than about the phase alone: SPEC 10's
+      // panels are positioned inside that row, and the first thing a first-time
+      // player meets on the start screen is How to Play. So the floor comes back
+      // while a panel is open, on both sides at once, and the two sides have to
+      // agree: the arithmetic decides whether the bars stick and the grid
+      // decides how tall the row is, and a page that stuck a layout the grid
+      // then refused to fit would scroll with its bars pinned to the viewport.
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto('/');
+      await expect(page.locator('.bj-shell')).toBeVisible();
+      await settle(page);
+
+      const report = await layoutReport(page);
+      expect(report.overlay, 'the first-run panel did not open').toBe('howToPlay');
+      expect(
+        report.regions.body?.height ?? 0,
+        'the panel was given a row with no height to be read in',
+      ).toBeGreaterThanOrEqual(MIN_SURFACE_HEIGHT - 1);
+      if (report.stickyBars === 'on') {
+        expect(report.doc.scrollHeight, 'a sticky page that scrolls').toBeLessThanOrEqual(
+          report.doc.clientHeight + 1,
+        );
+      }
+
+      // And it can be dismissed the way a player dismisses it.
+      await control(page, 'close-overlay').click();
+      await expect(page.locator('[data-overlay-host="true"]')).toBeHidden();
+    });
+  }
+});
+
+test.describe('F1: the one designed scroller is seen, and it is the only one', () => {
+  /**
+   * The census's non-vacuity, and the exemption standing beside the rule.
+   * `AUDIT-2`, finding `J7-02`.
+   *
+   * Every other pass in this file runs with no overlay open, and `.bj-overlay`
+   * generates no box while it is hidden, so a census that could not see a
+   * scroller at all would pass all of them. This opens the one element in the
+   * chrome with `overflow: auto` at the viewport where it really does hide
+   * hundreds of pixels of its own content, and requires the census both to find
+   * it and to call it designated.
+   */
+  for (const viewport of [
+    { label: 'portrait 320x568', width: 320, height: 568 },
+    { label: 'portrait 390x844', width: 390, height: 844 },
+  ]) {
+    test(`sees the overlay scroll and nothing else at ${viewport.label}`, async ({ page }) => {
+      await page.setViewportSize({ width: viewport.width, height: viewport.height });
+      await page.goto('/');
+      await expect(page.locator('.bj-shell')).toBeVisible();
+      await settle(page);
+      // **Measured after the panel has finished arriving, and that is not
+      // hygiene.** `bj-overlay-in` opens on `translateY(var(--space-3))`, so for
+      // the length of the animation the panel really is a few pixels below where
+      // it lands and `.bj-body`, which clips, really is holding content it
+      // cannot show. Measured at 3 to 4 px on both viewports. That is the
+      // transition doing what it was written to do, not a layout that hides
+      // anything, and a census read two frames after the press reports it as
+      // one. Every other pass in this file runs with no overlay open, and no
+      // other animation in the chrome moves a box: `bj-panel-in` is opacity
+      // alone.
+      await page
+        .locator('.bj-overlay')
+        .evaluate(async (node) => {
+          await Promise.all(node.getAnimations().map(async (animation) => animation.finished));
+        });
+      await settle(page);
+
+      const report = await layoutReport(page);
+      expect(report.overlay, 'the first-run panel did not open').toBe('howToPlay');
+      const overlay = report.overflowing.filter((entry) => entry.designated === '.bj-overlay');
+      expect(
+        overlay.length,
+        'the census saw no overlay scroll, so it can see no scroller at all',
+      ).toBe(1);
+      expect(overlay[0]?.overflowY ?? 0, 'the overlay hides nothing to scroll to').toBeGreaterThan(
+        1,
+      );
+
+      // And the whole clause still holds with a panel up: everything the census
+      // found is a scroller by design, the overlay included.
+      assertNothingClipped(report, `${viewport.label} with the panel open`);
+    });
+  }
 });
 
 test.describe('F1: the layout mode is stable, not a flip-flop', () => {
@@ -607,17 +828,32 @@ test.describe('F3: the disclosure survives a rotation between the two narrow wid
     ).toHaveAttribute('open', '');
 
     // The control, in the same test so the assertion above cannot pass by the
-    // write never happening at all: crossing into a width that shows every
-    // readout does move it, and crossing back closes it again.
+    // write never happening at all, and it discriminates in both directions.
+    // The player closes the disclosure while still under the narrow policy,
+    // which is an answer they are allowed to give: crossing into a width that
+    // shows every readout must then OPEN it, because the policy decides where
+    // the player has not answered and nobody has answered at that width. A
+    // writer that had stopped running would leave it closed. Crossing back must
+    // restore the narrow answer, closed, rather than carry the wide state over:
+    // `AUDIT-2`, finding `J5-03`, is that the two policies are remembered
+    // separately, so this is the same rule read the other way round.
+    expect(await setDisclosure(page, false), 'no disclosure at compact').toBe(true);
+    await expect(page.locator('.bj-readouts__more')).not.toHaveAttribute('open', '');
+
     await page.setViewportSize({ width: 1280, height: 800 });
     await settle(page);
     await expect(page.locator('.bj-shell')).toHaveAttribute('data-breakpoint', 'wide');
+    await expect(
+      page.locator('.bj-readouts__more'),
+      'a real policy change did not rewrite the open state',
+    ).toHaveAttribute('open', '');
+
     await page.setViewportSize({ width: 320, height: 568 });
     await settle(page);
     await expect(page.locator('.bj-shell')).toHaveAttribute('data-breakpoint', 'portrait');
     await expect(
       page.locator('.bj-readouts__more'),
-      'a real policy change did not rewrite the open state',
+      'the wide policy state was carried into the narrow one',
     ).not.toHaveAttribute('open', '');
   });
 });

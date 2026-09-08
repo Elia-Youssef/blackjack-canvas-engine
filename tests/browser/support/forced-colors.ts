@@ -20,8 +20,15 @@ import { test, type Page } from '@playwright/test';
 
 import { settle } from './game';
 
-/** Whether the page itself agrees that forced colors is active. */
-export async function queryTookEffect(page: Page): Promise<boolean> {
+/**
+ * Whether the page itself agrees that forced colors is active.
+ *
+ * Not exported. It is the second half of `forceColours` and not a standalone
+ * capability probe: called on its own it answers about an emulation the caller
+ * has not asked for, which is the confusion doing both halves in one call
+ * exists to prevent.
+ */
+async function queryTookEffect(page: Page): Promise<boolean> {
   return page.evaluate(() => matchMedia('(forced-colors: active)').matches);
 }
 

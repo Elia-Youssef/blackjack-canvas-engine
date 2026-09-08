@@ -471,3 +471,145 @@ test.describe('I5: the volume slider writes once per gesture', () => {
     expect(value).toBeLessThan(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// AUDIT-2, finding J3-02: the origin that stores nothing and said nothing
+// ---------------------------------------------------------------------------
+
+/**
+ * A quota-full origin is disclosed, on the same line the refused probe uses.
+ *
+ * QUALITY-BAR section 8's last clause has two routes to one outcome: the
+ * browser refuses the store outright, or it hands one over and throws
+ * `QuotaExceededError` on every write. The panel's note was keyed on the boot
+ * probe, so the second route lost the whole session's carry, the lifetime
+ * statistics, the milestones, the history, the high-water mark and every
+ * setting the player changed, with nothing anywhere on the page saying so.
+ *
+ * `Storage.prototype.setItem` is replaced before the page's own script runs, so
+ * the game meets a store that resolves and refuses, which is the origin state
+ * itself rather than anything stubbed inside the game. The control is the same
+ * flow with no injection: the note stays hidden, which is every ordinary
+ * session.
+ */
+test.describe('I3: a full origin says so, not only a refused one', () => {
+  async function openSettings(page: Page): Promise<void> {
+    await page.locator('[data-open-overlay="settings"]').click();
+    await expect(page.locator('[data-overlay-host="true"]')).toBeVisible();
+  }
+
+  const note = (page: Page): ReturnType<Page['locator']> =>
+    page.locator('[data-field="storage-blocked"]');
+
+  test('shows the note once a write has been refused, and says it aloud once', async ({ page }) => {
+    await page.addInitScript(() => {
+      Storage.prototype.setItem = function full(): void {
+        throw new DOMException('quota', 'QuotaExceededError');
+      };
+    });
+    await atShippedBetting(page);
+
+    // Before any write has been attempted the page has no reason to claim
+    // anything, and the probe itself succeeded: this is the state the old
+    // reading called durable and left undisclosed for the rest of the session.
+    await openSettings(page);
+    await expect(note(page)).toBeHidden();
+    await control(page, 'close-overlay').click();
+
+    // One setting change, which is one save, which throws.
+    await openSettings(page);
+    await page.locator('[data-speed="fast"]').click();
+    await expect(note(page), 'the refused write was never disclosed').toBeVisible();
+    await expect(note(page)).toContainText('nothing from this session will be here next time');
+
+    // And it was said as well as shown, through the one queue, so a player who
+    // never opens this panel is told at all.
+    await expect
+      .poll(async () => (await page.locator('[data-live="polite"]').textContent()) ?? '', {
+        timeout: 5_000,
+      })
+      .toContain('refusing to store anything');
+  });
+
+  test('says it aloud on an origin that refuses the store outright', async ({ page }) => {
+    // The other route, and the one QUALITY-BAR section 8's clause names first.
+    // The cure round's review measured it on the shipped page: the note
+    // appeared and the polite region stayed empty, because the carry is
+    // degraded from the first frame there and the edge was read against a
+    // previous frame that does not exist. This arm is the shipped-page half of
+    // that cure.
+    //
+    // The property access itself throws, which is the seam a browser refusing
+    // site data throws at. It is injected rather than produced by a real
+    // browser setting, which no automation can reach, so what this grades is the
+    // game's behaviour against that seam and not the setting.
+    await page.addInitScript(() => {
+      Object.defineProperty(window, 'localStorage', {
+        configurable: true,
+        get(): never {
+          throw new DOMException('blocked', 'SecurityError');
+        },
+      });
+      // And when the sentence arrives relative to the region itself. A region
+      // that arrives with its text already inside it is announced by nothing,
+      // which both `announcer.ts` and QUALITY-BAR section 4 state, so a
+      // disclosure written in the turn that mounts the region would be a
+      // disclosure in the DOM and in nobody's ears. `MutationObserver` delivers
+      // one batch per task, so two different batch numbers is two tasks.
+      const seen = { inserted: 0, written: 0, batches: 0 };
+      (window as unknown as { __regionTiming: typeof seen }).__regionTiming = seen;
+      new MutationObserver((records) => {
+        seen.batches += 1;
+        for (const entry of records) {
+          const target = entry.target as HTMLElement;
+          const inserted = [...entry.addedNodes].some(
+            (node) => node instanceof HTMLElement && node.querySelector('[data-live="polite"]'),
+          );
+          if (inserted && seen.inserted === 0) {
+            seen.inserted = seen.batches;
+          }
+          const region = target.closest?.('[data-live="polite"]') ?? null;
+          if (region !== null && (region.textContent ?? '') !== '' && seen.written === 0) {
+            seen.written = seen.batches;
+          }
+        }
+      }).observe(document, { childList: true, subtree: true, characterData: true });
+    });
+    await atShippedBetting(page);
+
+    // Nothing was pressed and no round was played: the disclosure is due on the
+    // strength of the boot alone.
+    await expect
+      .poll(async () => (await page.locator('[data-live="polite"]').textContent()) ?? '', {
+        timeout: 5_000,
+      })
+      .toContain('refusing to store anything');
+
+    const timing = await page.evaluate(
+      () =>
+        (window as unknown as { __regionTiming: { inserted: number; written: number } })
+          .__regionTiming,
+    );
+    expect(timing.inserted, 'the region was never seen being mounted').toBeGreaterThan(0);
+    expect(
+      timing.written,
+      'the sentence was written in the turn that mounted the region, where nothing announces it',
+    ).toBeGreaterThan(timing.inserted);
+
+    // And the standing half is there too, which is the pair the finding asked
+    // for rather than one of them.
+    await openSettings(page);
+    await expect(note(page)).toBeVisible();
+  });
+
+  test('leaves the note hidden on an origin that stores normally', async ({ page }) => {
+    await atShippedBetting(page);
+    await openSettings(page);
+    await page.locator('[data-speed="fast"]').click();
+    await settle(page);
+    await expect(note(page), 'an ordinary session was told its progress is lost').toBeHidden();
+    await expect(page.locator('[data-live="polite"]')).not.toContainText(
+      'refusing to store anything',
+    );
+  });
+});

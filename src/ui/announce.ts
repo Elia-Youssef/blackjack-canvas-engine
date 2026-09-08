@@ -79,6 +79,7 @@ import {
   phaseText,
   reasonText,
   sideWagerText,
+  storageDegradedText,
 } from './text';
 
 /**
@@ -137,8 +138,48 @@ export type AnnouncementKind =
   | 'milestone'
   /** SPEC 14's mute, as an event. */
   | 'sound'
+  /** QUALITY-BAR section 8's carry, once it has started failing. */
+  | 'storage'
   /** SPEC 12's round result and SPEC 4.12's bust-out. Never coalesced. */
   | 'outcome';
+
+/**
+ * Every kind, as a value, so nothing can join the union without a decision.
+ * The cure round's review, finding `MIN-2`.
+ *
+ * The union above is a type and the two rules that read it are values: the
+ * coalescing carve-out is a `Set` of names and the floor exemption is written at
+ * the one site that takes it. Nothing compared the three, so `'storage'` joined
+ * the union in this cycle and silently took both defaults, coalescing and
+ * waiting, with no line anywhere saying that was the answer. This is the same
+ * shape `Z7-04` was cured in one file along, and the same shape `PHASE_KINDS`
+ * and `INTENT_KINDS` have carried since `BJ-7`.
+ *
+ * **The record is what makes the list total.** A kind added to the union with no
+ * key here is a missing property and does not compile; a key here that is not a
+ * kind is an excess property under `satisfies` and does not compile either. So
+ * `Object.keys` is every kind exactly once and the cast below is a statement
+ * about that, not a hope. `tests/unit/announce.test.ts` then requires each of
+ * them to be classified under both rules, with the count pinned, so the next
+ * kind is a red test rather than a default.
+ */
+const KIND_PRESENT = {
+  phase: true,
+  split: true,
+  card: true,
+  dealerCard: true,
+  activeHand: true,
+  refusal: true,
+  milestone: true,
+  sound: true,
+  storage: true,
+  outcome: true,
+} as const satisfies Record<AnnouncementKind, true>;
+
+/** The kinds, in the union's own order, for a census and for a sweep. */
+export const ANNOUNCEMENT_KINDS: readonly AnnouncementKind[] = Object.freeze(
+  Object.keys(KIND_PRESENT) as AnnouncementKind[],
+);
 
 /** One thing to say, and which region says it. */
 export interface Announcement {
@@ -162,6 +203,30 @@ export interface Announcement {
    * written. The alternative readings were both worse: shortening the floor
    * changes an accessibility number for every sentence in the game, and making
    * Fast keep the peek screen open longer changes what Speed means.
+   *
+   * **The exemption is one sentence and the class is wider, and the rest of the
+   * class is accepted rather than cured.** Any screen shorter than the floor can
+   * lose its own sentence to the sentence that follows it, and two cases were
+   * put to the user at `AUDIT-2` and accepted as documented behaviour:
+   *
+   *   1. **The reveal sentence.** `TIMINGS.revealPause` is 0.45 s, which is
+   *      under the floor at Normal before Fast is involved at all, so a player
+   *      who presses Stand on the reveal screen's first frame can have the
+   *      reveal sentence replaced before it is written. Natural pacing speaks
+   *      it, and `tests/unit/announce.test.ts` pins that at the frame rates it
+   *      measures, so what is accepted is the first-frame press and not the
+   *      ordinary round.
+   *   2. **The peek screen at Fast on a hostile clock** (finding `J1-04`). At
+   *      Fast the screen is 0.18 s and QUALITY-BAR section 7's clamp lets one
+   *      long frame carry the machine straight through it, so the screen is
+   *      never rendered and no sentence is due for it; at Normal it renders.
+   *      That is a rendering fact rather than an announcement one, which is why
+   *      the exemption above does not reach it.
+   *
+   * Both are declared here because this is the file the floor lives in, and the
+   * reason neither is cured is the reason given for the exemption: the two cures
+   * available change an accessibility number for every sentence in the game, or
+   * change what Speed means.
    */
   readonly immediate?: boolean;
 }
@@ -181,8 +246,6 @@ export interface QueueState {
   readonly pendingPolites: readonly string[];
   /** How many outcomes are waiting. Never collapsed, by rule 4. */
   readonly pendingOutcomes: number;
-  /** Seconds since the last write. */
-  readonly since: number;
 }
 
 /** The one queue. */
@@ -312,7 +375,6 @@ export function createAnnouncementQueue(options: QueueOptions = {}): Announcemen
       pendingPolite: waiting()[0]?.text ?? null,
       pendingPolites: waiting().map((entry) => entry.text),
       pendingOutcomes: outcomes.length,
-      since,
     }),
   };
 }
@@ -343,6 +405,18 @@ export interface AnnounceContext {
    * state in this file takes.
    */
   readonly muted: boolean;
+  /**
+   * Whether nothing written now will be there next session. `AUDIT-2`, finding
+   * `J3-02`.
+   *
+   * QUALITY-BAR section 8's last clause, as an event. The standing half is the
+   * Settings panel's own line, which a player reaches by opening a panel; this
+   * is the half that reaches one who never does. It is the composition root's
+   * `carryDegraded` rather than the boot probe's `durable`, because the two
+   * routes to the same loss are a store the browser refused and a store that
+   * throws on every write, and only the first is answered at boot.
+   */
+  readonly carryDegraded: boolean;
 }
 
 /** Everything the previous frame said, so this frame can say what moved. */
@@ -391,16 +465,23 @@ export function roundOutcomeText(result: RoundResult): string {
  * a region is written in.
  *
  * **`previous` is `null` on the first frame of a session, and that frame
- * announces nothing at all.** Two reasons, and the second is the load-bearing
- * one. A session opening by reciting an empty felt would be announcing the
- * absence of a round; and QUALITY-BAR section 4 asks that "both region elements
- * exist in the initial HTML and only their text changes", whose purpose is that
- * a region is in the accessibility tree *before* it is written to, since a
- * region that arrives with its text already in it is not announced by anything.
- * The chrome is built in one turn and the first frame runs synchronously inside
- * it, so a first-frame write would land in the initial tree and be silent
- * anyway. The opening state is the mirror's job, which is the division these two
- * mechanisms exist for.
+ * announces nothing about the game.** Two reasons, and the second is the
+ * load-bearing one. A session opening by reciting an empty felt would be
+ * announcing the absence of a round; and QUALITY-BAR section 4 asks that "both
+ * region elements exist in the initial HTML and only their text changes", whose
+ * purpose is that a region is in the accessibility tree *before* it is written
+ * to, since a region that arrives with its text already in it is not announced
+ * by anything. The chrome is built in one turn and the first frame runs
+ * synchronously inside it, so a first-frame write would land in the initial tree
+ * and be silent anyway. The opening state is the mirror's job, which is the
+ * division these two mechanisms exist for.
+ *
+ * **The one sentence a first frame can carry is the carry's**, and the reason is
+ * that it is not a fact about the game: `carryAnnouncements` says why. Which
+ * frame is the first observed one is `src/ui/components/announcer.ts`'s to
+ * decide, and it skips the composition root's synchronous boot frame so that
+ * this sentence is a change to a region already in the tree rather than text a
+ * region arrived carrying.
  */
 export function announcementsFor(
   previous: AnnounceFrame | null,
@@ -411,7 +492,7 @@ export function announcementsFor(
   const prior = previous;
 
   if (prior === null) {
-    return said;
+    return carryAnnouncements(null, next);
   }
   const before = prior.readout;
 
@@ -571,5 +652,50 @@ export function announcementsFor(
     });
   }
 
+  said.push(...carryAnnouncements(prior, next));
+
   return said;
+}
+
+/**
+ * QUALITY-BAR section 8's last clause, as an event. `AUDIT-2`, finding `J3-02`.
+ *
+ * **The rising edge, so it is said once and not once per write.** The carry
+ * fails at a write and stays failed until one lands, and a quota-full origin
+ * fails every one of them: this fires on the frame the first one throws and on
+ * no frame after it, however many rounds follow. A write that lands after a
+ * failure genuinely restored the carry, because every write sends the whole
+ * document, so a later failure is a second event and is said again rather than
+ * suppressed.
+ *
+ * **A boot that is already degraded is the rising edge**, and until the cure
+ * round's review it was the case this sentence never reached. There are two
+ * routes to the same loss and only one of them starts at a write: an origin
+ * that refuses site data throws on the property access itself, so
+ * `persistence.ts` answers `carryDegraded` from the first frame, and an edge
+ * read against the frame before could never be satisfied on it. The review
+ * measured exactly that on the shipped page: the Settings note appeared and the
+ * polite region stayed empty, on the one route QUALITY-BAR section 8's clause
+ * names first. So the absent frame counts as an undegraded one, `null` included,
+ * and the boot case says it once like any other edge.
+ *
+ * That is why this is the one sentence `announcementsFor` will return for a
+ * first frame. Every other sentence there describes the felt, and a session
+ * opening by reciting an empty felt is what that early return exists to stop;
+ * this one describes the browser, is true before a card is dealt, and is the
+ * half that reaches a player who never opens a panel.
+ *
+ * There is no falling-edge sentence. "Your progress is being saved again" is a
+ * sentence about a mechanism a player never asked about, and the panel's own
+ * line is what carries the standing state in both directions.
+ */
+function carryAnnouncements(
+  prior: AnnounceFrame | null,
+  next: AnnounceFrame,
+): readonly Announcement[] {
+  const wasDegraded = prior?.context.carryDegraded ?? false;
+  if (!next.context.carryDegraded || wasDegraded) {
+    return [];
+  }
+  return [{ priority: 'polite', kind: 'storage', text: storageDegradedText() }];
 }

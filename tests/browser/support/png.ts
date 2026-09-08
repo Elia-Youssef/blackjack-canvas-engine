@@ -155,8 +155,13 @@ export function decodePng(bytes: Buffer): Bitmap {
   return { width, height, data };
 }
 
-/** One pixel of a bitmap, by coordinate. */
-export function pixelAt(bitmap: Bitmap, x: number, y: number): Rgba {
+/**
+ * One pixel of a bitmap, by coordinate.
+ *
+ * Not exported: `sampleIndicator` below is the only caller, and a spec that
+ * wanted a raw pixel would be reaching past the reading this module is for.
+ */
+function pixelAt(bitmap: Bitmap, x: number, y: number): Rgba {
   const at = (y * bitmap.width + x) * 4;
   return [
     bitmap.data[at] ?? 0,
@@ -167,10 +172,24 @@ export function pixelAt(bitmap: Bitmap, x: number, y: number): Rgba {
 }
 
 // ---------------------------------------------------------------------------
-// WCAG contrast, over sampled pixels. The same arithmetic as
-// `tests/browser/render-surface.spec.ts` and `tests/unit/tokens.test.ts`, which
-// is deliberate: three instruments measuring the same quantity should not each
-// carry their own reading of the formula.
+// WCAG contrast, over sampled pixels. **The TypeScript side's one reading of
+// the formula.** `AUDIT-2`, finding `X3-05`.
+//
+// There were four copies of the sRGB transfer function and the
+// 0.2126/0.7152/0.0722 weights, here, in `tests/browser/render-surface.spec.ts`,
+// in `tests/unit/tokens.test.ts` and in `scripts/report/support.mjs`, under a
+// comment that said three instruments measuring one quantity should not each
+// carry their own reading and then let them. They agreed to the last bit over
+// 4,096 colours, which is the point: a one-character slip in any one of them
+// moves that instrument alone, and the one that moves may be `report:contrast`,
+// the gate that breaches the build.
+//
+// Two readings are left, one per runtime, because the report scripts are `.mjs`
+// run by node without a TypeScript step and nothing shipped may import from
+// `scripts/`. Every TypeScript instrument imports this one;
+// `scripts/report/support.mjs` carries the other, and
+// `tests/unit/tokens.test.ts` requires the two to agree on a fixed colour table
+// so a slip in either is a red suite rather than a moved threshold.
 // ---------------------------------------------------------------------------
 
 function channel(value: number): number {

@@ -33,11 +33,10 @@
 
 import {
   CHIP_DENOMINATIONS,
-  chipEnabled,
   tableLimits,
   type ChipDenomination,
 } from '../../core/wallet';
-import { chipLabel } from '../availability';
+import { chipLabel, chipRefusal } from '../availability';
 import { button, el, setDisabled, setHidden } from '../dom';
 import type { ChromeActions, ChromeState, Component } from '../state';
 import { reasonText } from '../text';
@@ -106,16 +105,17 @@ export function createBetting(actions: ChromeActions): Component {
       const limits = tableLimits(state.readout.table);
       const balance = state.readout.wallet.chips;
       for (const [denomination, control] of chipButtons) {
-        // SPEC 4.11's one disabled case, asked of the wallet and not re-derived.
-        const enabled = chipEnabled(denomination, limits, balance);
-        // The sentence comes from `src/ui/text.ts` like every other refusal, so
-        // the control and the mirror's greyed list read the same words. This
-        // module used to hold a private copy of it, which is how the two came
-        // to say different things about one chip.
+        // SPEC 4.11's one disabled case, and the sentence that goes with it,
+        // both from `src/ui/availability.ts`'s one pairing. This module used to
+        // ask the wallet itself and name the reason literal itself, which is
+        // two independent (predicate, reason) pairings for one chip: they
+        // agreed only by both being written the same way, and the mirror's
+        // greyed list is built from the other one (`AUDIT-2`, finding `Z5-06`).
+        const refusal = chipRefusal(denomination, limits, balance);
         setDisabled(
           control,
-          !enabled,
-          reasonText('chip-over-ceiling'),
+          refusal !== null,
+          refusal === null ? null : reasonText(refusal),
           chipLabel(denomination),
         );
       }

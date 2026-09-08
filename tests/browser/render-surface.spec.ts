@@ -31,6 +31,7 @@ import { CARD_GEOMETRY, cardHeight } from '../../src/render/card';
 import { CHIP_FILL, CHIP_RING, FELT, SURFACE, type FeltName } from '../../src/render/tokens';
 import { FELT_GEOMETRY } from '../../src/render/felt';
 import { injectScript } from './support/game';
+import { contrastOf, type Rgba } from './support/png';
 import type { RenderDemoApi } from './support/render-demo';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
@@ -82,23 +83,15 @@ async function inject(page: Page): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------
-// Contrast over sampled pixels, the same WCAG arithmetic the token suite uses,
-// applied to what the rasteriser actually produced.
+// Contrast over sampled pixels, applied to what the rasteriser actually
+// produced. The arithmetic is `support/png.ts`'s, which is the TypeScript
+// side's one reading of the WCAG formula; this file used to carry a fourth copy
+// of it (`AUDIT-2`, finding `X3-05`).
 // ---------------------------------------------------------------------------
 
-function channel(value: number): number {
-  const c = value / 255;
-  return c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-}
-
-function luminanceOf(rgb: readonly number[]): number {
-  return 0.2126 * channel(rgb[0] ?? 0) + 0.7152 * channel(rgb[1] ?? 0) + 0.0722 * channel(rgb[2] ?? 0);
-}
-
-function contrast(a: readonly number[], b: readonly number[]): number {
-  const la = luminanceOf(a);
-  const lb = luminanceOf(b);
-  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05);
+/** A sampled pixel in the shape the shared reading takes. */
+function rgba(sample: readonly number[]): Rgba {
+  return [sample[0] ?? 0, sample[1] ?? 0, sample[2] ?? 0, sample[3] ?? 255];
 }
 
 function hexToRgb(hex: string): number[] {
@@ -276,7 +269,7 @@ test.describe('E3: the dealt hand on a real canvas', () => {
       // cannot carry the card's boundary, the light margin does, and it must
       // clear 3:1 against what the rasteriser actually painted around it.
       expectNear(margin ?? [], SURFACE.cardMargin, 16, `margin on ${felt}`);
-      expect(contrast(margin ?? [], feltBeside ?? [])).toBeGreaterThanOrEqual(3);
+      expect(contrastOf(rgba(margin ?? []), rgba(feltBeside ?? []))).toBeGreaterThanOrEqual(3);
     });
   }
 

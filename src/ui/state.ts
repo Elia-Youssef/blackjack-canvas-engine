@@ -24,7 +24,7 @@ import type { HouseRules } from '../core/rules';
 import type { MilestoneId, StatisticsReadout } from '../core/statistics';
 import type { CoachAction, CoachMode, CoachVerdict } from '../core/strategy';
 import type { RejectionLayer, RejectionReason, Speed, TableReadout } from '../core/table';
-import type { Intent, IntentKind } from '../core/types';
+import type { Intent } from '../core/types';
 import type { Motion } from '../render/animate';
 import type { SurfaceSize } from '../render/surface';
 import type { BreakpointName } from './breakpoints';
@@ -52,13 +52,19 @@ export const OVERLAY_TITLES: Readonly<Record<OverlayId, string>> = Object.freeze
  * One refused action, as the chrome shows it. SPEC 4.11's "with a reason
  * surfaced to the player".
  *
- * The layer travels with the reason because the three are different sentences
+ * The layer travels with the reason because the two are different sentences
  * about different things, and because a reader of this record should be able to
  * tell "you cannot bet now" from "that is more than the table takes" without
  * decoding the reason to work it out.
+ *
+ * **The refused intent does not travel with them** (`AUDIT-2`, finding
+ * `X3-07`). It was carried to the DOM boundary and dropped there:
+ * `components/notice.ts` renders the reason and the layer and writes no
+ * `data-intent`, so the field was filled on every refusal and read by nothing.
+ * A control that needs to know which intent was refused has the reason, which
+ * is the half the player is shown.
  */
 export interface Notice {
-  readonly intent: IntentKind;
   readonly layer: RejectionLayer;
   readonly reason: RejectionReason;
 }
@@ -223,22 +229,30 @@ export interface ChromeState {
    */
   readonly hint: CoachAction | null;
   /**
-   * Whether the store this session opened will actually carry. QUALITY-BAR
-   * section 8's last clause, and `AUDIT-1`.
+   * Whether anything written now will still be there next session.
+   * QUALITY-BAR section 8's last clause, `AUDIT-1` and `AUDIT-2`.
    *
    * `storage/store.ts` answers `durable: false` on the arm where the probe was
    * refused, which is a browser with site data blocked or a private mode that
-   * throws on write, and `persistence.ts` runs a memory fallback behind it so
-   * the session plays normally and carries nothing. The whole apparatus was
-   * built and tested at `BJ-11` and read by nothing, so Settings stated "stored
-   * in this browser only" in the one session where nothing is stored at all.
+   * throws on the property access, and `persistence.ts` runs a memory fallback
+   * behind it so the session plays normally and carries nothing. The whole
+   * apparatus was built and tested at `BJ-11` and read by nothing, so Settings
+   * stated "stored in this browser only" in the one session where nothing is
+   * stored at all.
    *
-   * Read **once, at boot**, rather than per frame, because that is when the
-   * probe ran: a per-frame read would invite the panel to change its mind
-   * mid-session on an answer that cannot move. The graded SPEC 14 sentence is
-   * untouched; this decides whether a second, sibling note sits under it.
+   * **It is the carry rather than the probe, and it is read per frame.**
+   * `AUDIT-2`, finding `J3-02`: a quota-full origin resolves `window
+   * .localStorage` perfectly well and then throws on every `setItem`, which
+   * loses the same session in the same way and answered `durable: true`. The
+   * measured session played three rounds, changed Speed and theme, stored
+   * nothing, and reloaded to a light theme with no statistics and no
+   * explanation anywhere on the page. `persistence.readout().carryDegraded` is
+   * both routes, and unlike the probe's answer it genuinely moves during a
+   * session, so it is taken every frame rather than once at boot. The graded
+   * SPEC 14 sentence is untouched; this decides whether a second, sibling note
+   * sits under it, and the announcement queue says it once at the edge.
    */
-  readonly durable: boolean;
+  readonly carryDegraded: boolean;
 }
 
 /**

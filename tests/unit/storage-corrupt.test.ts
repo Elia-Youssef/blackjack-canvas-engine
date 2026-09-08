@@ -944,7 +944,11 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
           durable: true,
           failure: null,
         });
-        const { launch, wallet } = persistence.restored();
+        const { launch, document } = persistence.restored();
+        // The composition root's own call, since `AUDIT-2`'s `Z6-01` deleted
+        // the loader's wallet: a salvaged mark must be one the constructor
+        // takes, and a launch starts at 1,000 chips whatever the mark says.
+        const wallet = createWallet(walletOptionsFor(document.bestBalance));
         expect(wallet.readout().chips, fixture.name).toBe(SPEC_STARTING_CHIPS);
         expect(['bronze', 'silver', 'gold'], fixture.name).toContain(launch.table);
       }
@@ -1235,7 +1239,10 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
         expect(Object.keys(stored.data)).not.toContain(excluded);
       }
       // A launch starts at 1,000 whatever the document said.
-      expect(persistence.restored().wallet.readout().chips).toBe(SPEC_STARTING_CHIPS);
+      expect(
+        createWallet(walletOptionsFor(persistence.restored().document.bestBalance))
+          .readout().chips,
+      ).toBe(SPEC_STARTING_CHIPS);
     });
 
     it('opens the session scope on the way in, so nothing session-shaped is carried', () => {

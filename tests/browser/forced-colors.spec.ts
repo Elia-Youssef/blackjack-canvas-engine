@@ -23,12 +23,20 @@
  *      `src/render/tokens.ts` and `tests/unit/forced-colors.test.ts` carry the
  *      park; `BJ-18`'s report carries the sketched resolution.
  *
- * **Engine coverage is not three.** `emulateMedia({ forcedColors })` is a
- * Chromium and Firefox capability; WebKit has no forced-colors mode to emulate,
- * and Playwright's WebKit is a WebKit build rather than Safari in any case.
- * Rather than skip by browser name and hope, each test asks the page whether the
- * query took effect and skips with a reason when it did not, so an engine that
- * gains the capability is covered the day it does.
+ * **Engine coverage is three.** All three engines the browser gate runs emulate
+ * forced colors at the pinned Playwright: WebKit's driver carries the emulation
+ * as a `Page.setForcedColors` protocol command, and this file runs green on it
+ * with nothing skipped, which is the measurement rather than the reading of a
+ * driver. The premise here used to be that WebKit had no such mode, and it was
+ * false; `error-boundary.spec.ts` records the same correction being made once
+ * already for Firefox.
+ *
+ * The skip stays, and it is a measurement rather than a browser name: each test
+ * asks the **page** whether the query took effect and skips with a reason when
+ * it did not, so an engine that loses the capability produces a skip that says
+ * so instead of a green run that measured nothing. `support/no-skips-reporter.ts`
+ * is the other half of that arrangement, turning any skip into a failed run, so
+ * the loss is loud rather than quiet.
  */
 
 import { readFileSync } from 'node:fs';

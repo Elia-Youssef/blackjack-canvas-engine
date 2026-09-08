@@ -59,6 +59,17 @@ export function hypot(x: number, y: number): number {
   return Math.sqrt(x * x + y * y);
 }
 
+// A dynamic import whose specifier the rule can read, and which stays inside
+// the boundary. The refusal added at `AUDIT-2` for finding `Z9-04` is about a
+// specifier that cannot be classified, not about `import()` itself.
+export async function lazyOrder(): Promise<unknown> {
+  return import('../rendering-order');
+}
+
+export async function lazyTemplateOrder(): Promise<unknown> {
+  return import(`../rendering-order`);
+}
+
 // Decay is always k ** dt, never per frame. BUILD-PLAN rule 4.
 export function decay(velocity: number, k: number, dt: number): number {
   return velocity * k ** dt;

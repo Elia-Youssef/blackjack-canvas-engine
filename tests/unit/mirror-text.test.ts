@@ -129,25 +129,81 @@ describe('G4: QUALITY-BAR section 4 naming template, exactly as the section writ
   });
 });
 
+/**
+ * The thirteen rank words and the four suit words, written out here.
+ *
+ * **Independent of the functions under test, which is the whole of their job.**
+ * `AUDIT-2`, finding `Z7-02`: the sweep below used to assert
+ * `cardText(c) === \`${rankText(rank)} of ${suitText(suit)}\``, which calls the
+ * functions under test on both sides and proves only that `cardText` composes
+ * them. Beside it, a glyph scan naming `A|J|Q|K|10` covered four of the thirteen
+ * ranks, and a whole-tree census found that `Two`, `Three`, `Four`, `Six`,
+ * `Seven`, `Eight`, `Nine` and `Queen` appeared in no assertion anywhere: a
+ * `rankText` returning the bare glyph for any of `2 3 4 6 7 8 9` passed every
+ * test in the repository, which is exactly the regression QUALITY-BAR section 4
+ * forbids. The uniqueness assertion did not close it either, `'7 of clubs'`
+ * being as distinct a name as `'Seven of clubs'`.
+ *
+ * A table rather than a scan, because the rule is not "no glyph" but "the word
+ * SPEC 11 reads": these are the words, transcribed from the specification, and
+ * the mapping is what is asserted.
+ */
+const RANK_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  A: 'Ace',
+  '2': 'Two',
+  '3': 'Three',
+  '4': 'Four',
+  '5': 'Five',
+  '6': 'Six',
+  '7': 'Seven',
+  '8': 'Eight',
+  '9': 'Nine',
+  '10': 'Ten',
+  J: 'Jack',
+  Q: 'Queen',
+  K: 'King',
+});
+
+const SUIT_WORDS: Readonly<Record<string, string>> = Object.freeze({
+  clubs: 'clubs',
+  diamonds: 'diamonds',
+  hearts: 'hearts',
+  spades: 'spades',
+});
+
 describe('G4: every card is a word, and no rank reaches the mirror as a glyph', () => {
+  it('covers every rank and suit the deck has', () => {
+    // The tables are the expectation, so a rank added to the deck without a
+    // word here is a red test rather than a rank this file stops checking.
+    expect(Object.keys(RANK_WORDS).sort()).toEqual([...RANKS].sort());
+    expect(Object.keys(SUIT_WORDS).sort()).toEqual([...SUITS].sort());
+    expect(new Set(Object.values(RANK_WORDS)).size).toBe(RANKS.length);
+  });
+
   it('names all 52 combinations without printing a rank symbol', () => {
     const names: string[] = [];
     for (const rank of RANKS) {
       for (const suit of SUITS) {
         const text = cardText(card(rank, suit));
         names.push(text);
-        expect(text, `${rank}${suit} kept a glyph`).not.toMatch(/\b(?:A|J|Q|K|10)\b/);
-        expect(text).toBe(`${rankText(rank)} of ${suitText(suit)}`);
+        // No digit anywhere and no bare letter rank: between them these two
+        // reach all thirteen glyphs, `2` to `10` by the first and `A J Q K` by
+        // the second.
+        expect(text, `${rank}${suit} kept a glyph`).not.toMatch(/\d/);
+        expect(text, `${rank}${suit} kept a glyph`).not.toMatch(/\b(?:A|J|Q|K)\b/);
+        expect(text).toBe(`${RANK_WORDS[rank] ?? ''} of ${SUIT_WORDS[suit] ?? ''}`);
       }
     }
     expect(new Set(names).size, 'two cards share a name').toBe(RANKS.length * SUITS.length);
   });
 
-  it('spells the four ranks a glyph would hide', () => {
-    expect(rankText('A')).toBe('Ace');
-    expect(rankText('10')).toBe('Ten');
-    expect(rankText('J')).toBe('Jack');
-    expect(rankText('K')).toBe('King');
+  it('spells every one of the thirteen ranks', () => {
+    for (const rank of RANKS) {
+      expect(rankText(rank), `${rank} is not spelled`).toBe(RANK_WORDS[rank]);
+    }
+    for (const suit of SUITS) {
+      expect(suitText(suit), `${suit} is not spelled`).toBe(SUIT_WORDS[suit]);
+    }
   });
 
   it('states the dealer hand the way SPEC 11 reads it, hole card included', () => {

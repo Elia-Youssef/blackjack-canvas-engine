@@ -52,18 +52,24 @@ import type { SurfaceCanvas } from '../render/surface';
 
 import { el } from './dom';
 
-/** The shell's regions, so the chrome can fill them without querying the DOM. */
+/**
+ * The shell's regions, so the chrome can fill them without querying the DOM.
+ *
+ * **Six regions, and deliberately not eight** (`AUDIT-2`, finding `X3-01`).
+ * The page heading and the stage are built and mounted below like the rest;
+ * they are not published, because nothing filled them and the stage's field was
+ * a trap. `main.ts` plans the play surface from `body`, the row, and expressly
+ * not from the stage inside it: the stage is a scroll container, so above 100
+ * percent a plan measured from its client box loses a scrollbar's width. A
+ * field named `stage` on a shell contract invites exactly that call.
+ */
 export interface Shell {
   /** The whole shell. Mounted into the page by the composition root. */
   readonly root: HTMLElement;
-  /** The page heading. Item `G6`'s single `h1`, visually hidden and out of flow. */
-  readonly heading: HTMLElement;
   /** Row 1. SPEC 11's readouts and the overlay controls. */
   readonly top: HTMLElement;
   /** Row 2, the `main` landmark. The play surface, the mirror and the overlay host. */
   readonly body: HTMLElement;
-  /** The element the play surface is sized against. */
-  readonly stage: HTMLElement;
   /** The static felt layer, stacked below the animated scene. */
   readonly feltCanvas: HTMLCanvasElement;
   /** The play surface itself. */
@@ -143,7 +149,7 @@ export function createShell(): Shell {
     children: [heading, top, body, controls],
   });
 
-  return { root, heading, top, body, stage, feltCanvas, canvas, controls };
+  return { root, top, body, feltCanvas, canvas, controls };
 }
 
 /**

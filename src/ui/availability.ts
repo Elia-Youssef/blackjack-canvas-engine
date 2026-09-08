@@ -8,7 +8,10 @@
  * the same answers in words and a second derivation of "why is Double greyed"
  * is exactly the defect the components' own headers warn about. `actions.ts`,
  * `betting.ts` and `screens.ts` all call this now, so a control and the sentence
- * describing it cannot disagree.
+ * describing it cannot disagree. `betting.ts` reads `chipRefusal` for exactly
+ * that reason (`AUDIT-2`, finding `Z5-06`): it used to take only `chipLabel`
+ * from here and pair the predicate with the reason again for itself, which left
+ * the chip row as the one row where the guard was not in place.
  *
  * **Nothing here decides a rule.** Every refusal is asked of `core/`:
  * `hitRefusal`, `doubleRefusal`, `splitRefusal` and `surrenderRefusal` from
@@ -43,6 +46,7 @@ import {
   tableLimits,
   type ChipDenomination,
   type TableId,
+  type TableLimits,
 } from '../core/wallet';
 
 import { chips as formatChips } from './format';
@@ -142,17 +146,40 @@ export function actionRefusal(
  * takes an even-money stake with the shortfall deferred and refuses an ordinary
  * one the balance cannot cover, so the test is guarded on `evenMoney` rather
  * than applied to both.
+ *
+ * The funding half goes through `canFund` like every other funding gate in the
+ * game, so this layer and the machine cannot drift into offering a control the
+ * machine then refuses (`AUDIT-2` finding `Z1-02`).
  */
 export function insuranceRefusal(
   offer: { readonly stake: number; readonly evenMoney: boolean },
   chips: number,
 ): RejectionReason | null {
-  return !offer.evenMoney && chips < offer.stake ? 'insufficient-chips' : null;
+  return !offer.evenMoney && !canFund(offer.stake, chips) ? 'insufficient-chips' : null;
 }
 
 /** The label one chip control carries. SPEC 4.11's four denominations. */
 export function chipLabel(denomination: ChipDenomination): string {
   return formatChips(denomination);
+}
+
+/**
+ * Why the betting bar greys one chip, or `null`. `AUDIT-2`, finding `Z5-06`.
+ *
+ * The predicate is `core/wallet.ts`'s `chipEnabled` and the reason is the one
+ * `src/ui/text.ts` prints for it, and this is the only place the two are put
+ * together. The chip row used to be the one row where they were not: the mirror
+ * paired them here and `src/ui/components/betting.ts` paired them again for
+ * itself, so the greyed chip and the sentence describing it agreed only because
+ * both happened to spell the same predicate and the same literal, which is the
+ * defect this whole module exists to remove.
+ */
+export function chipRefusal(
+  denomination: ChipDenomination,
+  limits: TableLimits,
+  chips: number,
+): DisplayReason | null {
+  return chipEnabled(denomination, limits, chips) ? null : 'chip-over-ceiling';
 }
 
 /** The label one table button carries. SPEC 6's name and its two limits. */
@@ -201,11 +228,24 @@ export function tableFigures(id: TableId, bestBalance: number): ReasonFigures {
 }
 
 /**
- * Every control the current screen offers, with the reason for each greyed one.
+ * The controls of the current screen that can be greyed, with the reason for
+ * each one that is.
  *
- * The list is the current screen's alone. A screen with no unavailable control
- * returns its controls with `null` refusals, and a phase that offers no control
- * at all, which is every one of SPEC 10's five timed phases, returns nothing.
+ * **Not every control the screen offers**, and the difference matters to a
+ * reader deciding what this is safe to build on (`AUDIT-2`, finding `Z5-06`):
+ * `'betting'` returns the four chips and not Clear, Repeat, Max, Deal or Change
+ * Table; `'start'` returns the three table buttons and not Start; `'bustOut'`
+ * returns the free reset and not the drop-table buttons beside it. Those are the
+ * controls no rule ever greys, and the one consumer, `unavailableNow`, wants the
+ * greyable subset. What is complete here is the other direction, which is the
+ * one item `G1` needs: every `setDisabled` site in the chrome is covered, so the
+ * mirror lists every greyed control there is. The full per-screen census is
+ * `tests/browser/support/controls.ts`'s `SCREEN_CONTROLS`, which item `D2`
+ * grades against a different question.
+ *
+ * A screen with no unavailable control returns its controls with `null`
+ * refusals, and a phase that offers no control at all, which is every one of
+ * SPEC 10's five timed phases, returns nothing.
  */
 export function screenAvailability(readout: TableReadout): readonly ControlAvailability[] {
   const { phase, hands, rules, splits, wallet, table } = readout;
@@ -231,7 +271,7 @@ export function screenAvailability(readout: TableReadout): readonly ControlAvail
         // The display-only split, on `tableRefusal`'s precedent: this is the
         // denomination against the table rather than a tap against the
         // ceiling, and the two are different facts about the same word.
-        refusal: chipEnabled(denomination, limits, wallet.chips) ? null : 'chip-over-ceiling',
+        refusal: chipRefusal(denomination, limits, wallet.chips),
       }));
     }
 

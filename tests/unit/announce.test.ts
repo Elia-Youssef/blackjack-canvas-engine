@@ -32,6 +32,10 @@
  * @vitest-environment node
  */
 
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+
 import { describe, expect, it } from 'vitest';
 
 import { RANKS, type Rank } from '../../src/core/cards';
@@ -40,14 +44,17 @@ import { MAX_STEP, TIMINGS, createTable, type Speed, type Table } from '../../sr
 import type { Intent } from '../../src/core/types';
 import { createWallet, type Wallet } from '../../src/core/wallet';
 import {
+  ANNOUNCEMENT_KINDS,
   POLITE_INTERVAL_SECONDS,
   announcementsFor,
   createAnnouncementQueue,
   roundOutcomeText,
   type AnnounceFrame,
   type Announcement,
+  type AnnouncementKind,
 } from '../../src/ui/announce';
 import type { Notice } from '../../src/ui/state';
+import { storageDegradedText } from '../../src/ui/text';
 
 import { acceptResult as accept, bounded } from './support/drive';
 import { scriptedShoe } from './support/stacked-shoe';
@@ -283,6 +290,78 @@ describe('G4 armour: the queue obeys QUALITY-BAR section 4 and the checker can r
 // ---------------------------------------------------------------------------
 
 describe('AUDIT-2: polite entries coalesce by class, and two of the classes never drop', () => {
+  it('makes every kind carry both decisions, so a new one cannot default', () => {
+    // The cure round's review, finding `MIN-2`. `'storage'` joined the union in
+    // this cycle and took both defaults, coalescing and waiting for the floor,
+    // with nothing anywhere stating that was the answer: the union is a type,
+    // the carve-out is a `Set` and the exemption is written at its one site, and
+    // nothing compared the three. Both rows below are keyed by the union itself,
+    // so a kind added to `announce.ts` with no row here does not compile, and
+    // the count is pinned so a row added without a kind does not pass.
+    const COALESCES: Readonly<Record<AnnouncementKind, boolean>> = {
+      phase: true,
+      split: true,
+      card: true,
+      dealerCard: true,
+      activeHand: true,
+      refusal: true,
+      // Rule 4's carve-out: awarded once and reconstructible from nothing.
+      milestone: false,
+      sound: true,
+      // Said at the edge, so a second copy inside one interval is the same
+      // event and replacing it loses nothing.
+      storage: true,
+      // Rule 4 itself.
+      outcome: false,
+    };
+    const EXEMPT_FROM_THE_FLOOR: Readonly<Record<AnnouncementKind, boolean>> = {
+      // SPEC 10's peek screen at Fast, and only that screen: the ruling is one
+      // sentence wide and `Announcement.immediate` carries it.
+      phase: true,
+      split: false,
+      card: false,
+      dealerCard: false,
+      activeHand: false,
+      refusal: false,
+      milestone: false,
+      sound: false,
+      storage: false,
+      outcome: false,
+    };
+
+    expect(ANNOUNCEMENT_KINDS, 'a kind arrived or left with no decision taken').toHaveLength(10);
+    expect(new Set(ANNOUNCEMENT_KINDS).size).toBe(ANNOUNCEMENT_KINDS.length);
+
+    // And the rows are the shipped behaviour rather than a comment: two entries
+    // of one kind inside one interval either become one or queue, and which of
+    // those happened is read off the queue's own state.
+    for (const kind of ANNOUNCEMENT_KINDS) {
+      const queue = createAnnouncementQueue();
+      const priority = kind === 'outcome' ? 'assertive' : 'polite';
+      queue.push({ priority, kind, text: 'first' });
+      queue.push({ priority, kind, text: 'second' });
+      const waiting =
+        kind === 'outcome' ? queue.state().pendingOutcomes : queue.state().pendingPolites.length;
+      expect(waiting, `${kind} does not coalesce the way its row says`).toBe(
+        COALESCES[kind] ? 1 : 2,
+      );
+    }
+
+    // The immediacy half is a property of the sentence rather than of the
+    // queue, so it is accounted at the one site that writes it: exactly one
+    // kind is exempt, and the shipped file sets the flag exactly once.
+    const exempt = ANNOUNCEMENT_KINDS.filter((kind) => EXEMPT_FROM_THE_FLOOR[kind]);
+    expect(exempt).toEqual(['phase']);
+    const source = readFileSync(
+      join(dirname(fileURLToPath(import.meta.url)), '..', '..', 'src', 'ui', 'announce.ts'),
+      'utf8',
+    );
+    expect(source.split('immediate: true').length - 1, 'a second sentence took the exemption').toBe(
+      1,
+    );
+    expect(source).toContain("...(readout.phase.kind === 'peek' ? { immediate: true } : {}),");
+  });
+
   it('never drops a milestone, however promptly the next screen arrives', () => {
     // **Finding `J1-02`**, as arithmetic. SPEC 9 awards a milestone exactly
     // once and never re-announces it, so a milestone replaced while it waits is
@@ -474,7 +553,10 @@ function session(table: Table, notice: Notice | null = null, awarded: readonly M
   const said: Announcement[] = [];
   const record: Session = { table, said, frame: null };
   const observe = (): void => {
-    const next: AnnounceFrame = { readout: table.readout(), context: { notice, awarded, muted: false } };
+    const next: AnnounceFrame = {
+      readout: table.readout(),
+      context: { notice, awarded, muted: false, carryDegraded: false },
+    };
     said.push(...announcementsFor(record.frame, next));
     record.frame = next;
   };
@@ -533,7 +615,7 @@ describe('G4 armour: what a frame is worth announcing', () => {
     const table = tableOn(['8', '9', '8', '9']);
     const first: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, awarded: [], muted: false },
+      context: { notice: null, awarded: [], muted: false, carryDegraded: false },
     };
     expect(announcementsFor(null, first)).toEqual([]);
   });
@@ -542,7 +624,7 @@ describe('G4 armour: what a frame is worth announcing', () => {
     const table = tableOn(['8', '9', '8', '9']);
     const frame: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, awarded: [], muted: false },
+      context: { notice: null, awarded: [], muted: false, carryDegraded: false },
     };
     expect(announcementsFor(frame, frame)).toEqual([]);
   });
@@ -642,12 +724,12 @@ describe('G4 armour: what a frame is worth announcing', () => {
 
   it('announces a refusal once, and again only when a different one arrives', () => {
     const table = tableOn(['8', '9', '8', '9']);
-    const quiet = { notice: null, awarded: [] as readonly MilestoneId[], muted: false };
+    const quiet = { notice: null, awarded: [] as readonly MilestoneId[], muted: false, carryDegraded: false };
     const base = { readout: table.readout(), context: quiet } as const;
-    const refused: Notice = { intent: 'deal', layer: 'wallet', reason: 'no-wager' };
+    const refused: Notice = { layer: 'wallet', reason: 'no-wager' };
     const withNotice: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: refused, awarded: [], muted: false },
+      context: { notice: refused, awarded: [], muted: false, carryDegraded: false },
     };
     const said = announcementsFor(base, withNotice);
     expect(said.map((entry) => entry.text)).toEqual(['Place a wager before dealing.']);
@@ -660,11 +742,11 @@ describe('G4 armour: what a frame is worth announcing', () => {
     const table = tableOn(['8', '9', '8', '9']);
     const before: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, awarded: [], muted: false },
+      context: { notice: null, awarded: [], muted: false, carryDegraded: false },
     };
     const after: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, awarded: ['firstNatural'], muted: false },
+      context: { notice: null, awarded: ['firstNatural'], muted: false, carryDegraded: false },
     };
     expect(announcementsFor(before, after)).toEqual([
       { priority: 'polite', kind: 'milestone', text: 'Milestone: First natural.' },
@@ -679,7 +761,7 @@ describe('G4 armour: what a frame is worth announcing', () => {
     const table = tableOn(['8', '9', '8', '9']);
     const frameOf = (muted: boolean): AnnounceFrame => ({
       readout: table.readout(),
-      context: { notice: null, awarded: [], muted },
+      context: { notice: null, awarded: [], muted, carryDegraded: false },
     });
     expect(announcementsFor(frameOf(false), frameOf(true))).toEqual([
       { priority: 'polite', kind: 'sound', text: 'Sound muted.' },
@@ -688,6 +770,64 @@ describe('G4 armour: what a frame is worth announcing', () => {
       { priority: 'polite', kind: 'sound', text: 'Sound on.' },
     ]);
     expect(announcementsFor(frameOf(true), frameOf(true))).toEqual([]);
+  });
+
+  it('says the carry is failing once, at the edge and not at every write', () => {
+    // `AUDIT-2`, finding `J3-02`. QUALITY-BAR section 8's last clause reached
+    // the player through the Settings panel alone, and only on the route the
+    // boot probe could see: a quota-full origin threw on every write, stored
+    // nothing, and said nothing. This is the event half, and the shape it takes
+    // is the mute's: a rising edge rather than a state, so a session that keeps
+    // failing keeps quiet and one that starts failing again says so again.
+    const table = tableOn(['8', '9', '8', '9']);
+    const frameOf = (carryDegraded: boolean): AnnounceFrame => ({
+      readout: table.readout(),
+      context: { notice: null, awarded: [], muted: false, carryDegraded },
+    });
+    expect(announcementsFor(frameOf(false), frameOf(true))).toEqual([
+      { priority: 'polite', kind: 'storage', text: storageDegradedText() },
+    ]);
+    // The frames after it, which are every frame of the rest of the session on
+    // an origin that stays full.
+    expect(announcementsFor(frameOf(true), frameOf(true))).toEqual([]);
+    // And nothing at all on the way back: the panel's line is the standing
+    // state, and a sentence about storage working is a sentence about a
+    // mechanism nobody asked about.
+    expect(announcementsFor(frameOf(true), frameOf(false))).toEqual([]);
+    // A write that landed genuinely restored the carry, so a second failure is
+    // a second event.
+    expect(announcementsFor(frameOf(false), frameOf(true))).toHaveLength(1);
+  });
+
+  it('says it on a boot that is already failing, which is the blocked origin', () => {
+    // The cure round's review, on the shipped page: an origin that refuses site
+    // data throws on the `localStorage` property access itself, so
+    // `persistence.ts` reports the carry degraded from the first frame and there
+    // is no undegraded frame in front of it. Read against a real previous frame
+    // the edge was unreachable on that route, and the review measured what that
+    // cost: the Settings note appeared and the polite region stayed empty, on
+    // the one route QUALITY-BAR section 8's clause names first. The absent frame
+    // counts as an undegraded one.
+    const table = tableOn(['8', '9', '8', '9']);
+    const frameOf = (carryDegraded: boolean): AnnounceFrame => ({
+      readout: table.readout(),
+      context: { notice: null, awarded: [], muted: false, carryDegraded },
+    });
+    expect(announcementsFor(null, frameOf(true))).toEqual([
+      { priority: 'polite', kind: 'storage', text: storageDegradedText() },
+    ]);
+    // Once, like every other edge: the second frame of that session is not a
+    // second event.
+    expect(announcementsFor(frameOf(true), frameOf(true))).toEqual([]);
+    // And nothing else came with it. The first frame stays silent about the
+    // game, which is what the early return in `announcementsFor` is for: this
+    // sentence is about the browser and is true before a card is dealt, and a
+    // first frame that recited the felt as well would be the defect that return
+    // exists to stop.
+    expect(announcementsFor(null, frameOf(false))).toEqual([]);
+    expect(
+      announcementsFor(null, frameOf(true)).map((entry) => entry.kind),
+    ).toEqual(['storage']);
   });
 
   it('announces the bust-out assertively, which is the session outcome', () => {
@@ -740,11 +880,35 @@ describe('G4 armour: what a frame is worth announcing', () => {
     // QUALITY-BAR section 4 allows a card's rank and suit to live on canvas and
     // requires them in the mirror "as words". The same rule holds here: an
     // announcement carrying `A` or `10` would be reading the glyph aloud.
+    //
+    // **A digit scan cannot do this job here and the card sentence can.**
+    // `AUDIT-2`, finding `Z7-02`: the letter regex below covers four of the
+    // thirteen ranks, and an announcement legitimately carries digits, a wager
+    // and a hard or soft total among them, so the nine numeric ranks have to be
+    // reached another way. Every card an announcement names arrives as
+    // "<Rank> of <suit>", so the word in front of a suit is read out and
+    // required to be one of the thirteen. `2` regressing to its glyph is then a
+    // red test, which it was not before.
+    // One card sentence, as the announcements build it.
+    const CARD_SENTENCE = /(\S+) of (?:clubs|diamonds|hearts|spades)\b/g;
+    const words = new Set([
+      'Ace', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine', 'Ten',
+      'Jack', 'Queen', 'King',
+    ]);
     const driven = session(tableOn(RANKS.flatMap((each) => [each, each]))) as Driven;
     runTo(driven, ['playerTurn', 'roundResult']);
+    // The loop below is vacuously true over an empty drive, which is the shape
+    // every other sweep in this suite guards against.
+    expect(driven.said.length, 'the drive announced nothing').toBeGreaterThan(0);
+    let named = 0;
     for (const entry of driven.said) {
       expect(/\b(?:A|J|Q|K)\b/.test(entry.text), `${entry.text} names a rank glyph`).toBe(false);
+      for (const match of entry.text.matchAll(CARD_SENTENCE)) {
+        named += 1;
+        expect(words.has(match[1] ?? ''), `${entry.text} names a rank as its glyph`).toBe(true);
+      }
     }
+    expect(named, 'the drive named no card at all').toBeGreaterThan(0);
   });
 });
 
@@ -787,7 +951,7 @@ function speak(
     table.update(step);
     const next: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, awarded: [], muted: false },
+      context: { notice: null, awarded: [], muted: false, carryDegraded: false },
     };
     for (const announcement of announcementsFor(previous, next)) {
       queue.push(announcement);
@@ -884,7 +1048,7 @@ function stutteredDeal(speed: Speed, hitchAt: number): StutteredDeal {
   const observe = (step: number): void => {
     const next: AnnounceFrame = {
       readout: table.readout(),
-      context: { notice: null, awarded: [], muted: false },
+      context: { notice: null, awarded: [], muted: false, carryDegraded: false },
     };
     const produced = announcementsFor(previous, next);
     previous = next;

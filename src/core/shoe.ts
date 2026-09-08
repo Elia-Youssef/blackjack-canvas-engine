@@ -116,7 +116,15 @@ export interface ShoeReadout {
    * leaves it true, because the reshuffle it implies is still owed.
    */
   readonly cutCardReached: boolean;
-  /** Cards drawn since the round began, and so still on the table. */
+  /**
+   * Cards drawn since the round began, cleared at `endRound`.
+   *
+   * The rebuild's own bookkeeping, and nothing outside this module reads it.
+   * `table.ts` calls `endRound` at the settlement while `clearTable` leaves the
+   * cards on the felt until Next Hand, so this already reads 0 throughout SPEC
+   * 10's round result, which is the phase the cards are still being shown in
+   * (`AUDIT-2`, finding `Z2-07`).
+   */
   readonly inPlay: number;
   /**
    * How often the defensive rebuild has fired. SPEC 4.1 says never, and the

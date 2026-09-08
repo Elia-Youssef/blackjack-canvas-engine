@@ -551,14 +551,15 @@ export function dealRefusal(wager: number, limits: TableLimits, chips: number): 
 /**
  * Whether the balance covers one more wager of a given size. SPEC 4.5 and 4.6.
  *
- * "Chips available >= the hand's wager", which is the funding half of Double
- * Down and of Split. **One reading, and this is it.** `commitDouble` and
- * `commitSplit` below ask it before they spend, `strategy.ts` asks it to decide
- * whether the coach may recommend an action the player cannot pay for, and the
- * chrome at `BJ-15` asks it to grey the two controls out before they are
- * pressed. Three call sites and one comparison: the coach and the chrome cannot
- * ask the commits themselves, because a commit **spends** what it checks, and
- * three separate spellings of `>=` would agree until a house rule moved.
+ * "Chips available >= this amount", which is the funding half of Double Down,
+ * of Split and of SPEC 4.7's ordinary insurance stake. **One reading, and this
+ * is it.** `commitDouble` and `commitSplit` below ask it before they spend,
+ * `table.ts` asks it before it takes an insurance stake, `strategy.ts` asks it
+ * to decide whether the coach may recommend an action the player cannot pay
+ * for, and the chrome at `BJ-15` asks it to grey the controls out before they
+ * are pressed. One comparison across all of them: the coach and the chrome
+ * cannot ask the commits themselves, because a commit **spends** what it
+ * checks, and separate spellings of `>=` would agree until a house rule moved.
  *
  * Exported at `BJ-15` for the reason the `BJ-9` handoff gave: the chrome needed
  * the same answer, and a third inline reading is what the export exists to

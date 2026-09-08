@@ -219,16 +219,18 @@ export function record(
   return Object.freeze([entry, ...history].slice(0, HISTORY_LIMIT));
 }
 
-/**
- * SPEC 8's "cleared only by a full data reset".
- *
- * It takes no argument because there is no partial clear and nothing to keep:
- * item `I5` at `BJ-20` puts the one control behind a confirmation in Settings,
- * and this is what that control calls. **SPEC 4.12's free bankroll reset is not
- * it**: that reset preserves the history, because SPEC 8 names a full data
- * reset and SPEC 4.12 names the balance. The test drives a bust-out and a reset
- * and requires the entries to still be there.
- */
-export function clear(): History {
-  return NO_HISTORY;
-}
+// SPEC 8's "cleared only by a full data reset", and where that clearing is.
+//
+// **Not a function here** (`AUDIT-2`, finding `X3-09`). This module used to
+// export a `clear()` whose doc named item `I5`'s Settings control as its
+// caller; nothing called it. SPEC 14's Reset all data removes the stored
+// document and re-boots, so the history comes back as `NO_HISTORY` above with
+// the rest of the defaults, and a `clear()` that returned its argument
+// unchanged would have left the shipped reset working and only its own test
+// red, which is what a function off the path looks like.
+//
+// **SPEC 4.12's free bankroll reset is not a full data reset**: it preserves
+// the history, because SPEC 8 names the data reset and SPEC 4.12 names the
+// balance. `tests/unit/hand-history.test.ts` drives a bust-out and the free
+// reset and requires the entries to still be there, and drives the data reset
+// through the persistence it really goes through.

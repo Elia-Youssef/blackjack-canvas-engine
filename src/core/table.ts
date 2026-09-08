@@ -102,7 +102,16 @@ import type {
   SettledHand,
 } from './types';
 import type { Refusal, TableId, TableLimits, Wallet, WalletReadout } from './wallet';
-import { LOWEST_TABLE, NO_WAGER, bustOut, canEnter, createWallet, tableLimits } from './wallet';
+import {
+  LOWEST_TABLE,
+  NO_WAGER,
+  bustOut,
+  canEnter,
+  canFund,
+  createWallet,
+  isTableId,
+  tableLimits,
+} from './wallet';
 
 // ---------------------------------------------------------------------------
 // SPEC 5: the reference timings, all tunable constants in one place
@@ -134,7 +143,17 @@ export const TIMINGS = Object.freeze({
   holeCardFlip: 0.3,
   /** SPEC 5: 0.18 s to re-centre a hand. A tween, not a phase. */
   handRecentre: 0.18,
-  /** SPEC 5: 0.45 s of pause before the dealer plays. */
+  /**
+   * SPEC 5: 0.45 s of pause before the dealer plays.
+   *
+   * Shorter than the 0.5 s floor the chrome's announcement queue keeps between
+   * two polite writes, at Normal and before Fast is involved, so a Stand
+   * pressed on this screen's first frame can replace the reveal sentence before
+   * it is written. Accepted by ruling at `AUDIT-2` and documented rather than
+   * cured; `src/ui/announce.ts` carries the class, what it costs and what pins
+   * the ordinary round. It is recorded here because this is the number that
+   * makes it true, and it is a SPEC 5 number, so it does not move for it.
+   */
   revealPause: 0.45,
   /** SPEC 5: 0.65 s between the dealer's draws, so a player can follow them. */
   dealerDrawInterval: 0.65,
@@ -741,6 +760,28 @@ export function branchAfterDealing(up: Rank | null): 'insurance' | 'peek' | 'pla
   return 'playerTurn';
 }
 
+/**
+ * Whether a seat is one SPEC 6 offers, and one this player may take.
+ * `AUDIT-2`, finding `X1-01`.
+ *
+ * `canEnter` answers the second half and answers the first by throwing:
+ * `tableLimits` refuses a name outside the three with a `RangeError`, which is
+ * right for a lookup and wrong for the enforcement point `TableOptions.table`
+ * names. A seat reaches this machine unvalidated by construction, from that
+ * option and from `chooseTable`, whose `TableId` is a compile-time claim about
+ * a value that was a string in a stored document a moment earlier. Item `C2`
+ * requires every attempted action to be "accepted only where legal, and a
+ * rejected action changes no state and surfaces a reason", and a throw out of
+ * `apply` surfaces no reason and is not a rejection.
+ *
+ * So membership is asked first and the lock second. A name outside SPEC 6's
+ * three is a table `canEnter` never opens, which is the sentence the refusal
+ * already carries.
+ */
+function seatOpen(id: TableId, state: WalletReadout): boolean {
+  return isTableId(id) && canEnter(id, state.bestBalance, state.chips);
+}
+
 // ---------------------------------------------------------------------------
 // The machine
 // ---------------------------------------------------------------------------
@@ -880,6 +921,17 @@ export interface TableOptions {
    * would be a second reading of item `J1`, and the two would drift. Keeping a
    * corrupt persisted value from arriving at all is item `I2` at `BJ-11`, whose
    * criterion is that such a value does not prevent the game from starting.
+   *
+   * **A name outside SPEC 6's three is refused by that same sentence, and it
+   * used to be thrown instead.** `AUDIT-2`, finding `X1-01`: `canEnter` reads
+   * `tableLimits`, which raises on an unknown name, so the enforcement point
+   * this paragraph names raised a `RangeError` out of `apply` rather than
+   * answering. `seatOpen` above asks membership before the lock, so both the
+   * option and `chooseTable` are answered with a refusal and the machine stays
+   * where it was. What this option still cannot promise is the rest of the
+   * page: `readout().table` hands the seat back unvalidated, and the chrome
+   * passes it to `tableLimits` on its first frame, so an off-list seat is a
+   * caller defect that `storage/document.ts` is what keeps out.
    */
   readonly table?: TableId;
   /**
@@ -940,6 +992,17 @@ const BUST_OUT: Phase = Object.freeze({ kind: 'bustOut' });
  * SPEC 10's `reveal` is where the card turns over, and the peek's natural arm
  * goes straight to `settling`, which is past it, so a dealer natural is shown
  * as SPEC 4.4 requires.
+ *
+ * **Three of the four are load-bearing and `'dealing'` is a belt, deliberately**
+ * (`AUDIT-2`, finding `Z2-02`). No readout can be at `'dealing'` with two
+ * dealer cards: `dealOneStep` draws the hole card and, finding the queue empty
+ * in the same statement run, leaves the phase before anything can observe it,
+ * so the count this list feeds is structurally zero there. That makes the
+ * element unreddenable and it is why no mutation entry claims it. It stays for
+ * the reason `branchAfterDealing`'s `null` arm and `dealerNaturalAtPeek`'s
+ * guard stay: a later step that yielded a frame between the hole card and the
+ * branch would publish the hole card face up for that frame, which is the
+ * defect SPEC 4.3 exists to forbid, and this list is where that is cheap.
  */
 const CONCEALED_PHASES: readonly PhaseKind[] = Object.freeze([
   'dealing',
@@ -1423,6 +1486,15 @@ export function createTable(options: TableOptions = {}): Table {
       case 'dealing':
         return { duration: TIMINGS.dealInterval, take: dealOneStep };
       case 'peek':
+        // At Fast this window is 0.18 s, and QUALITY-BAR section 7's clamp
+        // lets one long frame drain straight through it, so on a hostile
+        // clock the peek screen can be stepped past without ever having been
+        // rendered; at the default Speed it renders. The sequence of states is
+        // unchanged either way, which is the property `M5` grades. Accepted by
+        // ruling at `AUDIT-2` and documented rather than cured, on the same
+        // reasoning `src/ui/announce.ts` records for the sentence: the cures
+        // available are a longer screen at Fast, which changes what Speed
+        // means, or a smaller clamp, which is section 7's number.
         return { duration: PEEK_PAUSE, take: applyPeek };
       case 'reveal':
         return { duration: TIMINGS.revealPause, take: revealHoleCard };
@@ -1574,16 +1646,14 @@ export function createTable(options: TableOptions = {}): Table {
   function perform(intent: Intent): IntentResult {
     switch (intent.kind) {
       case 'chooseTable': {
-        const state = wallet.readout();
-        if (!canEnter(intent.table, state.bestBalance, state.chips)) {
+        if (!seatOpen(intent.table, wallet.readout())) {
           return refused('chooseTable', 'wallet', 'table-locked');
         }
         selected = intent.table;
         return accepted('chooseTable');
       }
       case 'start': {
-        const state = wallet.readout();
-        if (!canEnter(selected, state.bestBalance, state.chips)) {
+        if (!seatOpen(selected, wallet.readout())) {
           return refused('start', 'wallet', 'table-locked');
         }
         phase = BETTING;
@@ -1653,8 +1723,13 @@ export function createTable(options: TableOptions = {}): Table {
         // the offer carries which one it is rather than the machine deciding
         // again here. The shortfall of SPEC 4.7's fourth identity term is
         // reachable on the second branch and on no other.
+        //
+        // The funding half is `canFund` and is not spelled again here, for the
+        // reason that function's own docblock gives: a house rule that moved
+        // the comparison would otherwise move Double and Split and leave the
+        // insurance offer behind (`AUDIT-2` finding `Z1-02`).
         const offer = offerNow();
-        if (!offer.evenMoney && wallet.readout().chips < offer.stake) {
+        if (!offer.evenMoney && !canFund(offer.stake, wallet.readout().chips)) {
           return refused('takeInsurance', 'availability', 'insufficient-chips');
         }
         wallet.takeInsurance(offer.stake);

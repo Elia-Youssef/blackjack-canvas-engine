@@ -709,8 +709,9 @@ function countOr(value: unknown, field: string, fallback: number, note: Note): n
 /**
  * SPEC 13's best chip balance, and SPEC 6's unlock mark with it.
  *
- * **The loader is the only caller of `createWallet` with a persisted mark, and
- * `createWallet` throws on a bad one by contract.** So the predicate is here,
+ * **The composition root is the only caller of `createWallet` with a persisted
+ * mark, and it takes that mark from here; `createWallet` throws on a bad one by
+ * contract.** So the predicate is here,
  * ahead of it, and it is the wallet's own sentence: a whole number of chips at
  * or above the starting bankroll. A mark below 1,000 is not merely unusual, it
  * is unreachable, because the balance starts at 1,000 and the mark only ever

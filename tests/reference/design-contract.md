@@ -99,6 +99,8 @@ setting, so a tool whose defaults moved fails on the mismatch instead of grading
 | `--type-lg` | 1.44rem |
 | `--type-xl` | 1.728rem |
 | `--type-2xl` | 2.074rem |
+| `--leading-body` | 1.5 |
+| `--leading-tight` | 1.25 |
 | `--space-1` | 4px |
 | `--space-2` | 8px |
 | `--space-3` | 12px |

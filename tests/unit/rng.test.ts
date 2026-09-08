@@ -152,52 +152,37 @@ describe('the generator is seeded and reproducible', () => {
   });
 });
 
-describe('nextFloat lands in [0, 1)', () => {
-  it('never reaches 1 and never goes below 0', () => {
-    const rng = createRng(17);
-    for (let n = 0; n < 50_000; n += 1) {
-      const value = rng.nextFloat();
-      expect(value).toBeGreaterThanOrEqual(0);
-      expect(value).toBeLessThan(1);
-    }
-  });
-
+describe('the raw word is uniform across the whole range', () => {
   /**
-   * The grid itself, because neither statistical test above can carry this
-   * claim and both of them look as though they do.
+   * The distribution's shape, which the distinct-word count above cannot see.
    *
-   * `nextUint32() / (2^32 - 1)` is the classic wrong divisor and it reaches
-   * exactly 1. The 50,000-draw check misses it: the top word turns up with
-   * probability 1.16e-5 per run, so that test passes on essentially every run
-   * of a generator that can return 1. The tenths miss it too, since a grid
-   * stretched by one part in four billion moves no bucket anywhere.
-   *
-   * So this one pins the spacing rather than sampling the range. Two streams
-   * from one seed produce the same words, and multiplying the float back up by
-   * 2^32 has to land on the other stream's word exactly. That fixes the grid at
-   * `k / 2^32`, which puts the largest value at `1 - 2^-32` and makes 1
-   * unreachable by construction instead of by luck. Under the wrong divisor the
-   * product stops being that integer for every word except zero, so it fails on
-   * the first real draw rather than once in 86,000 runs.
+   * A generator whose words crowded one end of the range would still produce
+   * 19,900 distinct values and would fail here. The reduction to tenths is the
+   * test's own and is deliberately not a member of `Rng`: `AUDIT-2`'s `Z2-03`
+   * deleted the float draw nothing in the game called, and the word is exposed
+   * precisely so a uniformity check tests the generator rather than a reduction
+   * built on it.
    */
-  it('lands on the k / 2^32 grid, so 1 is unreachable by construction', () => {
-    const floats = createRng(19);
-    const words = createRng(19);
-    for (let n = 0; n < 5000; n += 1) {
-      expect(floats.nextFloat() * UINT32_SPAN).toBe(words.nextUint32());
-    }
-  });
-
   it('fills all ten tenths evenly', () => {
     const rng = createRng(18);
     const counts = new Array<number>(10).fill(0);
     for (let n = 0; n < SAMPLES; n += 1) {
-      const bucket = Math.min(9, Math.floor(rng.nextFloat() * 10));
+      const bucket = Math.min(9, Math.floor((rng.nextUint32() / UINT32_SPAN) * 10));
       counts[bucket] = (counts[bucket] ?? 0) + 1;
     }
     const expected = SAMPLES / 10;
     const sigma = Math.sqrt(SAMPLES * 0.1 * 0.9);
     expect(worstBucket(counts, expected)).toBeLessThan(5 * sigma);
+  });
+
+  it('never leaves 0 to 2^32 - 1, over a long run', () => {
+    const rng = createRng(17);
+    for (let n = 0; n < 50_000; n += 1) {
+      const word = rng.nextUint32();
+      expect(Number.isInteger(word)).toBe(true);
+      expect(word).toBeGreaterThanOrEqual(0);
+      expect(word).toBeLessThan(UINT32_SPAN);
+    }
   });
 });
 

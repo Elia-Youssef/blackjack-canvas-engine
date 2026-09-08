@@ -20,8 +20,9 @@
  * anything is written into it, because a region that arrives with its text
  * already inside it is announced by nothing. So the two elements are created
  * here, empty, mounted with the rest of the chrome, and never replaced; the
- * first announcement of a session is a later frame's, and `announce.ts` says why
- * the first frame deliberately says nothing at all.
+ * first announcement of a session is a later frame's, which `bootFrameSeen`
+ * below is what makes true, and `announce.ts` says why the first observed frame
+ * says nothing about the game at all.
  *
  * **The regions are written unconditionally, which is the one place in this
  * chrome that `setText`'s guard would be wrong.** Everywhere else a write of the
@@ -84,6 +85,30 @@ export function createAnnouncer(): Announcer {
 
   const queue: AnnouncementQueue = createAnnouncementQueue();
   let previous: AnnounceFrame | null = null;
+  /**
+   * Whether the composition root's one synchronous boot frame has gone by.
+   *
+   * The header above says the first announcement of a session is a later
+   * frame's, and until the cure round that was true by accident: the first
+   * observed frame was compared against nothing and `announcementsFor` returns
+   * nothing for it. That function now has one sentence it will return there,
+   * QUALITY-BAR section 8's carry, because the origin that refuses site data is
+   * degraded before a session has a second frame to compare against.
+   *
+   * `boot` runs `frame(0)` synchronously, in the same turn that mounts these two
+   * elements, so a write on that frame arrives in the accessibility tree at the
+   * same moment the region does and is announced by nothing. Measured on the
+   * shipped page: the insertion and the write are delivered in one
+   * `MutationObserver` batch, which is one task. So the boot frame is not
+   * observed at all and the first observed frame is the loop's, one task later,
+   * where the same sentence is a change to a region that was already there.
+   *
+   * What that costs is a delta between the boot frame and the loop's first, a
+   * window of about one frame in which the machine has been asked for nothing
+   * and no input can plausibly have arrived. The mirror carries the standing
+   * state either way, which is the division these two mechanisms exist for.
+   */
+  let bootFrameSeen = false;
   let lastPolite: string | null = null;
   let lastAssertive: string | null = null;
 
@@ -102,12 +127,20 @@ export function createAnnouncer(): Announcer {
     update(state: ChromeState, dt: number): void {
       const frame: AnnounceFrame = {
         readout: state.readout,
-        context: { notice: state.notice, awarded: state.awarded, muted: state.muted },
+        context: {
+          notice: state.notice,
+          awarded: state.awarded,
+          muted: state.muted,
+          carryDegraded: state.carryDegraded,
+        },
       };
-      for (const announcement of announcementsFor(previous, frame)) {
-        queue.push(announcement);
+      if (bootFrameSeen) {
+        for (const announcement of announcementsFor(previous, frame)) {
+          queue.push(announcement);
+        }
+        previous = frame;
       }
-      previous = frame;
+      bootFrameSeen = true;
 
       const due = queue.tick(dt);
       if (due !== null) {

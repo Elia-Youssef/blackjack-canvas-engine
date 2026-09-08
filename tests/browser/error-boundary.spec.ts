@@ -544,11 +544,11 @@ test.describe('M4: the recovery panel', () => {
     // **The engine is asked, not named.** This was a `browserName !== 'chromium'`
     // skip until the review measured it: Firefox emulates forced colors and ran
     // the whole of `forced-colors.spec.ts` green, so naming an engine skipped a
-    // measurement that works. This is that file's own probe, copied rather than
-    // shared because a spec cannot import another spec: ask for the emulation,
-    // then ask the **page** whether the query took effect, so an engine that
-    // silently ignores the request produces a skip with a reason instead of a
-    // green run that measured nothing.
+    // measurement that works. The probe is `support/forced-colors.ts`'s, shared
+    // with that spec rather than copied here, which is why it lives in
+    // `support/`: ask for the emulation, then ask the **page** whether the query
+    // took effect, so an engine that silently ignores the request produces a
+    // skip with a reason instead of a green run that measured nothing.
     await forceColours(page, browserName);
     await atBettingOnTheShippedPage(page);
     await breakTheSurface(page);

@@ -34,6 +34,7 @@ import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
+import { PHASE_KINDS } from '../../src/core/table';
 import {
   DEFAULT_SURFACE_SIZE,
   SURFACE_SIZES,
@@ -58,6 +59,7 @@ import {
   planSurface,
   resolveBreakpoint,
   sameSizing,
+  surfaceFloorFor,
   type BreakpointName,
   type ChromeHeights,
 } from '../../src/ui/breakpoints';
@@ -261,6 +263,47 @@ describe('F7 and F1: the bars stick at the threshold, and only where they fit', 
     const exact = NARROW.top + NARROW.controls + NARROW.overhead;
     expect(barsStick({ width: 320, height: exact }, NARROW)).toBe(false);
     expect(barsStick({ width: 320, height: exact + MIN_SURFACE_HEIGHT }, NARROW)).toBe(true);
+  });
+
+  it('gives the floor up on the two screens with nothing on the felt', () => {
+    // `AUDIT-2`, finding `J7-01`. The floor is room for a picture, and SPEC
+    // 10's start and bust-out screens have none: the machine sweeps the felt
+    // before it chooses between them. Every other phase keeps it, which is what
+    // makes this a rule about the screen rather than a floor quietly dropped.
+    for (const phase of PHASE_KINDS) {
+      const quiet = phase === 'start' || phase === 'bustOut';
+      expect(surfaceFloorFor(phase), `${phase} takes the wrong floor`).toBe(
+        quiet ? 0 : MIN_SURFACE_HEIGHT,
+      );
+      // An open overlay keeps the floor whatever the screen is: SPEC 10's
+      // panels are positioned inside that row, so the row's height is theirs,
+      // and the first-run panel opens on the start screen.
+      expect(surfaceFloorFor(phase, true), `${phase} gave up the row to a panel`).toBe(
+        MIN_SURFACE_HEIGHT,
+      );
+    }
+    // Eleven phases, so a twelfth added to SPEC 10 is a decision rather than a
+    // silent default.
+    expect(PHASE_KINDS.length).toBe(11);
+  });
+
+  it('sticks where the quiet screen fits and the full floor would not', () => {
+    // The finding's own viewport, as arithmetic: 360 x 640 with the start
+    // screen's measured bars. The sum with the floor is 769 and without it is
+    // 577, so the same page is static while it holds room for a picture and
+    // sticky once it stops.
+    const start: ChromeHeights = { top: 257, controls: 272, overhead: 48 };
+    const viewport = { width: 360, height: 640 };
+    expect(barsStick(viewport, start, MIN_SURFACE_HEIGHT)).toBe(false);
+    expect(barsStick(viewport, start, surfaceFloorFor('start'))).toBe(true);
+    // And the default is the rule as it was written, for a caller with no
+    // phase to offer.
+    expect(barsStick(viewport, start)).toBe(barsStick(viewport, start, MIN_SURFACE_HEIGHT));
+    // The floor is still what decides: a viewport that cannot take the two bars
+    // at all stays static on every screen, which is the 320 px column the
+    // review measured.
+    const narrow: ChromeHeights = { top: 257, controls: 324, overhead: 48 };
+    expect(barsStick({ width: 320, height: 568 }, narrow, surfaceFloorFor('start'))).toBe(false);
   });
 
   it('cannot oscillate, because nothing it measures moves when it answers', () => {

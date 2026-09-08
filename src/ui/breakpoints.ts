@@ -31,6 +31,7 @@
  * resolution and the whole of the sizing arithmetic be unit tested in Node.
  */
 
+import type { PhaseKind } from '../core/types';
 import {
   surfaceSizeFactor,
   type SurfaceSize,
@@ -99,6 +100,61 @@ export function resolveBreakpoint(viewport: Viewport): BreakpointName {
 export const MIN_SURFACE_HEIGHT = 192;
 
 /**
+ * SPEC 10's screens with nothing on the felt. `AUDIT-2`, finding `J7-01`.
+ *
+ * The floor above is for a picture: two rows of floored cards is what item
+ * `E8`'s fan floor needs and what DESIGN section 4's "minimum height rather
+ * than a share" is protecting. On these two screens there is no picture. The
+ * machine's `nextHand` sweeps the felt before it decides between them, so both
+ * are reached with no hand, no dealer card and no chips in play, and the felt
+ * carries only its own printed lines, which SPEC 16 calls decorative.
+ */
+const QUIET_SCREENS: ReadonlySet<PhaseKind> = new Set<PhaseKind>(['start', 'bustOut']);
+
+/**
+ * The height the play-surface row keeps on a given screen.
+ *
+ * **An open overlay keeps the floor whatever the screen is.** SPEC 10's three
+ * panels are absolutely positioned inside this row, which is the whole of item
+ * `C5`'s first clause, so the row's height is the panel's height: a row given
+ * up on the start screen is a How to Play panel of no height at all, and the
+ * first-run panel is opened on exactly that screen. The floor is therefore
+ * about what the row is showing rather than about the phase alone, and a panel
+ * is one of the two things it can show.
+ *
+ * **A screen with nothing to draw keeps no floor**, and finding `J7-01`
+ * measured what the flat rule cost: at 360 x 640 the start screen spent 192 px
+ * on an empty felt, the two bars plus that minimum did not fit, `barsStick`
+ * correctly gave up the sticky layout, and the **Start** button ended 72 px
+ * below the fold with the three table buttons cut by the viewport edge. A
+ * first-time player on that phone saw a decorative felt, the words "Choose a
+ * table", and no control they could press. Reachability held, which is what
+ * item `F1` measures and why nothing was red: the page scrolled 128 px and
+ * every control could be reached. First-view visibility is a different
+ * question.
+ *
+ * With no floor on those two screens the same viewport fits, so the bars stick,
+ * the page does not scroll and the chooser and Start are on screen from the
+ * first frame. The row still takes whatever the two bars leave, so the felt is
+ * smaller rather than absent wherever there is room for it at all.
+ *
+ * **This cannot oscillate**, which is the property `barsStick` rests on: the
+ * input is SPEC 10's phase, and no layout this file resolves can change it.
+ *
+ * `overlayOpen` defaults to `false`, which is the permissive direction and the
+ * opposite of `barsStick`'s own default, so the two are stated rather than
+ * matched. The reason is which answer is the safe one to get by omission: a
+ * caller with no panel to report asks about the felt, and defaulting the other
+ * way would keep 192 px reserved on a start screen with nothing drawn on it,
+ * which is the defect finding `J7-01` measured. `barsStick` defaults to the
+ * full floor because there the omission would claim room the layout has not
+ * checked for. Every live caller passes the argument either way.
+ */
+export function surfaceFloorFor(phase: PhaseKind, overlayOpen = false): number {
+  return !overlayOpen && QUIET_SCREENS.has(phase) ? 0 : MIN_SURFACE_HEIGHT;
+}
+
+/**
  * The heights the sticky decision is made against, measured off the page.
  *
  * Every one of them is a **content** height and none of them moves when the
@@ -142,13 +198,20 @@ export const NO_CHROME_HEIGHTS: ChromeHeights = Object.freeze({ top: 0, controls
  * given viewport width and the shell's own padding, none of which changes when
  * the bars stop or start sticking: `position: sticky` leaves an element in flow,
  * and the row floor is a length in both modes. A frame that answers `false`
- * measures the same numbers on the next frame and answers `false` again.
+ * measures the same numbers on the next frame and answers `false` again. The
+ * fourth input, the floor, is `surfaceFloorFor`'s answer for SPEC 10's current
+ * phase, which no layout can move either; it defaults to the full floor, so a
+ * caller that has no phase to offer gets the rule as it was written.
  */
-export function barsStick(viewport: Viewport, chrome: ChromeHeights): boolean {
+export function barsStick(
+  viewport: Viewport,
+  chrome: ChromeHeights,
+  floor: number = MIN_SURFACE_HEIGHT,
+): boolean {
   if (viewport.height < STICKY_BARS_MIN_HEIGHT) {
     return false;
   }
-  return chrome.top + chrome.controls + chrome.overhead + MIN_SURFACE_HEIGHT <= viewport.height;
+  return chrome.top + chrome.controls + chrome.overhead + floor <= viewport.height;
 }
 
 /**

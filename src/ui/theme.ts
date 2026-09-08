@@ -44,9 +44,18 @@ export const DEFAULT_THEME: Theme = 'system';
  * off and let `prefers-color-scheme` decide.
  *
  * A function rather than a map so that the `null` for `'system'` is a returned
- * value of the one spelling: `setAttribute(name, null)` removes, which is the
- * DOM's own way of saying "no override", and a map whose value was the string
- * `'system'` would invite a writer that set it.
+ * value of the one spelling, and a map whose value was the string `'system'`
+ * would invite a writer that set it.
+ *
+ * **The `null` is removal because `src/ui/dom.ts`'s `setAttribute` removes for
+ * it**, which is this chrome's one way of saying "no override" and is the
+ * wrapper the one caller, `src/ui/chrome.ts`, goes through. The platform method
+ * of that name does not: `Element.setAttribute` converts its value to a
+ * `DOMString`, so calling it directly with this `null` writes the four
+ * characters `null` into the attribute. Nothing would render differently, since
+ * `"null"` matches neither `[data-theme='light']` nor `[data-theme='dark']` and
+ * the light query's `:not([data-theme='dark'])` still matches, which is exactly
+ * why it has to be said here rather than left to be noticed.
  */
 export function themeAttribute(theme: Theme): string | null {
   if (theme === 'light' || theme === 'dark') {
