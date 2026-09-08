@@ -49,10 +49,20 @@ import {
   PHASE_TIMEOUT,
 } from './support/game';
 import { peekSeed } from './support/peek-seeds';
-import { reasonText } from '../../src/ui/text';
+import { phaseText, reasonText } from '../../src/ui/text';
+import { tableFigures } from '../../src/ui/availability';
+import { STARTING_CHIPS } from '../../src/core/wallet';
 
 /** QUALITY-BAR section 4's floor between polite writes, in milliseconds. */
 const POLITE_INTERVAL_MS = 500;
+
+/**
+ * SPEC 10's peek screen, as the announcer words it. `AUDIT-2`, finding `J1-03`.
+ *
+ * Taken from `phaseText` rather than written out, so a reworded sentence moves
+ * this file with it instead of quietly making the arms below unfalsifiable.
+ */
+const PEEK_SENTENCE = phaseText({ kind: 'peek' }, 1);
 
 /** The mirror, as one round trip reads it. */
 interface MirrorReport {
@@ -266,6 +276,11 @@ test.describe('G4: the mirror is a representation, not an announcement', () => {
     expect(report.wallet).toContain('Chips');
     expect(report.table).toContain('Bronze');
     expect(report.rules).toContain('decks');
+    // Every rule a player can set, the split comparison included: it is the
+    // sole input to `canSplit`, so it decides whether two ten-value cards are a
+    // pair, and the reachable sentence named every other one (`AUDIT-2`,
+    // finding `Z4-03`).
+    expect(report.rules).toContain('Split on');
 
     // The regions carry at most the sentence about the screen having changed,
     // and none of the state above. An implementation that wrote the mirror's
@@ -333,6 +348,16 @@ test.describe('G4: the regions are an event channel, and there are exactly two',
     );
     for (let index = 1; index < writes.length; index += 1) {
       const gap = (writes[index]?.at ?? 0) - (writes[index - 1]?.at ?? 0);
+      // **One sentence is exempt, by the `AUDIT-2` ruling on finding `J1-03`.**
+      // SPEC 10's peek screen is 0.30 s at Normal and 0.18 s at Fast, both
+      // inside this floor, so its sentence was still pending when the next
+      // screen's replaced it and a screen-reader player at Fast was never told
+      // the dealer was checking. It is written on the frame it arrives instead,
+      // which is a gap this loop must not fail on and must not skip silently:
+      // the arm below requires it to be present in these very writes.
+      if (writes[index]?.text === PEEK_SENTENCE) {
+        continue;
+      }
       expect(
         gap,
         `two polite writes ${String(Math.round(gap))} ms apart: ${String(writes[index - 1]?.text)} then ${String(writes[index]?.text)}`,
@@ -340,6 +365,126 @@ test.describe('G4: the regions are an event channel, and there are exactly two',
         // allows one: the queue writes on the first frame at or after the floor.
       ).toBeGreaterThan(POLITE_INTERVAL_MS - 20);
     }
+    expect(
+      writes.map((write) => write.text),
+      'the exempt sentence was not in the round these gaps were measured over',
+    ).toContain(PEEK_SENTENCE);
+  });
+
+  test('speaks the reveal sentence, and the card it used to be overwritten by', async ({
+    page,
+  }) => {
+    // **`AUDIT-2` finding `Z5-01`, on the shipped page.** Entering SPEC 10's
+    // `reveal` turns the hole card face up in the same machine step, so one
+    // frame produces the phase sentence and the dealer's card; the queue held
+    // one polite entry, the card was pushed second, and the sentence was
+    // spoken in no round at any frame rate. The dwell before Stand is the
+    // finding's own and it is load-bearing: the queue writes one entry per
+    // floor, so a player standing in the same breath as their second card is a
+    // player whose queue is still working through the deal.
+    await bootGame(page, { seed: peekSeed('none') });
+    await waitForPhase(page, 'start');
+    await control(page, 'start').click();
+    await waitForPhase(page, 'betting');
+    await watchRegion(page, 'polite');
+    await control(page, 'max').click();
+    await pressOn(page, '[data-control="deal"]', 'betting');
+    await waitForPhase(page, 'insurance');
+    await control(page, 'decline-insurance').click();
+    await waitForPhase(page, 'playerTurn');
+    await page.waitForTimeout(1_000);
+    await pressOn(page, '[data-action="stand"]', 'playerTurn');
+    await waitForPhase(page, 'roundResult');
+    await page.waitForTimeout(1_000);
+
+    const said = (await regionWrites(page)).map((write) => write.text);
+    expect(said, said.join(' / ')).toContain('The dealer reveals the hole card.');
+    expect(
+      said.some((text) => text.startsWith('Dealer: ')),
+      said.join(' / '),
+    ).toBe(true);
+  });
+
+  test.describe('the peek sentence is spoken at both Speeds', () => {
+    for (const speed of ['normal', 'fast'] as const) {
+      test(`at ${speed}`, async ({ page }) => {
+        // **`AUDIT-2` finding `J1-03`.** SPEC 5's Fast multiplier makes the
+        // peek screen 0.18 s, measured on this page at 182 to 185 ms, which is
+        // inside the 500 ms floor: the sentence was pending when the player's
+        // turn arrived and the player-turn sentence replaced it, so the two
+        // Speed settings differed in what they SAID and not only in how fast
+        // they said it, which is not what SPEC 5 scopes Speed to. Both arms
+        // run, because the defect was one-sided and a cure that broke Normal
+        // would look identical from Fast alone.
+        await bootGame(page, { seed: peekSeed('none'), speed });
+        await waitForPhase(page, 'start');
+        await control(page, 'start').click();
+        await waitForPhase(page, 'betting');
+        await watchRegion(page, 'polite');
+        await control(page, 'max').click();
+        await pressOn(page, '[data-control="deal"]', 'betting');
+        await waitForPhase(page, 'insurance');
+        await control(page, 'decline-insurance').click();
+        await waitForPhase(page, 'playerTurn');
+        // Four seconds of stillness, so a late write is still caught rather
+        // than lost to the test ending.
+        await page.waitForTimeout(4_000);
+
+        const said = (await regionWrites(page)).map((write) => write.text);
+        expect(said, said.join(' / ')).toContain(PEEK_SENTENCE);
+      });
+    }
+  });
+
+  test('speaks a milestone the player did not linger on the result to hear', async ({ page }) => {
+    // **`AUDIT-2` finding `J1-02`.** SPEC 9 awards a milestone exactly once and
+    // never re-announces it, and the award was a polite entry that the betting
+    // screen's own sentence replaced: a 45-round session at natural pacing
+    // awarded four and spoke none. Next Hand is pressed on the FIRST frame that
+    // shows the round result, which is inside the floor by construction rather
+    // than by how quickly this runner happens to be going.
+    //
+    // The milestone is SPEC 9 row 6, reached by opening with a high-water mark
+    // that has already unlocked Silver: the award is made at the round close
+    // like every other, and it needs no hunted seed.
+    await bootGame(page, { seed: peekSeed('none'), bestBalance: 2_500 });
+    await waitForPhase(page, 'start');
+    await control(page, 'start').click();
+    await waitForPhase(page, 'betting');
+    await watchRegion(page, 'polite');
+    await control(page, 'max').click();
+    await pressOn(page, '[data-control="deal"]', 'betting');
+    await waitForPhase(page, 'insurance');
+    await control(page, 'decline-insurance').click();
+    await waitForPhase(page, 'playerTurn');
+    await pressOn(page, '[data-action="stand"]', 'playerTurn');
+
+    // The press is armed in the page, on the animation frame, so the dwell is
+    // one frame however loaded the machine running this is.
+    await page.evaluate(() => {
+      const shellNode = document.querySelector('.bj-shell');
+      const next = document.querySelector('[data-control="next-hand"]');
+      if (shellNode === null || !(next instanceof HTMLElement)) {
+        throw new Error('the page is not the one this test expects');
+      }
+      const watch = (): void => {
+        if (shellNode.getAttribute('data-phase') === 'roundResult') {
+          next.click();
+          return;
+        }
+        requestAnimationFrame(watch);
+      };
+      requestAnimationFrame(watch);
+    });
+    await waitForPhase(page, 'betting');
+    await page.waitForTimeout(3_000);
+
+    const said = (await regionWrites(page)).map((write) => write.text);
+    expect(said, said.join(' / ')).toContain('Milestone: Reaching Silver.');
+    // The round the milestone rode in on still reached the assertive region,
+    // which is the control the finding recorded: the outcome survived a prompt
+    // Next Hand in every arm and the milestone survived none.
+    expect((await regions(page)).assertive.text).toContain('Round result.');
   });
 
   test('carries the round outcome in the assertive region, and nothing else there', async ({
@@ -594,18 +739,39 @@ test.describe('G4: every refusal reason is reachable without a pointer', () => {
     expect(listed.length, 'no table is greyed on a fresh account').toBe(2);
     for (const entry of listed) {
       expect(entry, `${entry} is not a label and a sentence`).toMatch(/^.+: .+\.$/);
-      expect(entry.endsWith(reasonText('table-not-unlocked')), entry).toBe(true);
       // And the sentence is about the threshold rather than about the money,
       // which is the whole point of splitting it.
-      expect(entry, entry).toMatch(/unlocks at a higher best balance/i);
+      expect(entry, entry).toMatch(/unlocks at a best balance of/i);
       expect(entry, entry).not.toMatch(/not open to you yet/i);
     }
 
+    // **Each table's own threshold, in its own entry.** `AUDIT-2`, finding
+    // `J2-03`: SPEC 6 keys Silver to 2,500 and Gold to 10,000, and until this
+    // sentence named them neither number appeared anywhere in the product, so
+    // the ladder's only goal was one a player could not read. A fresh account
+    // has never been above its starting balance, which is the mark both
+    // sentences state.
+    const silver = tableFigures('silver', STARTING_CHIPS);
+    const gold = tableFigures('gold', STARTING_CHIPS);
+    expect(listed.some((entry) => entry.endsWith(reasonText('table-not-unlocked', silver)))).toBe(
+      true,
+    );
+    expect(listed.some((entry) => entry.endsWith(reasonText('table-not-unlocked', gold)))).toBe(
+      true,
+    );
+    // And the two sentences differ, so the threshold is read per table rather
+    // than written once and repeated.
+    expect(reasonText('table-not-unlocked', silver)).not.toBe(
+      reasonText('table-not-unlocked', gold),
+    );
+
     // The same sentence reaches the control's own accessible name, which is
     // the other of the three surfaces `BJ-18` put a refusal on.
-    const gold = page.locator('[data-table="gold"]');
-    await expect(gold).toHaveAttribute('aria-disabled', 'true');
-    expect(await gold.getAttribute('aria-label')).toContain(reasonText('table-not-unlocked'));
+    const goldButton = page.locator('[data-table="gold"]');
+    await expect(goldButton).toHaveAttribute('aria-disabled', 'true');
+    expect(await goldButton.getAttribute('aria-label')).toContain(
+      reasonText('table-not-unlocked', gold),
+    );
   });
 
   test('puts the reason on the greyed control accessible name as well', async ({ page }) => {

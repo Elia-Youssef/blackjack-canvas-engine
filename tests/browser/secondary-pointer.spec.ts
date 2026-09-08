@@ -141,6 +141,12 @@ test.describe('D5: the secondary button is bound to nothing', () => {
     expect(await readout(page), 'a middle press moved the machine').toEqual(before);
     const log = await pressLog(page);
     expect(log.clicks, 'a middle press produced an activation').toBe(0);
+    // The event has to have happened, exactly as the `contextmenu` arm below
+    // requires: a loop over an empty list checks nothing about suppression, and
+    // in a file whose whole subject is an absence that is the one way it could
+    // pass while meaning nothing. All three engines produce `auxclick` for a
+    // middle press today, and this is what says so rather than assuming it.
+    expect(log.auxclick.length, 'no auxclick event was produced at all').toBe(TARGETS.length);
     for (const prevented of log.auxclick) {
       expect(prevented, 'the middle button was suppressed by the page').toBe(false);
     }

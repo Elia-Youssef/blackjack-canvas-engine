@@ -46,7 +46,7 @@ import {
 } from '../core/wallet';
 
 import { chips as formatChips } from './format';
-import { tableText, type ChooserRefusal, type DisplayReason } from './text';
+import { tableText, type ChooserRefusal, type DisplayReason, type ReasonFigures } from './text';
 
 /** One control, its label, and the reason it is unavailable, or `null`. */
 export interface ControlAvailability {
@@ -56,6 +56,16 @@ export interface ControlAvailability {
   readonly label: string;
   /** `null` when the control is available right now. */
   readonly refusal: DisplayReason | null;
+  /**
+   * The numbers this control's sentence names, or `null` where it names none.
+   *
+   * `AUDIT-2`, finding `J2-03`. Derived here rather than at each renderer,
+   * because the greyed button's accessible name and the mirror's list are two
+   * surfaces for one sentence and the mirror reads this record rather than the
+   * screen: without the figures travelling with the refusal, one of the two
+   * would have to build the sentence from numbers the other did not have.
+   */
+  readonly figures: ReasonFigures | null;
 }
 
 /**
@@ -180,6 +190,17 @@ export function tableRefusal(
 }
 
 /**
+ * SPEC 6's two numbers for one table: its unlock threshold and the mark the
+ * threshold is measured against. `AUDIT-2`, finding `J2-03`.
+ *
+ * No figure is written twice: the threshold is `core/wallet.ts`'s own, and the
+ * mark is the machine's readout. This file still compares nothing.
+ */
+export function tableFigures(id: TableId, bestBalance: number): ReasonFigures {
+  return { unlocksAt: tableLimits(id).unlocksAt, bestBalance };
+}
+
+/**
  * Every control the current screen offers, with the reason for each greyed one.
  *
  * The list is the current screen's alone. A screen with no unavailable control
@@ -194,6 +215,11 @@ export function screenAvailability(readout: TableReadout): readonly ControlAvail
         key: `table-${limits.id}`,
         label: tableLabel(limits.id),
         refusal: tableRefusal(limits.id, wallet.bestBalance, wallet.chips),
+        // SPEC 6's threshold and the mark it is measured against, both read
+        // from the places that own them. Carried on every table row rather than
+        // only on the locked ones, because which arm refused is the sentence's
+        // question and not this map's.
+        figures: tableFigures(limits.id, wallet.bestBalance),
       }));
 
     case 'betting': {
@@ -201,6 +227,7 @@ export function screenAvailability(readout: TableReadout): readonly ControlAvail
       return CHIP_DENOMINATIONS.map((denomination) => ({
         key: `chip-${String(denomination)}`,
         label: chipLabel(denomination),
+        figures: null,
         // The display-only split, on `tableRefusal`'s precedent: this is the
         // denomination against the table rather than a tap against the
         // ceiling, and the two are different facts about the same word.
@@ -218,6 +245,7 @@ export function screenAvailability(readout: TableReadout): readonly ControlAvail
         key: action,
         label: ACTION_LABELS[action],
         refusal: actionRefusal(action, hand, context, wallet.chips),
+        figures: null,
       }));
     }
 
@@ -227,15 +255,16 @@ export function screenAvailability(readout: TableReadout): readonly ControlAvail
           key: 'take-insurance',
           label: 'Take',
           refusal: insuranceRefusal(phase.offer, wallet.chips),
+          figures: null,
         },
-        { key: 'decline-insurance', label: 'Decline', refusal: null },
+        { key: 'decline-insurance', label: 'Decline', refusal: null, figures: null },
       ];
 
     case 'roundResult':
-      return [{ key: 'next-hand', label: 'Next Hand', refusal: null }];
+      return [{ key: 'next-hand', label: 'Next Hand', refusal: null, figures: null }];
 
     case 'bustOut':
-      return [{ key: 'reset-bankroll', label: 'Free reset', refusal: null }];
+      return [{ key: 'reset-bankroll', label: 'Free reset', refusal: null, figures: null }];
 
     case 'dealing':
     case 'peek':
@@ -249,11 +278,15 @@ export function screenAvailability(readout: TableReadout): readonly ControlAvail
 /** Only the greyed ones, which is what the mirror lists and why. */
 export function unavailableNow(
   readout: TableReadout,
-): readonly { readonly label: string; readonly refusal: DisplayReason }[] {
-  const found: { label: string; refusal: DisplayReason }[] = [];
+): readonly {
+  readonly label: string;
+  readonly refusal: DisplayReason;
+  readonly figures: ReasonFigures | null;
+}[] {
+  const found: { label: string; refusal: DisplayReason; figures: ReasonFigures | null }[] = [];
   for (const control of screenAvailability(readout)) {
     if (control.refusal !== null) {
-      found.push({ label: control.label, refusal: control.refusal });
+      found.push({ label: control.label, refusal: control.refusal, figures: control.figures });
     }
   }
   return found;

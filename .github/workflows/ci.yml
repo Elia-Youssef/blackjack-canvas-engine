@@ -45,6 +45,7 @@ jobs:
           REPOSITORY_BRANCH: ${{ github.head_ref || github.ref_name }}
           PULL_REQUEST_TITLE: ${{ github.event.pull_request.title }}
           PULL_REQUEST_BODY: ${{ github.event.pull_request.body }}
+          PULL_REQUEST_AUTHOR: ${{ github.event.pull_request.user.login }}
         run: node scripts/check-repository-record.mjs
 
   visual-baselines:

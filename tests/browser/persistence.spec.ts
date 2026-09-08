@@ -320,11 +320,15 @@ test.describe('I4: the reload clauses earlier parts parked here', () => {
     );
   });
 
-  test('the mute holds across a reload, with its label', async ({ page }) => {
+  test('the mute holds across a reload, with its pressed state', async ({ page }) => {
+    // The state is `aria-pressed` and the name is the setting at both states
+    // (`AUDIT-2`, finding `Z4-02`), so what has to survive the reload is the
+    // attribute; the name is asserted too, because a restored mute that also
+    // renamed the control would be the inversion coming back.
     await atShippedBetting(page);
     await control(page, 'mute').click();
     await expect(control(page, 'mute')).toHaveAttribute('aria-pressed', 'true');
-    await expect(control(page, 'mute')).toHaveText('Unmute');
+    await expect(control(page, 'mute')).toHaveText('Mute');
 
     await page.reload();
     await expect(shell(page)).toBeVisible();
@@ -333,7 +337,7 @@ test.describe('I4: the reload clauses earlier parts parked here', () => {
       'aria-pressed',
       'true',
     );
-    await expect(control(page, 'mute')).toHaveText('Unmute');
+    await expect(control(page, 'mute')).toHaveText('Mute');
   });
 
   test('the theme holds across a reload, in both directions', async ({ page }) => {

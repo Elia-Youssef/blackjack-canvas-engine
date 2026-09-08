@@ -242,11 +242,14 @@ function derivedBands(
   });
 }
 
-/** The machine's own shape of the round, for the derivation above. */
-async function handShapes(page: Page): Promise<{
+/** The shape of one round, as the derivation above needs it. */
+interface HandShapes {
   readonly handCounts: number[];
   readonly dealerCount: number;
-}> {
+}
+
+/** The machine's own shape of the round, for the derivation above. */
+async function handShapes(page: Page): Promise<HandShapes> {
   const snapshot = await readout(page);
   return {
     handCounts: snapshot.hands.map((hand) => hand.cards.length),
@@ -255,14 +258,45 @@ async function handShapes(page: Page): Promise<{
 }
 
 /**
+ * The same shape read off the shipped page, where no machine can be asked.
+ *
+ * The emitted application chunk carries no exports, so `readout` above only
+ * answers on a page the boot harness started. What the shipped page does carry
+ * is item `G4`'s accessibility mirror, which SPEC 11 requires to be a navigable
+ * list of every hand with a nested list of its cards, and `mirror.ts` builds
+ * those lists from the same readout the renderer draws from. Counting its `li`
+ * elements is therefore a second reading of the round rather than a reading of
+ * the picture, which is what `derivedBands` needs and what the union bounding
+ * box of the card pixels could never be: the mirror is written by a different
+ * module, through the DOM, and knows nothing about where a band was laid out.
+ *
+ * The dealer's list holds one entry per face-up card plus one per concealed
+ * card, so its length is already the count the scene lays out.
+ */
+async function mirrorShapes(page: Page): Promise<HandShapes> {
+  const handCounts = await page
+    .locator('[data-mirror="hands"] [data-mirror-hand] ul')
+    .evaluateAll((lists) => lists.map((list) => list.querySelectorAll('li').length));
+  const dealerCount = await page.locator('[data-mirror="dealer-cards"] > li').count();
+  expect(dealerCount, 'the mirror lists no dealer card, so there is no round to measure')
+    .toBeGreaterThan(0);
+  expect(handCounts.length, 'the mirror lists no hand').toBeGreaterThan(0);
+  return { handCounts, dealerCount };
+}
+
+/**
  * The whole of the fourth regime, at one viewport, on one composited page.
  *
  * Every card the scene laid out is on the bitmap, the composite agrees with
  * where the scene said the cards are, and no hand paints over the next one.
  */
-async function assertBandsOnTheBitmap(page: Page, label: string): Promise<void> {
+async function assertBandsOnTheBitmap(
+  page: Page,
+  label: string,
+  shapes: HandShapes | null = null,
+): Promise<void> {
   const metrics = await surfaceMetrics(page);
-  const { handCounts, dealerCount } = await handShapes(page);
+  const { handCounts, dealerCount } = shapes ?? (await handShapes(page));
   const bands = derivedBands(metrics.cssWidth, handCounts, dealerCount).filter(
     (band) => band.right > band.left,
   );
@@ -649,13 +683,20 @@ test.describe('E8: past both floors the band overflows into the pannable stage',
     expect(metrics.cssHeight, 'the round result gave up its height').toBeGreaterThanOrEqual(
       wanted.height - 1,
     );
-    // And the cards of the round the player is being told about are on it.
-    const box = await cardBox(page);
-    expect(box.found, 'no card on the round result screen').toBeGreaterThan(100);
-    expect(box.left, 'a card starts off the canvas').toBeGreaterThanOrEqual(-EDGE_TOLERANCE);
-    expect(box.right, 'a card ends off the canvas').toBeLessThanOrEqual(
-      metrics.cssWidth + EDGE_TOLERANCE,
-    );
+    // And the cards of the round the player is being told about are on it,
+    // where the scene put them.
+    //
+    // **The horizontal half used to be two assertions this file's own header
+    // condemns**, and the review of `AUDIT-2`'s cure round caught them still
+    // standing here: `cardBox` derives `left` and `right` from a screenshot of
+    // the element, so `left >= -EDGE_TOLERANCE` and `right <= cssWidth +
+    // EDGE_TOLERANCE` are true of every clipped picture ever drawn. They are
+    // replaced by the derivation the seeded arms use, fed from the shipped
+    // page's own accessibility mirror rather than from a machine this page
+    // cannot be asked for: where the bands are is computed from the round's
+    // shape and the measured canvas, and the composite is then required to
+    // agree with it.
+    await assertBandsOnTheBitmap(page, 'shipped round result', await mirrorShapes(page));
   });
 });
 

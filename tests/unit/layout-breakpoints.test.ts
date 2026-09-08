@@ -23,8 +23,9 @@
  *   not move when the setting does, which is the property that keeps item `F6`'s
  *   "by that factor" from becoming "by roughly that factor after two frames".
  *
- * And one drift guard: `SurfaceSize` is declared in two files that may not
- * import each other before `BJ-20`, so the two declarations are compared here.
+ * And one drift guard: `SurfaceSize` is declared in `src/render/surface.ts` and
+ * re-exported by `src/storage/document.ts`, so what is compared here is that the
+ * persisted names are still that one declaration and not a re-introduced copy.
  */
 
 import { readFileSync } from 'node:fs';
@@ -537,12 +538,13 @@ describe('F3: the narrow top bar keeps three readouts and discloses the rest', (
   });
 });
 
-describe('F6: the two declarations of SurfaceSize agree', () => {
+describe('F6: the persisted document takes SurfaceSize from its owner', () => {
   it('lists the same four values in the same order', () => {
-    // `src/render/surface.ts` owns the type for the presentation layer and
-    // `src/storage/document.ts` owns it for SPEC 13's document. Neither may
-    // import the other before `BJ-20` wires the reload flows, so the guarantee
-    // that they say the same thing is this test and nothing else.
+    // `src/render/surface.ts` owns the type and `src/storage/document.ts`
+    // re-exports it, so these two names are one value today and this pair
+    // passes by identity. It is kept as the guard against the copy coming
+    // back: a second declaration in either file makes it a real comparison
+    // again, and a disagreeing one is red here.
     expect([...STORED_SURFACE_SIZES]).toEqual([...SURFACE_SIZES]);
     expect(STORED_DEFAULT_SURFACE_SIZE).toBe(DEFAULT_SURFACE_SIZE);
   });

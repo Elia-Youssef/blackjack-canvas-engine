@@ -364,9 +364,27 @@ export interface Persistence {
    * settings set rebuilt on every call, and the composition root holds both.
    */
   restored(): RestoredSession;
-  /** Replace the document and try to write it. */
+  /**
+   * Merge this document over the stored one and try to write the result.
+   *
+   * **Not a replace, since `AUDIT-2`**, and the difference is the whole of
+   * finding `J3-01`: `mergeDocuments` re-reads the store immediately before the
+   * write and folds the two, so the mark and the lifetime tallies take their
+   * maxima, the milestones take their union and the longer history wins. What
+   * this returns therefore reports the write of the merged document, and
+   * `document()` afterwards is the merge rather than the argument: a second tab
+   * that earned a table between this one's launch and this call keeps it.
+   */
   save(next: GameDocument): SaveResult;
-  /** Replace some of the document and try to write it. A test-facing seam. */
+  /**
+   * Change some fields and save, which merges exactly as `save` does.
+   *
+   * A test-facing seam. The patch is applied over the in-memory document and
+   * the result goes through the merge above, so a field this patch lowers can
+   * come back at its stored value: `update({ bestBalance: 0 })` reports `ok`
+   * and leaves a stored 5000 standing, which is the mark's rule working rather
+   * than a write that failed.
+   */
   update(patch: Partial<GameDocument>): SaveResult;
   /**
    * SPEC 14's Reset all data, and SPEC 8's "cleared only by a full data reset".

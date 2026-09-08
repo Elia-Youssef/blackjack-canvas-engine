@@ -9,11 +9,14 @@
  * why this file exists.** Playwright grades whatever the config asks for: a
  * project deleted from `playwright.config.ts` makes the suite smaller and
  * still green, a channel dropped from a project's `use` makes it run the
- * bundled engine under the channel's name, and an exclusion added to one
- * project's `testIgnore` makes "the full suite" quietly mean less than it
- * says. None of the three fails anything. Each of them is exactly the way this
- * criterion could be claimed without being true, so the composition itself is
- * asserted here, off the same file the runner reads.
+ * bundled engine under the channel's name, an exclusion added to one project's
+ * `testIgnore` makes "the full suite" quietly mean less than it says, and a
+ * `grep`, `grepInvert` or `testDir` narrows or empties a project without
+ * touching either pattern. None of the four fails anything on its own. Each of
+ * them is exactly the way this criterion could be claimed without being true,
+ * so the composition itself is asserted here, off the same file the runner
+ * reads: the first three are resolved and the fourth is refused, for the reason
+ * `refuseUnreadFilters` gives.
  *
  * **What "the full automated suite" is taken to mean, and why.** The suite has
  * been a composed thing since `BJ-18`: two spec files run in exactly one place
@@ -37,7 +40,7 @@
  */
 
 import { readdirSync } from 'node:fs';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { devices } from '@playwright/test';
@@ -46,7 +49,21 @@ import { describe, expect, it } from 'vitest';
 import config, { BUNDLED_IDENTITY, DESKTOP_FRAMING } from '../../playwright.config';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
-const BROWSER_TESTS = join(PROJECT_ROOT, 'tests', 'browser');
+
+/**
+ * The directory the runner reads, taken from the config rather than restated.
+ *
+ * A constant here would grade a directory Playwright might have stopped
+ * reading, which is the same class of blindness as the filters refused below.
+ */
+function browserTests(): string {
+  if (config.testDir === undefined) {
+    throw new Error('playwright.config.ts declares no testDir, so the runner would sweep the repo');
+  }
+  return resolve(PROJECT_ROOT, config.testDir);
+}
+
+const BROWSER_TESTS = browserTests();
 
 /** The one spec whose home is the timing chain. `BJ-18`. */
 const TIMING = 'motion-demo.spec.ts';
@@ -121,12 +138,55 @@ function matches(patterns: Pattern | Pattern[] | undefined, file: string): boole
   });
 }
 
+/**
+ * The filtering Playwright does that this file does not resolve, refused.
+ *
+ * `testMatch` and `testIgnore` are two of the knobs that decide what a project
+ * runs and they were the only two read here, which left the family incomplete
+ * in the direction that matters: `grepInvert: /msedge/` on the `msedge` project
+ * makes it select **zero** tests, and `npx playwright test --project=msedge
+ * --list` says so in as many words, while every assertion below stayed green
+ * because the resolver could not see the field. A narrower `grepInvert: /axe/`
+ * is the same defect one scan at a time.
+ *
+ * Refusing rather than resolving, which is the treatment `matches()` already
+ * gives a string pattern: a rule graded by a second, poorer matcher than the
+ * runner's is worse than a rule that fails until somebody looks. The config
+ * carries none of these today, so the refusal costs nothing until a filter is
+ * introduced, at which point this file has to be taught about it deliberately.
+ */
+function refuseUnreadFilters(where: string, scope: Record<string, unknown>, fields: string[]): void {
+  for (const field of fields) {
+    if (scope[field] !== undefined) {
+      throw new Error(
+        `${where} declares ${field}, which decides what runs and is not resolved here`,
+      );
+    }
+  }
+}
+
+/** The config's own filters reach every project; its `testDir` is read above. */
+const CONFIG_FILTERS = ['grep', 'grepInvert', 'testMatch', 'testIgnore'];
+
+/** A project's own, `testMatch` and `testIgnore` excepted: those are resolved. */
+const PROJECT_FILTERS = ['grep', 'grepInvert', 'testDir'];
+
 /** The spec files one project would run, resolved the way Playwright resolves them. */
 function runs(name: string): string[] {
   const project = config.projects?.find((candidate) => candidate.name === name);
   if (project === undefined) {
     throw new Error(`playwright.config.ts declares no project called ${name}`);
   }
+  refuseUnreadFilters(
+    'playwright.config.ts',
+    config as unknown as Record<string, unknown>,
+    CONFIG_FILTERS,
+  );
+  refuseUnreadFilters(
+    `the ${name} project`,
+    project as unknown as Record<string, unknown>,
+    PROJECT_FILTERS,
+  );
   return specFiles().filter((file) => {
     if (project.testMatch !== undefined && !matches(project.testMatch, file)) {
       return false;

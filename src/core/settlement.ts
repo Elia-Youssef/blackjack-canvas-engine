@@ -85,9 +85,11 @@ const UNSPLIT: SplitOrigin = Object.freeze({ fromSplit: false });
  * What a natural pays. SPEC 4.11: 3:2.
  *
  * Both terms of the ratio in one place, so that a house rule moving the headline
- * payout to 6:5 moves them together, and so that the felt can print "blackjack
- * pays 3 to 2" from the number the ladder actually uses. Printing it is item
- * `E5` and is not built here.
+ * payout to 6:5 moves them together, and so that the felt prints "blackjack pays
+ * 3 to 2" from the number the ladder actually uses. `src/render/felt.ts` reads
+ * it: the claim was written here at `BJ-5` as a promise about item `E5`, `E5`
+ * shipped at `BJ-13` printing a literal, and `AUDIT-2`'s finding `Z1-03` made
+ * the wiring rather than the claim.
  *
  * The 2 in this ratio is a lower term, not a half. `SURRENDER_DIVISOR` below is
  * a half, and the two are separate for the reason `cards.ts` keeps `TEN` apart
@@ -100,7 +102,7 @@ export const NATURAL_PAYS = Object.freeze({ numerator: 3, denominator: 2 });
  *
  * An integer multiplier rather than a ratio, because the lower term of 2:1 is 1
  * and writing `/ 1` would suggest a division that can fail. The felt prints
- * "insurance pays 2 to 1" from this, again at `E5`.
+ * "insurance pays 2 to 1" from this, in `src/render/felt.ts`.
  */
 export const INSURANCE_PAYS = 2;
 

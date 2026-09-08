@@ -533,6 +533,16 @@ describe('E8: the surface is never narrower than the room its own bands need', (
             expect(width, `${where}: the surface is narrower than the picture`)
               .toBeGreaterThanOrEqual(needed);
             for (const band of drawnBands(width, handCounts, dealer)) {
+              // **Bounds sanity, not detectors, and the labels are the point.**
+              // The next two ride the product's own clamp: `drawnBands` lays a
+              // band out through `bandLeft`, which holds it inside `[0, width -
+              // laid]`, so the first can only fail if that clamp is deleted and
+              // the second only for a band laid wider than the whole canvas.
+              // They are kept because those are the two ways the clamp itself
+              // can go, and they are named here so nobody reads them as the
+              // arm's evidence. The three below are: the surface really was
+              // sized to the picture, no card in the band is under the floor,
+              // and nothing overflows the room it was given.
               expect(band.left, `${where}: ${band.label} starts off the canvas`)
                 .toBeGreaterThanOrEqual(0);
               expect(band.right, `${where}: ${band.label} ends off the canvas`)

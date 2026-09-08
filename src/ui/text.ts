@@ -7,11 +7,12 @@
  * module that decides a rule should not be deciding how it reads. This is the
  * other half.
  *
- * **The rejection switch is over `RejectionReason` and never over the wallet's
+ * **The rejection switch is over `DisplayReason` and never over the wallet's
  * `Refusal`.** `table.ts` composes the three layers into one union, `phase`,
- * `availability` and `wallet`, and switching over the composed union is what
- * makes the compiler catch a reason added to any of them. Switching over
- * `Refusal` alone would compile happily and leave eleven reasons unspoken.
+ * `availability` and `wallet`, `DisplayReason` widens that by the display-only
+ * splits `BJ-21` added, and switching over the widest union is what makes the
+ * compiler catch a reason added to any of them. Switching over `Refusal` alone
+ * would compile happily and leave fourteen reasons unspoken.
  *
  * QUALITY-BAR section 11 asks that user-facing sentences not be built by string
  * concatenation where that would resist translation later. Each sentence below
@@ -23,7 +24,7 @@ import type { Card, Rank, Suit } from '../core/cards';
 import type { HandValue } from '../core/hand';
 import type { HouseRules } from '../core/rules';
 import type { Rung, Outcome } from '../core/settlement';
-import type { CellAddress, CoachAction, PreferenceList } from '../core/strategy';
+import type { CellAddress, CoachAction, CoachVerdict, PreferenceList } from '../core/strategy';
 import type { RejectionReason } from '../core/table';
 import type { HandInPlay, HandState, InsuranceOffer, Phase, PlayerAction } from '../core/types';
 import type { MilestoneId, ScopeReadout } from '../core/statistics';
@@ -92,14 +93,34 @@ export type DenominationRefusal = 'chip-over-ceiling';
 export type DisplayReason = RejectionReason | ChooserRefusal | DenominationRefusal;
 
 /**
+ * The numbers a refusal sentence names, where its comparison is off screen.
+ * `AUDIT-2`, finding `J2-03`.
+ *
+ * One shape rather than one per reason, because there is one reason that needs
+ * it and a second would be a second field on a record every control carries.
+ * `src/ui/availability.ts` derives it beside the refusal itself, so the greyed
+ * button's accessible name and the mirror's list state one sentence built from
+ * one set of numbers.
+ */
+export interface ReasonFigures {
+  /** SPEC 6's unlock threshold for the table being refused. */
+  readonly unlocksAt: number;
+  /** The mark that threshold is measured against, which is SPEC 6's own. */
+  readonly bestBalance: number;
+}
+
+/**
  * Why an action was refused. SPEC 4.11, SPEC 10 and the availability rules of
  * SPEC 4.5, 4.6, 4.7 and 4.8.
  *
  * Twenty arms and no default, so a reason added to any of the three layers, or
  * to either of the two display-only splits, is a compile error here rather than
  * a blank line on screen.
+ *
+ * `figures` is `null` for every reason whose comparison is already on screen,
+ * which is all of them but one; the arm that reads it says why.
  */
-export function reasonText(reason: DisplayReason): string {
+export function reasonText(reason: DisplayReason, figures: ReasonFigures | null = null): string {
   switch (reason) {
     // The phase layer. SPEC 10: the screen does not offer this control.
     case 'wrong-phase':
@@ -131,11 +152,23 @@ export function reasonText(reason: DisplayReason): string {
     // machine says the same word for both; the start screen knows which of
     // SPEC 6's two conditions failed, and a player who is told to win more
     // when they merely cannot cover the minimum today has been told the wrong
-    // thing. Neither names a number: the button beside the sentence already
-    // carries the table's own minimum and maximum, and the balance it is being
-    // measured against is a continuous readout on the same screen.
+    // thing.
+    //
+    // **One arm names its numbers and the other does not, and the reason is
+    // which comparison is on screen.** The unaffordable arm compares today's
+    // balance against the table minimum: the button beside the sentence carries
+    // "Silver 50 to 500" and the Chips readout carries the balance, so both
+    // sides of it are already in front of the player. The locked arm compares
+    // the **best** balance against SPEC 6's unlock threshold, and the threshold
+    // appears on no button, no readout and no overlay: `AUDIT-2`'s finding
+    // `J2-03` scanned every panel of the shipped page for 2,500 and 10,000 and
+    // found neither. So the ladder's only goal was unstated, and this sentence
+    // is where it is stated.
     case 'table-not-unlocked':
-      return 'That table unlocks at a higher best balance than you have reached.';
+      return figures === null
+        ? 'That table unlocks at a higher best balance than you have reached.'
+        : `That table unlocks at a best balance of ${chips(figures.unlocksAt)}; ` +
+            `your best is ${chips(figures.bestBalance)}.`;
     case 'table-unaffordable':
       return 'Your balance is below that table minimum.';
 
@@ -283,6 +316,34 @@ export function addressText(address: CellAddress): string {
  */
 export function preferenceText(preference: PreferenceList): string {
   return preference.map((action) => actionText(action).toLowerCase()).join(', then ');
+}
+
+/**
+ * SPEC 7's one-line explanation for one decision.
+ *
+ * A matched decision gets a line too. SPEC 7 only requires the differing case to
+ * be reported, but "Stand matched basic strategy" is a verdict rather than a
+ * scolding, and both item `C8` and SPEC 8 ask for the coach verdict rather than
+ * for the coach correction.
+ *
+ * It lives here rather than in the round-result panel it was written in because
+ * the panel is no longer its only reader: SPEC 8's history entry carries the
+ * same verdicts and the review panel prints them rounds later (`AUDIT-2`,
+ * finding `J4-01`). A second spelling of one sentence in the second surface is
+ * exactly the drift this file exists to prevent, and the argument is the
+ * `CoachVerdict` itself, which is what both records hold; the round result's own
+ * `HandVerdict` wrapper is the hand index it files the sentence under, and that
+ * is the panel's business rather than the sentence's.
+ */
+export function verdictText(verdict: CoachVerdict): string {
+  const where = addressText(verdict.address);
+  if (verdict.matched) {
+    return `${actionText(verdict.played)} matched basic strategy on ${where}.`;
+  }
+  return (
+    `You played ${actionText(verdict.played)}; basic strategy plays ` +
+    `${actionText(verdict.recommended)} on ${where}, preferring ${preferenceText(verdict.preference)}.`
+  );
 }
 
 /** SPEC 6's three tables, by name. */
@@ -611,12 +672,21 @@ export function offerText(offer: InsuranceOffer): string {
  * "Anything needed to make a decision, house rules, table limits, hand values,
  * is real DOM text; the canvas may repeat it decoratively." SPEC 16 has the felt
  * print exactly these lines, and this is the reachable copy of them.
+ *
+ * **Every rule the player can set, including the split comparison.** That last
+ * clause arrived with `AUDIT-2`'s finding `Z4-03`: `splitRule` is a SPEC 14 rule
+ * and the sole input to `canSplit`, so it decides whether a King and a Queen are
+ * a pair at all, and the sentence that claimed to state the rules in force named
+ * every other one. A player whose Split was greyed with "Those two cards are not
+ * a pair." had nothing continuously reachable that said why. The words are the
+ * Settings panel's own, so the two statements of one rule set read alike.
  */
 export function houseRulesText(rules: HouseRules): string {
   return (
     `${chips(rules.decks)} decks. Dealer stands on all 17s. Blackjack pays 3 to 2. ` +
     `Insurance pays 2 to 1. Double after split ${rules.doubleAfterSplit ? 'on' : 'off'}. ` +
-    `Surrender ${rules.surrender ? 'on' : 'off'}. Even money ${rules.evenMoney ? 'on' : 'off'}.`
+    `Surrender ${rules.surrender ? 'on' : 'off'}. Even money ${rules.evenMoney ? 'on' : 'off'}. ` +
+    `Split on ${rules.splitRule === 'equalValue' ? 'equal value' : 'equal rank'}.`
   );
 }
 
@@ -632,8 +702,12 @@ export function houseRulesText(rules: HouseRules): string {
  * accessible name, written by `setDisabled`, and the announcement the polite
  * region makes when a press is actually refused.
  */
-export function unavailableText(label: string, reason: DisplayReason): string {
-  return `${label}: ${reasonText(reason)}`;
+export function unavailableText(
+  label: string,
+  reason: DisplayReason,
+  figures: ReasonFigures | null = null,
+): string {
+  return `${label}: ${reasonText(reason, figures)}`;
 }
 
 // ---------------------------------------------------------------------------

@@ -833,6 +833,30 @@ body {
   font-size: var(--type-sm);
 }
 
+/* SPEC 8's cards and coach verdicts, added to the review surface at `AUDIT-2`.
+ * The nested lists carry the round's hands and the dealer's, one card per item,
+ * so the rows are separated by the same spacing scale as everything else and by
+ * nothing this file invents. */
+.bj-history__entry + .bj-history__entry {
+  margin-top: var(--space-3);
+}
+
+.bj-history__summary,
+.bj-history__label {
+  margin: 0;
+}
+
+.bj-history__hands,
+.bj-history__coach {
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
+.bj-history__cards {
+  margin: 0;
+  padding-left: var(--space-4);
+}
+
 /* ---------------------------------------------------------------------------
  * The two panels that appear instead of the game. `BJ-21`, items `A5` and `M4`.
  *

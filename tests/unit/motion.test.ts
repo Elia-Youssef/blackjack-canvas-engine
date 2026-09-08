@@ -1095,9 +1095,28 @@ describe('E9: a mid-round Speed change leaves the settled picture alone', () => 
  * must land the tweens finished, not leave them mid-flight.
  */
 describe('QUALITY-BAR 7: the presentation half survives a hostile clock', () => {
+  /**
+   * A hand and a dealer on the felt, because chips alone leave half the layer
+   * unmeasured.
+   *
+   * The renderer accumulates an age in three places. Two of them go through
+   * `advance`; the third is `easeStep`, which the hand-width eases keyed `d` and
+   * `h0..h3` are the only callers of. A scene built with `dealer: []` and
+   * `hands: []` never calls it, so this block, whose whole subject is what a
+   * hostile delta does to an age, ran on the guarded accumulator only and passed
+   * while the unguarded one poisoned two keys that survive every deal.
+   */
+  const HOSTILE: Card[] = [card('A', 'spades'), card('K', 'hearts')];
+  const hostileScene = (): SceneState =>
+    scene({
+      pendingWager: FLIGHT_WAGER,
+      dealer: [...HOSTILE],
+      hands: [{ cards: [...HOSTILE], wager: 50, won: null }],
+    });
+
   it('lands its tweens after a non-finite frame instead of freezing at zero', () => {
     const { surface } = recordingSurface();
-    const state = scene({ pendingWager: FLIGHT_WAGER });
+    const state = hostileScene();
 
     surface.render(state, 0);
     expect(surface.tweensInFlight(), 'nothing was in flight to poison').toBeGreaterThan(0);
@@ -1111,9 +1130,12 @@ describe('QUALITY-BAR 7: the presentation half survives a hostile clock', () => 
 
   it('does not rewind a settled tween on a negative frame', () => {
     const { surface } = recordingSurface();
-    const state = scene({ pendingWager: FLIGHT_WAGER });
+    const state = hostileScene();
 
     surface.render(state, 0);
+    // One frame of the longest span on the felt, `cardTravel`, which
+    // `handRecentre` is shorter than: everything is finished before the
+    // negative frame arrives.
     surface.render(state, PACING.chipSlide);
     expect(surface.tweensInFlight()).toBe(0);
 
@@ -1123,7 +1145,7 @@ describe('QUALITY-BAR 7: the presentation half survives a hostile clock', () => 
 
   it('still saturates on a resume-sized frame, which is what a resume needs', () => {
     const { surface } = recordingSurface();
-    const state = scene({ pendingWager: FLIGHT_WAGER });
+    const state = hostileScene();
 
     surface.render(state, 0);
     expect(surface.tweensInFlight()).toBeGreaterThan(0);

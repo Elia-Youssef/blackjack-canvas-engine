@@ -58,7 +58,7 @@ import { tableLimits } from '../../core/wallet';
 import { unavailableNow } from '../availability';
 import { el, empty, setAttribute, setHidden, setText } from '../dom';
 import { chips as formatChips } from '../format';
-import type { ChromeState, Component } from '../state';
+import { wagerAtStake, type ChromeState, type Component } from '../state';
 import {
   cardText,
   dealerMirrorText,
@@ -200,9 +200,15 @@ export function createMirror(): Component {
       // The money and the table, which QUALITY-BAR section 4 requires as real
       // DOM text somewhere reachable. The readouts carry the same two numbers
       // on screen; this is the copy that sits beside the cards they belong to.
+      //
+      // The wager is `wagerAtStake`, the same reading the readout row uses, for
+      // the reason `AUDIT-2`'s finding `J2-01` gives: this sentence used to
+      // state the pending wager, which the deal zeroes, so a screen reader was
+      // told "Wager 0" for the whole of every hand and the amount at risk had no
+      // textual surface at all between the deal and the round result.
       setText(
         wallet,
-        `Chips ${formatChips(readout.wallet.chips)}. Wager ${formatChips(readout.wallet.wager)}.`,
+        `Chips ${formatChips(readout.wallet.chips)}. Wager ${formatChips(wagerAtStake(readout))}.`,
       );
       const limits = tableLimits(readout.table);
       setText(
@@ -219,13 +225,21 @@ export function createMirror(): Component {
       // The `BJ-15` review's `MIN-4`: the reason a control is greyed, in a place
       // a keyboard or touch user can reach without hovering anything.
       const greyed = unavailableNow(readout);
-      const key = greyed.map((entry) => `${entry.label}:${entry.refusal}`).join('|');
+      // The figures are in the key as well as the reason: SPEC 6's threshold
+      // sentence names the player's own mark, so an entry whose numbers moved is
+      // an entry whose sentence moved, and a key blind to them would leave the
+      // old figure standing (`AUDIT-2`, `J2-03`).
+      const key = greyed
+        .map((entry) => `${entry.label}:${entry.refusal}:${JSON.stringify(entry.figures)}`)
+        .join('|');
       if (key !== unavailableKey) {
         unavailableKey = key;
         empty(unavailableList);
         setHidden(unavailable, greyed.length === 0);
         for (const entry of greyed) {
-          unavailableList.append(el('li', { text: unavailableText(entry.label, entry.refusal) }));
+          unavailableList.append(
+            el('li', { text: unavailableText(entry.label, entry.refusal, entry.figures) }),
+          );
         }
       }
     },

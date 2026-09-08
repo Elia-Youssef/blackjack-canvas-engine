@@ -792,10 +792,18 @@ export interface EaseReading {
  * so a restarted ease reads `from`, which is the value it was showing.
  */
 export function easeStep(held: Easing, target: number, dt: number, motion: Motion): EaseReading {
+  // The guard `advance` and `readouts.ts` carry, for the same reason and with a
+  // longer-lived key: these ages are keyed `d` and `h0..h3` and survive every
+  // deal, so a `NaN` written here would sit in `Math.min` for the rest of the
+  // session, `motion.progress` would answer `START` for ever, `tweensInFlight`
+  // would never return to zero and the settled-pixel path would repaint the
+  // whole surface on every frame. A negative delta would rewind an age the
+  // machine consumed as zero.
+  const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
   // The unscaled constant, for `advance`'s reason: the age outlives the Speed
   // it was accumulated at, and a hand width parked at `0.6 x handRecentre` by
   // Fast would re-slide on the first Normal frame after a mid-round switch.
-  held.age = Math.min(held.age + dt, PACING.handRecentre);
+  held.age = Math.min(held.age + step, PACING.handRecentre);
   if (held.to !== target) {
     held.from = toward(held.from, held.to, motion.progress('handRecentre', held.age));
     held.to = target;

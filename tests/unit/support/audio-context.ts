@@ -23,7 +23,16 @@ export interface VoiceRecord {
  * the methods, so reading them from the test is reading the same object.
  */
 export class RecordingAudioContext {
-  readonly state = 'suspended';
+  /**
+   * The state the platform reports, which a test may move.
+   *
+   * Writable because `AUDIT-2`'s finding `J6-01` is about what the engine does
+   * when the platform declines to run a context it handed over: a stand-in
+   * frozen at one state can only show one of the two arms. It starts suspended,
+   * which is what a real context is between construction and a resolved
+   * `resume()`.
+   */
+  state = 'suspended';
   /** Non-zero, so a cue scheduled "now" is visibly scheduled somewhere. */
   readonly currentTime = 7.5;
   readonly sampleRate = 48_000;

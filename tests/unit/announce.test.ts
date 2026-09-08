@@ -36,7 +36,7 @@ import { describe, expect, it } from 'vitest';
 
 import { RANKS, type Rank } from '../../src/core/cards';
 import type { MilestoneId } from '../../src/core/statistics';
-import { TIMINGS, createTable, type Table } from '../../src/core/table';
+import { MAX_STEP, TIMINGS, createTable, type Speed, type Table } from '../../src/core/table';
 import type { Intent } from '../../src/core/types';
 import { createWallet, type Wallet } from '../../src/core/wallet';
 import {
@@ -141,9 +141,12 @@ function runWithoutQueue(
 const FOUR_CARD_DEAL = ['Ace of spades', 'Ten of clubs', 'Five of hearts', 'One card face down'].map(
   (text, index) => ({
     at: index * TIMINGS.dealInterval,
-    announcement: { priority: 'polite', text } as const satisfies Announcement,
+    announcement: { priority: 'polite', kind: 'card', text } as const satisfies Announcement,
   }),
 );
+
+/** SPEC 10's peek screen, as `phaseText` words it. `AUDIT-2` finding `J1-03`. */
+const PEEK_SENTENCE = 'The dealer is checking for a natural.';
 
 describe('G4 armour: the queue obeys QUALITY-BAR section 4 and the checker can reject', () => {
   it('states the interval the section states', () => {
@@ -181,14 +184,17 @@ describe('G4 armour: the queue obeys QUALITY-BAR section 4 and the checker can r
   });
 
   it('writes the first announcement on the frame it arrives', () => {
-    const writes = runQueue([{ at: 0, announcement: { priority: 'polite', text: 'Betting.' } }], 1);
+    const writes = runQueue(
+      [{ at: 0, announcement: { priority: 'polite', kind: 'phase', text: 'Betting.' } }],
+      1,
+    );
     expect(writes[0]?.at).toBe(0);
   });
 
   it('never drops an outcome, however fast they arrive', () => {
     const outcomes = ['Hand 1 Win', 'Hand 2 Loss', 'Hand 3 Push'].map((text, index) => ({
       at: index * TIMINGS.dealInterval,
-      announcement: { priority: 'assertive', text } as const satisfies Announcement,
+      announcement: { priority: 'assertive', kind: 'outcome', text } as const satisfies Announcement,
     }));
     const writes = runQueue(outcomes, 4);
     expect(writes.map((write) => write.text)).toEqual(outcomes.map((entry) => entry.announcement.text));
@@ -196,13 +202,16 @@ describe('G4 armour: the queue obeys QUALITY-BAR section 4 and the checker can r
   });
 
   it('would drop two of those three if outcomes coalesced, which is the control', () => {
-    // The same three entries offered as polite, which is the coalescing arm.
-    // Two of the three never reach a region, which is what rule 4 forbids and
-    // what makes the assertion above a real one.
+    // The same three entries offered as polite entries of one class, which is
+    // the coalescing arm. Two of the three never reach a region, which is what
+    // rule 4 forbids and what makes the assertion above a real one. The class
+    // matters from `AUDIT-2` onward: coalescing is per class, so three entries
+    // of three different classes would all be spoken and the control would
+    // stop controlling.
     const coalesced = runQueue(
       ['Hand 1 Win', 'Hand 2 Loss', 'Hand 3 Push'].map((text, index) => ({
         at: index * TIMINGS.dealInterval,
-        announcement: { priority: 'polite', text } as const satisfies Announcement,
+        announcement: { priority: 'polite', kind: 'card', text } as const satisfies Announcement,
       })),
       4,
     );
@@ -215,9 +224,9 @@ describe('G4 armour: the queue obeys QUALITY-BAR section 4 and the checker can r
         // The first entry is spoken at once and starts the interval. The next
         // two both arrive while the queue is closed, so the write that follows
         // has a choice to make, and rule 4 decides it.
-        { at: 0, announcement: { priority: 'polite', text: 'Dealer plays.' } },
-        { at: 0.1, announcement: { priority: 'polite', text: 'Dealer: Ten of clubs.' } },
-        { at: 0.2, announcement: { priority: 'assertive', text: 'Round result.' } },
+        { at: 0, announcement: { priority: 'polite', kind: 'phase', text: 'Dealer plays.' } },
+        { at: 0.1, announcement: { priority: 'polite', kind: 'dealerCard', text: 'Dealer: Ten of clubs.' } },
+        { at: 0.2, announcement: { priority: 'assertive', kind: 'outcome', text: 'Round result.' } },
       ],
       3,
     );
@@ -238,7 +247,7 @@ describe('G4 armour: the queue obeys QUALITY-BAR section 4 and the checker can r
       const dt = 1 / fps;
       let writes = 0;
       for (let frame = 0; frame < fps; frame += 1) {
-        queue.push({ priority: 'polite', text: `frame ${String(frame)}` });
+        queue.push({ priority: 'polite', kind: 'card', text: `frame ${String(frame)}` });
         if (queue.tick(dt) !== null) {
           writes += 1;
         }
@@ -248,15 +257,195 @@ describe('G4 armour: the queue obeys QUALITY-BAR section 4 and the checker can r
     expect(new Set(counts).size, `writes per second by frame rate: ${counts.join(', ')}`).toBe(1);
   });
 
-  it('reports what it is holding, and holds at most one polite entry', () => {
+  it('reports what it is holding: one polite entry per class, and every outcome', () => {
+    // **`AUDIT-2` finding `Z5-01` moved this law from one pending entry to one
+    // per class**, and both halves are asserted here. Two changes of the SAME
+    // class still collapse to the newer, which is rule 3 unchanged; two of
+    // different classes both wait, which is the whole of the cure. The
+    // replacement happens **in place**, so the order the entries arrived in is
+    // the order they are said in: the card below was offered first and is still
+    // first after being replaced.
     const queue = createAnnouncementQueue();
     queue.tick(1);
-    queue.push({ priority: 'polite', text: 'one' });
-    queue.push({ priority: 'polite', text: 'two' });
-    queue.push({ priority: 'assertive', text: 'outcome one' });
-    queue.push({ priority: 'assertive', text: 'outcome two' });
+    queue.push({ priority: 'polite', kind: 'card', text: 'one' });
+    queue.push({ priority: 'polite', kind: 'card', text: 'two' });
+    queue.push({ priority: 'polite', kind: 'phase', text: 'a screen' });
+    queue.push({ priority: 'assertive', kind: 'outcome', text: 'outcome one' });
+    queue.push({ priority: 'assertive', kind: 'outcome', text: 'outcome two' });
     expect(queue.state().pendingPolite).toBe('two');
+    expect(queue.state().pendingPolites).toEqual(['two', 'a screen']);
     expect(queue.state().pendingOutcomes).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUDIT-2: the classes a polite entry coalesces within
+// ---------------------------------------------------------------------------
+
+describe('AUDIT-2: polite entries coalesce by class, and two of the classes never drop', () => {
+  it('never drops a milestone, however promptly the next screen arrives', () => {
+    // **Finding `J1-02`**, as arithmetic. SPEC 9 awards a milestone exactly
+    // once and never re-announces it, so a milestone replaced while it waits is
+    // destroyed rather than delayed: a 45-round session at natural pacing
+    // awarded four and spoke none, because pressing Next Hand inside the floor
+    // pushes the betting screen's own sentence over the top of it. The award
+    // and the screen are different classes now, and the milestone class is the
+    // second entry QUALITY-BAR section 4's rule 4 carve-out covers.
+    const writes = runQueue(
+      [
+        { at: 0, announcement: { priority: 'polite', kind: 'phase', text: 'Settling the round.' } },
+        {
+          at: 0.1,
+          announcement: {
+            priority: 'polite',
+            kind: 'milestone',
+            text: 'Milestone: First natural.',
+          },
+        },
+        {
+          at: 0.25,
+          announcement: { priority: 'polite', kind: 'phase', text: 'Betting. Build a wager.' },
+        },
+      ],
+      4,
+    ).map((write) => write.text);
+    expect(writes, writes.join(' / ')).toContain('Milestone: First natural.');
+    // And the screen that used to destroy it is still spoken, which is what
+    // makes this a queue rather than a milestone with a veto.
+    expect(writes, writes.join(' / ')).toContain('Betting. Build a wager.');
+  });
+
+  it('speaks every milestone a single frame awarded', () => {
+    // The other trigger of the same defect, and the one that needs no timing at
+    // all: `milestones.test.ts` already pins that one round can award more than
+    // one, and one pending entry could only ever speak the last of them.
+    const three = ['First natural', 'First split win', 'A five-hand win streak'].map((name) => ({
+      at: 0,
+      announcement: {
+        priority: 'polite',
+        kind: 'milestone',
+        text: `Milestone: ${name}.`,
+      } as const satisfies Announcement,
+    }));
+    const writes = runQueue(three, 5).map((write) => write.text);
+    expect(writes).toEqual(three.map((entry) => entry.announcement.text));
+    expect(respectsInterval(runQueue(three, 5)), 'and they still take their turn').toBe(true);
+  });
+
+  it('writes SPEC 10 peek sentence on the frame it arrives, ahead of the floor', () => {
+    // **Finding `J1-03`, and the ruling on it.** At Fast the peek screen lasts
+    // 0.18 s, which is inside the 0.5 s floor, so the sentence was still
+    // pending when the player's turn arrived and the next phase sentence
+    // replaced it: a screen-reader player at Fast was never told the dealer was
+    // checking, in any round, while a sighted player saw the screen. The
+    // ruling exempts this one sentence from the floor rather than shortening
+    // the floor or changing what Fast means.
+    const schedule = [
+      {
+        at: 0,
+        announcement: {
+          priority: 'polite',
+          kind: 'dealerCard',
+          text: 'Dealer: Ten of clubs. hard 10.',
+        } as const satisfies Announcement,
+      },
+      {
+        at: 0.1,
+        announcement: {
+          priority: 'polite',
+          kind: 'phase',
+          immediate: true,
+          text: PEEK_SENTENCE,
+        } as const satisfies Announcement,
+      },
+      // 0.18 s after the peek, which is SPEC 5's `PEEK_PAUSE` under the Fast
+      // multiplier, measured on the shipped page at 182 to 185 ms.
+      {
+        at: 0.28,
+        announcement: {
+          priority: 'polite',
+          kind: 'phase',
+          text: 'Your turn.',
+        } as const satisfies Announcement,
+      },
+    ];
+    const writes = runQueue(schedule, 3);
+    const texts = writes.map((write) => write.text);
+    expect(texts, texts.join(' / ')).toContain(PEEK_SENTENCE);
+    // Not dropped, and not at the cost of the sentence that follows it.
+    expect(texts, texts.join(' / ')).toContain('Your turn.');
+    const spokenAt = writes.find((write) => write.text === PEEK_SENTENCE)?.at ?? Infinity;
+    expect(spokenAt, 'the exemption is what makes it audible at Fast').toBeLessThan(HALF_A_SECOND);
+  });
+
+  it('loses that sentence with the exemption dropped, which is the control', () => {
+    // The same schedule with `immediate` gone. The peek sentence and the
+    // player-turn sentence are one class, so rule 3 replaces the first with the
+    // second and the exemption is the only thing standing between them. A
+    // cure that had quietly made every entry immediate would fail here.
+    const writes = runQueue(
+      [
+        {
+          at: 0,
+          announcement: {
+            priority: 'polite',
+            kind: 'dealerCard',
+            text: 'Dealer: Ten of clubs. hard 10.',
+          } as const satisfies Announcement,
+        },
+        {
+          at: 0.1,
+          announcement: {
+            priority: 'polite',
+            kind: 'phase',
+            text: PEEK_SENTENCE,
+          } as const satisfies Announcement,
+        },
+        {
+          at: 0.28,
+          announcement: {
+            priority: 'polite',
+            kind: 'phase',
+            text: 'Your turn.',
+          } as const satisfies Announcement,
+        },
+      ],
+      3,
+    ).map((write) => write.text);
+    expect(writes, writes.join(' / ')).not.toContain(PEEK_SENTENCE);
+    expect(writes, writes.join(' / ')).toContain('Your turn.');
+  });
+
+  it('holds the floor for everything that is not exempt', () => {
+    // The exemption is one sentence wide. Every other schedule in this file
+    // still obeys rule 2, and this is the assertion that says so about a
+    // schedule containing an exempt entry: the writes that are not the exempt
+    // one are still spaced by the floor.
+    const writes = runQueue(
+      [
+        {
+          at: 0,
+          announcement: { priority: 'polite', kind: 'card', text: 'first' } as const,
+        },
+        {
+          at: 0.1,
+          announcement: {
+            priority: 'polite',
+            kind: 'phase',
+            immediate: true,
+            text: PEEK_SENTENCE,
+          } as const,
+        },
+        {
+          at: 0.15,
+          announcement: { priority: 'polite', kind: 'refusal', text: 'refused' } as const,
+        },
+      ],
+      3,
+    );
+    const ordinary = writes.filter((write) => write.text !== PEEK_SENTENCE);
+    expect(respectsInterval(ordinary), ordinary.map((w) => `${String(w.at)} ${w.text}`).join(' / '))
+      .toBe(true);
   });
 });
 
@@ -478,7 +667,7 @@ describe('G4 armour: what a frame is worth announcing', () => {
       context: { notice: null, awarded: ['firstNatural'], muted: false },
     };
     expect(announcementsFor(before, after)).toEqual([
-      { priority: 'polite', text: 'Milestone: First natural.' },
+      { priority: 'polite', kind: 'milestone', text: 'Milestone: First natural.' },
     ]);
   });
 
@@ -493,10 +682,10 @@ describe('G4 armour: what a frame is worth announcing', () => {
       context: { notice: null, awarded: [], muted },
     });
     expect(announcementsFor(frameOf(false), frameOf(true))).toEqual([
-      { priority: 'polite', text: 'Sound muted.' },
+      { priority: 'polite', kind: 'sound', text: 'Sound muted.' },
     ]);
     expect(announcementsFor(frameOf(true), frameOf(false))).toEqual([
-      { priority: 'polite', text: 'Sound on.' },
+      { priority: 'polite', kind: 'sound', text: 'Sound on.' },
     ]);
     expect(announcementsFor(frameOf(true), frameOf(true))).toEqual([]);
   });
@@ -556,5 +745,311 @@ describe('G4 armour: what a frame is worth announcing', () => {
     for (const entry of driven.said) {
       expect(/\b(?:A|J|Q|K)\b/.test(entry.text), `${entry.text} names a rank glyph`).toBe(false);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUDIT-2: the composition the announcer actually runs
+// ---------------------------------------------------------------------------
+
+/**
+ * Everything a drive **wrote** to each region, in the order it was written.
+ *
+ * Every test above this line grades one half at a time: the delta tests read
+ * `announcementsFor`'s return value directly and the queue tests push one entry
+ * per simulated instant. `src/ui/components/announcer.ts` composes them the
+ * other way round, pushing **every** entry one frame produced and then ticking
+ * once, and finding `Z5-01` measured a whole class of sentences that no round
+ * could speak in that composition while nothing above moved at all. So the
+ * driver below is the shipped shape, and what it records is what a region was
+ * really written with.
+ */
+interface Spoken {
+  readonly polite: readonly string[];
+  readonly assertive: readonly string[];
+}
+
+function speak(
+  table: Table,
+  plan: (table: Table) => Intent | null,
+  step = FRAME,
+  seconds = 10,
+): Spoken {
+  const queue = createAnnouncementQueue();
+  const polite: string[] = [];
+  const assertive: string[] = [];
+  let previous: AnnounceFrame | null = null;
+  for (let frame = 0; frame * step < seconds; frame += 1) {
+    const intent = plan(table);
+    if (intent !== null) {
+      table.apply(intent);
+    }
+    table.update(step);
+    const next: AnnounceFrame = {
+      readout: table.readout(),
+      context: { notice: null, awarded: [], muted: false },
+    };
+    for (const announcement of announcementsFor(previous, next)) {
+      queue.push(announcement);
+    }
+    previous = next;
+    const due = queue.tick(step);
+    if (due !== null) {
+      (due.priority === 'polite' ? polite : assertive).push(due.text);
+    }
+  }
+  return { polite, assertive };
+}
+
+/**
+ * One round, standing after `dwell` seconds of the player's turn.
+ *
+ * The dwell is the finding's own construction and it is load-bearing: the
+ * queue writes one polite entry per floor, so a player who stands in the same
+ * breath as their second card is a player whose queue is still working through
+ * the deal. `Z5-01` measured a 1 s dwell, which is a fast player rather than a
+ * patient one.
+ */
+function standingPlan(dwell: number, step: number): (table: Table) => Intent | null {
+  let waited = 0;
+  return (table) => {
+    const { phase, wallet } = table.readout();
+    switch (phase.kind) {
+      case 'start':
+        return { kind: 'start' };
+      case 'betting':
+        return wallet.wager === 0 ? { kind: 'tapChip', chip: ROUND_WAGER } : { kind: 'deal' };
+      case 'insurance':
+        return { kind: 'declineInsurance' };
+      case 'playerTurn':
+        waited += step;
+        return waited > dwell ? { kind: 'stand' } : null;
+      default:
+        // Including `roundResult`: the drive sits there so the queue can drain,
+        // which is the difference between an entry that is late and one that is
+        // lost.
+        return null;
+    }
+  };
+}
+
+/**
+ * A frame that dealt to the player and to the dealer in one machine step.
+ *
+ * `playerCards` is how many cards the player held once the frame was done, so
+ * the arm can grade the frame that dealt their **last** card of the deal and
+ * nothing later can legitimately replace the sentence it produced.
+ */
+interface SharedFrame {
+  readonly player: string;
+  readonly dealer: string;
+  readonly playerCards: number;
+}
+
+/** What one hitched deal produced together, and what a region was written with. */
+interface StutteredDeal {
+  readonly shared: readonly SharedFrame[];
+  readonly polite: readonly string[];
+}
+
+/** Every position in a 60 fps opening deal that the one long frame can take. */
+const HITCH_POSITIONS: readonly number[] = Array.from({ length: 60 }, (_unused, at) => at);
+
+/**
+ * One opening deal at 60 fps with a single long frame inserted at `hitchAt`.
+ *
+ * `MAX_STEP` rather than a number chosen here: it is the largest delta the
+ * machine will consume, so this is the worst frame a real page can deliver and
+ * not a synthetic one. The shoe gives the dealer a nine, so there is no peek
+ * screen and no offer to decline, and the deal is the only thing happening.
+ *
+ * The queue is drained afterwards with no further machine steps, which is what
+ * makes the assertions about **loss** rather than about lateness: everything
+ * still waiting is written before the run is read.
+ */
+function stutteredDeal(speed: Speed, hitchAt: number): StutteredDeal {
+  const table = tableOn(['Q', '9', '5', '8', '3']);
+  table.setSpeed(speed);
+  const queue = createAnnouncementQueue();
+  const polite: string[] = [];
+  const shared: SharedFrame[] = [];
+  let previous: AnnounceFrame | null = null;
+
+  const write = (step: number): void => {
+    const due = queue.tick(step);
+    if (due !== null && due.priority === 'polite') {
+      polite.push(due.text);
+    }
+  };
+  const observe = (step: number): void => {
+    const next: AnnounceFrame = {
+      readout: table.readout(),
+      context: { notice: null, awarded: [], muted: false },
+    };
+    const produced = announcementsFor(previous, next);
+    previous = next;
+    // Told apart by the sentence rather than by the kind, so this reads the
+    // same before and after the fix: the point of the arm is the frame that
+    // produced both, whatever kinds the two entries carry.
+    const cards = produced.filter(
+      (entry) => entry.kind === 'card' || entry.kind === 'dealerCard',
+    );
+    const dealer = cards.find((entry) => entry.text.startsWith('Dealer: '));
+    const player = cards.find((entry) => !entry.text.startsWith('Dealer: '));
+    if (dealer !== undefined && player !== undefined) {
+      shared.push({
+        player: player.text,
+        dealer: dealer.text,
+        playerCards: next.readout.hands[0]?.cards.length ?? 0,
+      });
+    }
+    for (const announcement of produced) {
+      queue.push(announcement);
+    }
+    write(step);
+  };
+
+  accept(table.apply({ kind: 'start' }));
+  observe(FRAME);
+  accept(table.apply({ kind: 'tapChip', chip: ROUND_WAGER }));
+  observe(FRAME);
+  accept(table.apply({ kind: 'deal' }));
+  observe(FRAME);
+
+  const dealing = bounded('dealing through a hitch', LOOP_LIMIT);
+  let frame = 0;
+  while (table.readout().phase.kind === 'dealing') {
+    dealing();
+    const step = frame === hitchAt ? MAX_STEP : FRAME;
+    table.update(step);
+    observe(step);
+    frame += 1;
+  }
+
+  const draining = bounded('draining the queue after the deal', LOOP_LIMIT);
+  while (queue.state().pendingPolites.length > 0 || queue.state().pendingOutcomes > 0) {
+    draining();
+    write(FRAME);
+  }
+  return { shared, polite };
+}
+
+describe('AUDIT-2: what one frame produced, a region actually says', () => {
+  it.each([
+    ['60 fps', 1 / 60],
+    ['144 fps', 1 / 144],
+  ])('speaks the reveal sentence at %s, which one pending entry could not reach', (_name, step) => {
+    // **Finding `Z5-01`, arm 1, driven as the finding drove it**: the scripted
+    // shoe, a 50 wager and a stand one second into the player's turn, at both
+    // of the frame rates it measured. Entering SPEC 10's `reveal` turns the
+    // hole card face up in the same machine step, so the phase sentence and
+    // the dealer's card are produced by ONE frame; the card was pushed second
+    // and overwrote the sentence before any tick could write it, which is why
+    // 42 of 42 reveals were silent and why the frame rate made no difference.
+    const spoken = speak(tableOn(['10', '9', '10', '10']), standingPlan(1, step), step);
+    expect(spoken.polite, spoken.polite.join(' / ')).toContain(
+      'The dealer reveals the hole card.',
+    );
+    // And the card that used to overwrite it is still spoken, so the cure is a
+    // queue rather than a swap of which of the two is lost.
+    expect(
+      spoken.polite.some((text) => text.startsWith('Dealer: Ten of')),
+      spoken.polite.join(' / '),
+    ).toBe(true);
+    // In that order, which is what `announcementsFor` promises and what one
+    // pending entry could not keep.
+    expect(
+      spoken.polite.indexOf('The dealer reveals the hole card.'),
+      spoken.polite.join(' / '),
+    ).toBeLessThan(spoken.polite.findIndex((text) => text.startsWith('Dealer: Ten of')));
+  });
+
+  it('speaks the split sentence, which shared its frame with a dealt card', () => {
+    // **Finding `Z5-01`, arm 2.** SPEC 4.6 deals onto both halves in the step
+    // that splits, so `Split. 2 hands in play.` and `Hand 2: <card>` are one
+    // frame's work and the card won.
+    let split = false;
+    let waited = 0;
+    const table = tableOn(['8', '9', '8', '7', '10', '2', '9']);
+    const spoken = speak(table, (playing) => {
+      const { phase, wallet } = playing.readout();
+      switch (phase.kind) {
+        case 'start':
+          return { kind: 'start' };
+        case 'betting':
+          return wallet.wager === 0 ? { kind: 'tapChip', chip: ROUND_WAGER } : { kind: 'deal' };
+        case 'insurance':
+          return { kind: 'declineInsurance' };
+        case 'playerTurn': {
+          waited += FRAME;
+          if (!split) {
+            // The same one-second dwell before the split that the reveal arm
+            // takes before the stand, and for the same reason.
+            if (waited <= 1) {
+              return null;
+            }
+            split = true;
+            return { kind: 'split' };
+          }
+          // A hand still being dealt its second card is not a hand to stand on.
+          const hand = playing.readout().hands[phase.activeHand];
+          return hand === undefined || hand.cards.length < 2 ? null : { kind: 'stand' };
+        }
+        default:
+          return null;
+      }
+    });
+    expect(spoken.polite, spoken.polite.join(' / ')).toContain('Split. 2 hands in play.');
+  });
+
+  it.each([
+    ['normal' as const],
+    ['fast' as const],
+  ])('speaks both cards of a frame that dealt two, at %s speed', (speed) => {
+    // **The review's `R-1` construction, as an arm.** The two arms above drive
+    // steady frames, and steady frames deal one card each: `table.ts`'s
+    // `update` drains the deal queue in a `while` loop against the accumulator,
+    // so a frame long enough for two deal steps takes two, and SPEC 4.3 deals
+    // player, dealer, player, dealer. A frame that takes steps two and three
+    // therefore produces the dealer's up card **and** the player's second card
+    // together, which is the pair that shared one `AnnouncementKind` until this
+    // fix round: the dealer's entry replaced the player's in place and the
+    // player's card was spoken in no round at all.
+    //
+    // The hitch is one long frame in an otherwise 60 fps deal, swept over every
+    // position the deal has, which is how the review measured it: at `normal`
+    // four of sixty positions reach the two-step frame and at `fast` fourteen
+    // do, because the multiplier shortens the interval the accumulator is
+    // measured against while `MAX_STEP` does not move.
+    const runs = HITCH_POSITIONS.map((at) => stutteredDeal(speed, at));
+    // Only the frames that dealt the player's **last** card of the deal are
+    // graded, and that is not a convenience: a player card produced earlier can
+    // still be replaced by the next player card under rule 3, which is
+    // coalescing working rather than the defect. After the player's second card
+    // no further card of either kind arrives, the dealer's hole card being
+    // concealed, so both sentences must be spoken or one was destroyed.
+    const graded = runs.filter((run) => run.shared.some((frame) => frame.playerCards === 2));
+    expect(
+      graded.length,
+      'no hitch position produced a frame that dealt to both, so this arm asserts nothing',
+    ).toBeGreaterThan(0);
+    for (const run of graded) {
+      const frame = run.shared.find((each) => each.playerCards === 2);
+      expect(run.polite, `the player's card: ${run.polite.join(' / ')}`).toContain(frame?.player);
+      expect(run.polite, `the dealer's card: ${run.polite.join(' / ')}`).toContain(frame?.dealer);
+    }
+  });
+
+  it('still speaks the round outcome, and still spaces every write it makes', () => {
+    // The control on both cures at once. A queue that had stopped collapsing
+    // would speak every card of the deal, and a queue whose polite side had
+    // grown past its outcomes would delay the one entry rule 4 protects.
+    const spoken = speak(tableOn(['10', '9', '10', '10']), standingPlan(1, FRAME));
+    expect(spoken.assertive.some((text) => text.startsWith('Round result.'))).toBe(true);
+    expect(spoken.assertive).toHaveLength(1);
+    // Four cards are dealt at SPEC 5's 0.22 s interval and the floor is 0.5 s,
+    // so the deal cannot be spoken card for card however the classes are cut.
+    const cards = spoken.polite.filter((text) => /\bof (?:clubs|diamonds|hearts|spades)\b/.test(text));
+    expect(cards.length).toBeLessThan(5);
   });
 });

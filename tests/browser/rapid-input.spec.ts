@@ -35,13 +35,16 @@ import {
   chip,
   control,
   motionTrace,
+  notice,
   readout,
   session,
   settle,
+  shell,
   traceMotion,
   waitForPhase,
 } from './support/game';
 import { pressOn } from './support/game';
+import { reasonText } from '../../src/ui/text';
 
 /**
  * Fire a control's click handler `times` over, inside one tick.
@@ -214,5 +217,171 @@ test.describe('C6: rapid and duplicated input', () => {
     expect(after.rounds, 'still exactly one round counted').toBe(1);
     expect(after.wallet.wager, 'the new round starts from no wager').toBe(0);
     expect((await session(page)).history.length, 'one entry in the history').toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// AUDIT-2, finding J1-01: a refusal beside an acceptance
+// ---------------------------------------------------------------------------
+
+/**
+ * How long the notice carried a reason, in milliseconds, and what it said.
+ *
+ * A `MutationObserver` rather than a poll, because the whole question is
+ * whether the sentence was ever on the page at all: the defect wrote it and
+ * cleared it inside one frame, so a poll could truthfully report an empty
+ * element having missed the write entirely. The observer records every write
+ * with its timestamp, which is the finding's own instrument.
+ */
+async function noticeHistory(page: Page): Promise<{ reasons: string[]; heldFor: number }> {
+  return page.evaluate(() => {
+    const record = (
+      window as unknown as { __bjNotice?: { at: number; reason: string | null }[] }
+    ).__bjNotice;
+    if (record === undefined) {
+      throw new Error('the notice was never watched');
+    }
+    const reasons = record
+      .map((write) => write.reason)
+      .filter((reason): reason is string => reason !== null);
+    const first = record.find((write) => write.reason !== null);
+    if (first === undefined) {
+      return { reasons, heldFor: 0 };
+    }
+    const cleared = record.find((write) => write.at > first.at && write.reason === null);
+    return { reasons, heldFor: (cleared?.at ?? performance.now()) - first.at };
+  });
+}
+
+/** Watch the notice line from now on. */
+async function watchNotice(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const node = document.querySelector('[data-notice="reason"]');
+    if (node === null) {
+      throw new Error('there is no notice on this page');
+    }
+    const log: { at: number; reason: string | null }[] = [];
+    new MutationObserver(() => {
+      log.push({ at: performance.now(), reason: node.getAttribute('data-reason') });
+    }).observe(node, { childList: true, characterData: true, attributes: true, subtree: true });
+    (window as unknown as { __bjNotice?: typeof log }).__bjNotice = log;
+  });
+}
+
+/**
+ * Watch the polite live region from now on, and read back everything it was
+ * written with.
+ *
+ * An observer rather than a poll, and the difference decides whether this can
+ * be trusted: a live region holds the LAST thing said and the queue replaces it
+ * a floor later, so a poll that samples the element is racing a value that is
+ * meant to be transient. It lost that race on WebKit, which is slower and had
+ * moved on to the player's turn by the time the first sample landed.
+ */
+async function watchPolite(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const node = document.querySelector('[data-live="polite"]');
+    if (node === null) {
+      throw new Error('there is no polite region on this page');
+    }
+    const log: string[] = [];
+    new MutationObserver(() => {
+      log.push(node.textContent ?? '');
+    }).observe(node, { childList: true, characterData: true, subtree: true });
+    (window as unknown as { __bjPolite?: string[] }).__bjPolite = log;
+  });
+}
+
+async function politeWrites(page: Page): Promise<string[]> {
+  return page.evaluate(
+    () => (window as unknown as { __bjPolite?: string[] }).__bjPolite ?? [],
+  );
+}
+
+/**
+ * SPEC 4.11's reason, when the press that earned it shared a frame with one
+ * the machine accepted. `AUDIT-2`, finding `J1-01`.
+ *
+ * The criterion is `B15`'s and the mechanism is `C6`'s, which is why the arms
+ * live here: they are two presses inside one tick, and what they grade is that
+ * the second one does not decide whether the first is ever explained. The
+ * finding measured the window at exactly one animation frame, so the reason
+ * reached no surface at all: not the notice line, not the polite region, which
+ * reads the same field, and not the mirror, which lists greyed controls rather
+ * than refused ones.
+ *
+ * The route is the shipped page's own controls. Bronze's maximum is 100, so a
+ * wager built to exactly 100 leaves the 10 chip **enabled**, its denomination
+ * being legal, while the machine refuses the tap as over the ceiling. Deal is
+ * accepted on the same frame and changes the phase, which is what used to
+ * erase the reason before anything rendered.
+ */
+test.describe('B15: a refusal that shares a frame with an accepted intent', () => {
+  test('still reaches the notice line and the polite region', async ({ page }) => {
+    await bootGame(page, {});
+    await waitForPhase(page, 'start');
+    await control(page, 'start').click();
+    await waitForPhase(page, 'betting');
+    await control(page, 'max').click();
+    await expect.poll(async () => (await readout(page)).wallet.wager).toBe(100);
+    await expect(chip(page, 10), 'the chip is enabled; the tap is what is refused').toBeEnabled();
+
+    await watchNotice(page);
+    await watchPolite(page);
+    // Both presses inside one `evaluate`, so they reach one drain: the chip tap
+    // is refused and Deal is accepted, in that order.
+    await page.evaluate(() => {
+      const chipControl = document.querySelector('[data-chip="10"]');
+      const deal = document.querySelector('[data-control="deal"]');
+      if (!(chipControl instanceof HTMLElement) || !(deal instanceof HTMLElement)) {
+        throw new Error('the betting screen is not the one this test expects');
+      }
+      chipControl.click();
+      deal.click();
+    });
+    await expect(shell(page), 'the accepted Deal moved the phase').not.toHaveAttribute(
+      'data-phase',
+      'betting',
+    );
+
+    await page.waitForTimeout(400);
+    const history = await noticeHistory(page);
+    expect(history.reasons, 'the reason never reached the notice line').toContain('above-ceiling');
+    // Long enough to be read, which is what the display window is for: the
+    // defect held it for one frame, and the floor is 500 ms.
+    expect(history.heldFor, 'the reason was on the page for one frame').toBeGreaterThan(100);
+    // And the other surface the same field feeds. QUALITY-BAR section 4's queue
+    // may take a floor to reach it, and it may have been replaced again by the
+    // time this reads, so what is asserted is every write the region took.
+    await expect
+      .poll(async () => (await politeWrites(page)).join(' / '), { timeout: 5_000 })
+      .toContain(reasonText('above-ceiling'));
+  });
+
+  test('still reaches them when the accepted press lands one frame later', async ({ page }) => {
+    // The other side of the same window. Here the refusal has a frame of its
+    // own, so it is rendered, and it is the **acceptance** that used to wipe it
+    // on the next frame: the reason was on the page for the 16 ms between them.
+    await bootGame(page, {});
+    await waitForPhase(page, 'start');
+    await control(page, 'start').click();
+    await waitForPhase(page, 'betting');
+    await control(page, 'max').click();
+    await expect.poll(async () => (await readout(page)).wallet.wager).toBe(100);
+
+    await watchNotice(page);
+    await watchPolite(page);
+    await chip(page, 10).click();
+    await expect(notice(page)).toHaveAttribute('data-reason', 'above-ceiling');
+    await control(page, 'deal').click();
+    await expect(shell(page)).not.toHaveAttribute('data-phase', 'betting');
+
+    await page.waitForTimeout(400);
+    const history = await noticeHistory(page);
+    expect(history.reasons).toContain('above-ceiling');
+    expect(history.heldFor, 'the accepted press wiped the reason it followed').toBeGreaterThan(100);
+    await expect
+      .poll(async () => (await politeWrites(page)).join(' / '), { timeout: 5_000 })
+      .toContain(reasonText('above-ceiling'));
   });
 });

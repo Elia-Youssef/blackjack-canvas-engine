@@ -52,6 +52,8 @@
  * through and the rail is the boundary against whatever the theme paints.
  */
 
+import { STANDS_AT } from '../core/dealer';
+import { INSURANCE_PAYS, NATURAL_PAYS } from '../core/settlement';
 import {
   BORDER,
   feltColour,
@@ -137,8 +139,8 @@ export const FELT_GEOMETRY = Object.freeze({
    * it is not a token: the one absolute length in the grain is `noiseCell`
    * above, and the tile is that many of them. 64 cells is 256 CSS pixels, which
    * repeats between four and five times across the widest table this game
-   * draws and costs 4,096 segments to bake, a fifth of what one 1121 x 631
-   * felt cost per bake before it.
+   * draws and costs 4,096 segments to bake, under a tenth of the 44,398 one
+   * 1121 x 631 felt cost per bake before it.
    */
   noiseTileCells: 64,
 } as const);
@@ -160,15 +162,29 @@ export const FELT_GEOMETRY = Object.freeze({
  * The other park is the chip's value glyph in `src/render/chips.ts`, which is
  * object identity in the same way a card's rank is.
  *
- * `tests/unit/locale.test.ts` holds both as a named exemption list of exactly
- * two sites, checked by path, and asserts that this function prints exactly one
- * data-driven line and that its shape does not grow a second quantity.
+ * `tests/unit/locale.test.ts` holds both as a named exemption list checked by
+ * path and by line, over exactly these two files, and asserts that the limits
+ * line is the one line here whose shape a table can change.
+ *
+ * **Every rule this prints is read from the module that decides it.**
+ * `AUDIT-2`, finding `Z1-03`. `settlement.ts` exports `NATURAL_PAYS` and
+ * `INSURANCE_PAYS` with the stated reason that "the felt can print blackjack
+ * pays 3 to 2 from the number the ladder actually uses", and `dealer.ts` exports
+ * `STANDS_AT` "rather than writing 17 somewhere the felt cannot correct it".
+ * The wiring was never made: these three lines were string literals, nothing
+ * held them against the constants, and a house rule moving the headline payout
+ * to 6:5, which is the one-place change those constants exist for, would have
+ * moved every payout in the ladder and left the table printing a rule the game
+ * no longer followed, with the whole unit suite green. The direction of the
+ * import is the allowed one, `render/` reading `core/`, and it is what makes
+ * `tests/unit/render-felt.test.ts`'s literal assertions load bearing: they now
+ * fail the day a constant moves without the print moving with it.
  */
 export function feltPrint(limits: FeltLimits): readonly string[] {
   return [
-    'INSURANCE PAYS 2 TO 1',
-    'BLACKJACK PAYS 3 TO 2',
-    'Dealer must stand on all 17s',
+    `INSURANCE PAYS ${String(INSURANCE_PAYS)} TO 1`,
+    `BLACKJACK PAYS ${String(NATURAL_PAYS.numerator)} TO ${String(NATURAL_PAYS.denominator)}`,
+    `Dealer must stand on all ${String(STANDS_AT)}s`,
     `MINIMUM ${String(limits.minimum)} - MAXIMUM ${String(limits.maximum)}`,
   ];
 }

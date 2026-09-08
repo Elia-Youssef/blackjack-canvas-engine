@@ -337,7 +337,16 @@ test.describe('L2: no third-party request occurs at runtime', () => {
     await settle(page);
 
     expect(requested.length, 'the page requested nothing at all').toBeGreaterThan(0);
-    const origin = new URL(baseURL ?? 'http://localhost:4173').origin;
+    // No fallback address. `playwright.config.ts` pins one value and reads it
+    // on both sides of the wire so the server and the client cannot come apart;
+    // a default here would be a third spelling of it, and the one this file
+    // carried said `localhost`, which is the name that collision was about. A
+    // missing `baseURL` is a broken runner, so it fails loudly rather than
+    // grading every same-origin request as foreign.
+    if (baseURL === undefined) {
+      throw new Error('the runner supplied no baseURL; playwright.config.ts pins one');
+    }
+    const origin = new URL(baseURL).origin;
     const foreign = requested.filter((url) => !url.startsWith(origin) && !url.startsWith('data:'));
     expect(foreign, 'the game reached a host it was not served from').toEqual([]);
   });

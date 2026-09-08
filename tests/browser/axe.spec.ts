@@ -45,7 +45,7 @@ import { fileURLToPath } from 'node:url';
 import { expect, test, type Page } from '@playwright/test';
 
 import type { PhaseKind } from '../../src/core/types';
-import { BUST_OUT_WAGER, bustOutSeed } from './support/action-seeds';
+import { BUST_OUT_WAGER, bustOutSeed, splitSeed } from './support/action-seeds';
 import {
   atShippedBetting,
   bootGame,
@@ -410,19 +410,57 @@ test.describe('G1: the five timed phases, which have no screen of their own', ()
     await control(page, 'max').click();
     await pressOn(page, '[data-control="deal"]', 'betting');
 
-    const dealing = await page.evaluate(() => {
-      const shell = document.querySelector('.bj-shell');
-      const phase = shell?.getAttribute('data-phase') ?? '';
-      const shown = [...document.querySelectorAll('[data-screen]')]
-        .filter((node) => !(node as HTMLElement).hidden)
-        .map((node) => node.getAttribute('data-screen') ?? '');
-      return { phase, shown };
-    });
-    // The read may land after the deal has finished, which is why the phase is
-    // reported rather than assumed; either way a screen that is showing during
-    // one of the five would be a control on a screen that accepts none.
-    if (['dealing', 'peek', 'reveal', 'dealerTurn', 'settling'].includes(dealing.phase)) {
-      expect(dealing.shown, `a screen is showing at the ${dealing.phase} phase`).toEqual([]);
+    /** What the page was showing, sampled until it reaches `until`. */
+    const sampleUntil = async (until: PhaseKind): Promise<{ phase: string; shown: string[] }[]> => {
+      const seen: { phase: string; shown: string[] }[] = [];
+      const deadline = Date.now() + 10_000;
+      for (;;) {
+        const reading = await page.evaluate(() => {
+          const shell = document.querySelector('.bj-shell');
+          const phase = shell?.getAttribute('data-phase') ?? '';
+          const shown = [...document.querySelectorAll('[data-screen]')]
+            .filter((node) => !(node as HTMLElement).hidden)
+            .map((node) => node.getAttribute('data-screen') ?? '');
+          return { phase, shown };
+        });
+        seen.push(reading);
+        if (reading.phase === until) {
+          return seen;
+        }
+        expect(Date.now(), `the page never reached ${until}`).toBeLessThan(deadline);
+      }
+    };
+
+    // **Sampled rather than read once, and the premise is asserted.** A single
+    // read lands wherever a protocol round trip lands inside SPEC 5's 0.88 s
+    // dealing window, which is a property of machine load rather than of the
+    // product; the shape this replaced put its only assertion inside
+    // `if (timed.includes(phase))`, so a late read passed the test having
+    // asserted nothing at all, which is the one failure
+    // `support/no-skips-reporter.ts` exists for wearing a shape the reporter
+    // cannot see. So every reading through the deal and through the dealer's
+    // turn is kept, at least one of them is required to have landed in one of
+    // the five, and every one that did is required to have no screen showing.
+    const timed: PhaseKind[] = ['dealing', 'peek', 'reveal', 'dealerTurn', 'settling'];
+    // The seed shows an Ace and finds nothing under it, so the round is driven
+    // through all three of its decision points and every stretch between them
+    // is sampled: the deal, the peek behind the declined offer, and the
+    // dealer's turn and the settle behind the stand.
+    const readings = await sampleUntil('insurance');
+    await control(page, 'decline-insurance').click();
+    readings.push(...(await sampleUntil('playerTurn')));
+    await pressOn(page, '[data-action="stand"]', 'playerTurn');
+    readings.push(...(await sampleUntil('roundResult')));
+
+    const duringTimed = readings.filter((reading) =>
+      timed.includes(reading.phase as PhaseKind),
+    );
+    expect(
+      duringTimed.map((reading) => reading.phase),
+      'no reading landed in a timed phase, so nothing below was measured',
+    ).not.toEqual([]);
+    for (const reading of duringTimed) {
+      expect(reading.shown, `a screen is showing at the ${reading.phase} phase`).toEqual([]);
     }
   });
 
@@ -484,6 +522,39 @@ test.describe('G1: no violations on any overlay', () => {
       await expectClean(page, `${overlay} overlay`);
     });
   }
+
+  test('scans the statistics overlay with a round in the history', async ({ page }) => {
+    // The panel above is scanned on a fresh session, where the history is the
+    // "No rounds played yet." sentence and the list is empty. Since `AUDIT-2`'s
+    // finding `J4-01` an entry carries nested lists of cards and a list of
+    // coach verdicts, which is structure the empty panel does not have, so the
+    // populated panel is scanned as its own case. A split round with the coach
+    // on is the widest entry the panel can build: two hands, a dealer hand and
+    // three verdicts.
+    await bootGame(page, { seed: splitSeed() });
+    await waitForPhase(page, 'start');
+    await control(page, 'start').click();
+    await waitForPhase(page, 'betting');
+    await chooseInSettings(page, '[data-coach-mode="review"]');
+    await control(page, 'max').click();
+    await pressOn(page, '[data-control="deal"]', 'betting');
+    await waitForPhase(page, 'playerTurn');
+    await pressOn(page, '[data-action="split"]', 'playerTurn');
+    await pressOn(page, '[data-action="stand"]', 'playerTurn');
+    await pressOn(page, '[data-action="stand"]', 'playerTurn');
+    await waitForPhase(page, 'roundResult');
+    await pressOn(page, '[data-control="next-hand"]', 'roundResult');
+    await waitForPhase(page, 'betting');
+
+    await page.locator('[data-open-overlay="statistics"]').click();
+    await expect(page.locator('[data-overlay-host="true"]')).toBeVisible();
+    // The scan would say nothing about an entry that was not rendered, so the
+    // structure it is there for is required to be on the page first.
+    await expect(page.locator('[data-history="0"] [data-history-cards] li').first()).toBeAttached();
+    await expect(page.locator('[data-history="0"] [data-field="history-coach"] li')).toHaveCount(3);
+    await settle(page);
+    await expectClean(page, 'statistics overlay, one round recorded');
+  });
 });
 
 test.describe('G1: the one region of the page that scrolls', () => {

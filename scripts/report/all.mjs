@@ -12,6 +12,13 @@
  * Lighthouse script carries its own install step in its `package.json` entry,
  * and running the module directly would skip it.
  *
+ * A second entry, `verify:reports`, survived the change and reinstated exactly
+ * the defect above: it chained four of the six with `&&` and nothing called it,
+ * so an operator who ran it got a partial evidence set and a stop at the first
+ * breach while believing they had run the reports. `AUDIT-2` finding `Z9-09`
+ * found it dead by exhaustive search and it was deleted; this script is the one
+ * way to run the set.
+ *
  * Exit code is 1 if any report exited non-zero, 0 only if all six passed.
  */
 

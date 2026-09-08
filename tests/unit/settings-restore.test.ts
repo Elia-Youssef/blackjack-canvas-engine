@@ -232,4 +232,46 @@ describe('SPEC 13: the composition root reads every one of them at boot', () => 
       expect(new RegExp(`\\b${key}\\s*[:,]`).test(settings), `${key} is not saved`).toBe(true);
     }
   });
+
+  /**
+   * The third surface the same eight reach, and the one that used to be able to
+   * come up short. `AUDIT-2`, finding `X3-04`.
+   *
+   * `SessionState` spelled every persisted setting a second time, structurally
+   * unrelated to `Settings`, so the save was compiler-enforced and the session
+   * value was not: a ninth setting added to the document and left out of
+   * `session()` compiled, shipped and reported nothing. The type now inherits
+   * `Omit<Settings, 'coach' | 'rules'>`, which makes that a compile error, and
+   * the compiler is the enforcement.
+   *
+   * What is asserted here is the part a type cannot say: which two keys are
+   * carved out, and that the carve-outs still have their homes. A third
+   * omission added to the `Omit` would take a setting out of the session value
+   * with the build green, and this is what refuses it.
+   */
+  it('carries every persisted setting on the session value, minus two named carve-outs', () => {
+    const declaration = MAIN.slice(
+      MAIN.indexOf('export interface SessionState'),
+      MAIN.indexOf('export interface MotionProbe'),
+    );
+    expect(declaration.length, 'SessionState was not found').toBeGreaterThan(0);
+    expect(declaration).toContain("extends Omit<Settings, 'coach' | 'rules'>");
+
+    const literal = MAIN.slice(MAIN.indexOf('session: () => ({'));
+    expect(literal.length, 'the session literal was not found').toBeGreaterThan(0);
+    const body = literal.slice(0, literal.indexOf('}),'));
+    expect(body).toContain('statistics');
+
+    for (const key of SETTING_KEYS) {
+      // `rules` lives on the machine and `coach` is the mode, which this record
+      // spells `coachMode` because it needs `coach` for the accuracy record.
+      const spelling = key === 'rules' ? null : key === 'coach' ? 'coachMode' : key;
+      if (spelling === null) {
+        expect(body, 'the session value restates the house rules').not.toMatch(/\brules\s*[:,]/);
+        continue;
+      }
+      expect(new RegExp(`\\b${spelling}\\s*[:,]`).test(body), `${spelling} is not on the session`)
+        .toBe(true);
+    }
+  });
 });

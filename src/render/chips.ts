@@ -12,8 +12,8 @@
  * decomposes greedily into the four denominations, largest at the bottom as a
  * dealer cuts a stack, and each chip sits a fixed fraction of its radius above
  * the one below, so every chip in the stack shows a sliver of its own fill and
- * ring. The demonstration script's 680 wager is 500 + 100 + 50 + three 10s,
- * five colours of edge in one stack.
+ * ring. The demonstration script's 680 wager is 500 + 100 + 50 + three 10s: six
+ * chips in four denominational colours, in one stack.
  *
  * **The edge ring is load-bearing, not trim** (SPEC 16): no chip fill reaches
  * 3:1 against a felt, so `CHIP_RING` carries the chip's boundary against the

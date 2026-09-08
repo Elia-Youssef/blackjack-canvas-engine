@@ -601,9 +601,10 @@ for (const method of INPUT_METHODS) {
     test('toggles the sound from the play screen, once, and says so', async ({ page }) => {
       // `BJ-19`'s one action outside every overlay. The press must work by all
       // three methods because it is the control SPEC 14's "single action" is
-      // graded on, and the assertion beside it is the state in words: the
-      // label flips with the pressed state, which is the non-colour signal
-      // `BJ-18` requires a state to carry.
+      // graded on, and the assertion beside it is the state: `aria-pressed`
+      // flips while the name stays the setting's, which is the toggle shape
+      // `AUDIT-2`'s finding `Z4-02` corrected. The non-colour signal is the
+      // pressed underline, graded in `audio-settings.spec.ts`.
       const driver = route(page, method);
       await openShippedPage(page);
       await waitForPhase(page, 'start');
@@ -613,7 +614,7 @@ for (const method of INPUT_METHODS) {
 
       await driver.press('toggleMuted', 'data-control=mute');
       await expect(mute).toHaveAttribute('aria-pressed', 'true');
-      await expect(mute).toHaveText('Unmute');
+      await expect(mute).toHaveText('Mute');
 
       await driver.again('data-control=mute');
       await expect(mute).toHaveAttribute('aria-pressed', 'false');

@@ -106,9 +106,10 @@ export type CoachAction = 'hit' | 'stand' | 'double' | 'split' | 'surrender';
  *
  * DESIGN section 7's `['double', 'hit']`. The list is walked down to the first
  * action currently legal, so the last entry of every list is one a live hand
- * can always take. Two lists reach three long, and both are a pair whose split,
+ * can always take. One list reaches three long, and it is a pair whose split,
  * whose surrender and whose hit are three different answers to the same holding
- * depending on what the round has already spent.
+ * depending on what the round has already spent: 8,8 against the three up cards
+ * a hard 16 surrenders to, which is three cells of the chart carrying one list.
  */
 export type PreferenceList = readonly CoachAction[];
 

@@ -38,19 +38,30 @@
  * themselves.
  *
  * **The balance never goes negative, at any single application and not merely at
- * rest**, which is `B11`'s last clause. Three things make that true rather than
- * lucky, and they are all in this file. `takeInsurance` captures
- * `min(chips, stake)` **before** the debit, so it can never take out more than
- * is there. `settleInsurance` credits `stake + net`, which is `3 x stake` or 0
- * and never negative. And the unfunded remainder is subtracted at `endRound`,
- * which refuses to run while any hand is still committed, so every credit the
- * round is owed has landed before the shortfall is taken back. Subtracting it at
- * the insurance settlement instead is the defect: on the branch where the side
- * wager is lost the credit is 0, and a balance that had been emptied to fund the
- * stake would go negative between two calls. SPEC 4.7 states the margin the
- * ordering rests on: on a dealer natural the insurance credit is `3 x stake`,
- * and otherwise the natural pays `wager x 3 / 2`, both of which exceed any
- * possible shortfall.
+ * rest**, which is `B11`'s last clause. Three mechanisms in this file and one
+ * coupling the caller supplies make that true rather than lucky.
+ * `takeInsurance` captures `min(chips, stake)` **before** the debit, so it can
+ * never take out more than is there. `settleInsurance` credits `stake + net`,
+ * which is `3 x stake` or 0 and never negative. And the unfunded remainder is
+ * subtracted at `endRound`, which refuses to run while any hand is still
+ * committed, so every credit the round is owed has landed before the shortfall
+ * is taken back. Subtracting it at the insurance settlement instead is the
+ * defect: on the branch where the side wager is lost the credit is 0, and a
+ * balance that had been emptied to fund the stake would go negative between two
+ * calls.
+ *
+ * The fourth is a property of the round rather than of this file, and is named
+ * here rather than left implicit. A deferral can arise only on an even-money
+ * stake, which means a player natural, which settles at rung 2 or rung 3, and
+ * SPEC 4.7 states the margin that leaves: on a dealer natural the insurance
+ * credit is `3 x stake`, and otherwise the natural pays `wager x 3 / 2`, both of
+ * which exceed any possible shortfall. This module records nothing about whether
+ * the deferring hand is a natural and refuses nothing on that ground, so a
+ * caller that deferred a stake and then settled that hand at one of the
+ * full-wager-loss rungs would close the round negative. `table.ts` is what makes
+ * that unreachable, by never offering even money outside a player natural, and
+ * `tests/unit/insurance.test.ts` grades the clause through the real machine
+ * rather than through this file alone.
  *
  * **There is no maximum balance, and none is needed.** SPEC 6 states none, this
  * module enforces none, and the argument for that is arithmetic rather than
@@ -974,7 +985,10 @@ export function createWallet(options: WalletOptions = {}): Wallet {
    * `deferredStake`." Subtracting it anywhere earlier can take the balance
    * negative, because the branch that loses the side wager credits nothing; by
    * the time this function runs, the checks above have already proved that every
-   * credit the round is owed has landed. The release moves no money in the
+   * credit the round is owed has landed. That those credits *cover* the
+   * remainder is the caller's coupling rather than this function's check, and
+   * the header names it: a deferral arises only on an even-money stake, whose
+   * hand settles at rung 2 or rung 3. The release moves no money in the
    * conserved sense: `chips` falls by the remainder and `deferredStake` falls to
    * zero, and the four-term identity subtracts that term, so the sum is
    * unchanged. It is the accounting catching up with a stake that was never
@@ -1024,8 +1038,10 @@ export function createWallet(options: WalletOptions = {}): Wallet {
    * still counting, and raising `chips` to 1,000 underneath either of them adds
    * that term to the conserved total out of nothing. No caller can reach that
    * state today, because `table.ts` only takes a side wager with a hand in play,
-   * but that is the caller's shape rather than this module's guarantee, and the
-   * rest of the file refuses to lean on it.
+   * but that is the caller's shape rather than this module's guarantee, so this
+   * function refuses rather than trusting it. `endRound`'s release of the
+   * deferred remainder is the one place the file does lean on a caller coupling,
+   * stated in the header above rather than checked here.
    */
   function reset(): void {
     if (hands.length > 0) {

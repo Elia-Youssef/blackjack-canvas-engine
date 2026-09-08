@@ -22,6 +22,16 @@
  * only when it resolves to nothing, or to a global with no definition in the
  * program. A core module that declares or imports its own `Event`, `Node` or
  * `Image` type is left alone, which a grep could never manage.
+ *
+ * **Rule 1 is one hop deep, by construction.** A lint rule sees one file, so
+ * `no-forbidden-imports` classifies the specifier in front of it and says
+ * nothing about what that module imports in turn. `src/storage/document.ts`
+ * re-exports from `src/ui/audio.ts`, so a core module importing it would reach
+ * `ui/` in two hops with this gate silent; `AUDIT-2` finding `Z9-03` measured
+ * exactly that, with the direct import refused in the same run as the control.
+ * The closure is held instead by the module-graph walk in
+ * `tests/unit/core-boundary.test.ts`, which resolves every specifier under
+ * `src/core/` transitively. This rule stays the fast first line.
  */
 
 import { isBannedGlobal } from './banned-globals.js';
@@ -58,6 +68,13 @@ function insideBoundary(filename, boundaryDir) {
  * resolves `import(`../ui/panel`)` statically and emits the chunk, so a
  * specifier check that only reads `Literal` nodes lets a real cross-boundary
  * import through while looking like it checked.
+ *
+ * **A template literal carrying an expression is not read, and neither is a
+ * concatenation.** `AUDIT-2` finding `Z9-04` measured both: `import(`../${x}
+ * audio`)` from inside `core/` draws no report, and a bundler that resolves it
+ * would ship the chunk. Widening this function to refuse an unreadable dynamic
+ * specifier inside `core/` is the open half of that finding; until it lands,
+ * this returning `null` means "not statically known" and the import is passed.
  */
 function specifierOf(node) {
   if (!node) {

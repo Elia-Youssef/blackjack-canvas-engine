@@ -59,7 +59,9 @@ const UNSPLIT: SplitOrigin = Object.freeze({ fromSplit: false });
  * The total the dealer stands on. SPEC 4.9.
  *
  * Exported so that a coach, a readout or a test can name the threshold rather
- * than writing 17 somewhere the felt cannot correct it.
+ * than writing 17 somewhere the felt cannot correct it. `src/render/felt.ts`
+ * prints "Dealer must stand on all 17s" from it, so the table states the policy
+ * this constant decides rather than a second copy of it.
  */
 export const STANDS_AT = 17;
 

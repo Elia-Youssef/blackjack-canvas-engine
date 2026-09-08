@@ -560,14 +560,31 @@ function isList(value: unknown): value is readonly unknown[] {
  * refuses `NaN`, both infinities, every fraction and anything past 2^53 - 1,
  * each of which is a number `JSON.parse` will happily produce and none of which
  * is a number of hands, chips or decisions.
+ *
+ * **`-0` is normalised rather than refused**, which is why the return adds zero.
+ * It is a safe integer and it is `>= 0`, so it passes the guard on every
+ * reading; what it is not is a number of hands, and `Intl.NumberFormat` prints
+ * it with its sign, so a document carrying it showed "Lifetime hands -0" with
+ * no repair recorded (`AUDIT-2` finding `Z6-04`). Repairing it would be a false
+ * report of a corrupt field, and refusing it would drop a counter that is
+ * numerically right, so the value is made `+0` here and every caller is covered
+ * at once. `-0 + 0` is `+0`; every other value this function returns is
+ * unchanged by the addition. The game itself cannot write it, since
+ * `JSON.stringify(-0)` is `"0"`; a hand-edited or third-party document can, and
+ * that population is what item `I2` exists for.
  */
 function countOf(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value + 0 : null;
 }
 
-/** A signed whole number, for a chip delta, which SPEC 4.10 lets go negative. */
+/**
+ * A signed whole number, for a chip delta, which SPEC 4.10 lets go negative.
+ *
+ * Adds zero for the reason `countOf` above does: `-0` is a safe integer, and a
+ * delta of negative zero is not a thing SPEC 8's history can mean.
+ */
 function integerOf(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value + 0 : null;
 }
 
 function isMember<T extends string>(value: unknown, allowed: readonly T[]): value is T {

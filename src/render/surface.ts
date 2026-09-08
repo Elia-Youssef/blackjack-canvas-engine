@@ -71,19 +71,18 @@ export interface SurfaceSizing {
  * carries, which is why the setting is declared here rather than beside the
  * control that offers it: this module is the logical-to-CSS seam.
  *
- * **The same union is declared a second time, in `src/storage/document.ts`, and
- * that is deliberate rather than drift.** SPEC 13 persists the setting, so the
- * document had to name it before any presentation module existed, and nothing
- * imports `src/storage/` before `BJ-20` wires the reload flows. The other
- * direction is no longer absent: `BJ-19` took `storage` to `ui` for the sound
- * constants, `document.ts` re-exporting them from `src/ui/audio.ts` on the
- * Speed relocation precedent, so the collapse this paragraph once called
- * impossible is now merely deferred. `BJ-14`'s route for `Speed` itself is not
- * available here: `Speed` went to `core/table.ts` because the machine reads
- * it, and nothing in `core/` reads a CSS scale.
- * `tests/unit/layout-breakpoints.test.ts` pins the two declarations to each
- * other, value for value, so a change to one is a red suite rather than a
- * silent disagreement, and `BJ-20` collapses them by importing this one.
+ * **The union is declared here once, and `src/storage/document.ts` re-exports
+ * it.** SPEC 13 persists the setting, so the document had to name it before any
+ * presentation module existed and carried its own copy until `BJ-20` wired the
+ * reload flows; the copy is gone, and `document.ts` now imports these three
+ * names and publishes them again under its own roof, on the same precedent
+ * `BJ-19` set for the sound constants. The edge runs one way only, storage to
+ * presentation, so this module still imports nothing from `src/storage/`.
+ * `BJ-14`'s route for `Speed` itself is not available here: `Speed` went to
+ * `core/table.ts` because the machine reads it, and nothing in `core/` reads a
+ * CSS scale. `tests/unit/layout-breakpoints.test.ts` holds the persisted names
+ * to these, so a second declaration re-introduced on either side is a red suite
+ * rather than a silent disagreement.
  */
 export type SurfaceSize = 100 | 125 | 150 | 200;
 

@@ -13,8 +13,44 @@
  * `C7`, `E2`, `I4`, `I5`, `J4` and `J7` at BJ-20, and `M2`, `M4`, `A5`, `L1`,
  * `L2`, `L3` and `L5` at BJ-21, `E8`, `G9`, `G2`, `D3`, `H1` to `H5` and
  * `H7` at BJ-22, `A3` at BJ-23, and for AUDIT-2 a second `I4` block for
- * finding `J3-01` and a second `E8` block for findings `Z3-01`, `J5-01`,
- * `J1-06` and `J5-02`.
+ * finding `J3-01`, a second `E8` block for findings `Z3-01`, `J5-01`,
+ * `J1-06` and `J5-02`, a gate-integrity block for findings `Z9-01`,
+ * `Z9-02`, `Z9-05`, `Z7-01`, `Z10-01`, `Z8-02`, `Z8-03` and `Z3-02`, an
+ * announcement-and-staged-rules block for findings `Z5-01`, `J1-01`, `J1-02`,
+ * `J1-03`, `J2-02` and `Z2-01`, and an accessibility-semantics block for
+ * findings `J4-01`, `Z4-02`, `J4-02`, `J4-04` and `Z4-03`.
+ *
+ * The AUDIT-2 accessibility-semantics block breaks what a control and a panel
+ * **stand for** rather than what they do, which is the half a player re-reads
+ * by arriving at them later and the half no axe rule covers: a toggle whose
+ * name describes the next press while its state describes the setting, a
+ * disclosure that reports nothing when it expands, a slider that announces a
+ * bare fraction beside a sentence bound to it by nothing, and the house-rule
+ * sentence that named every rule but the one deciding Split. Its four `J5`
+ * entries break the review surface itself, each of SPEC 8's three unprinted
+ * field groups in turn plus the deal order of the cards.
+ *
+ * The AUDIT-2 gate-integrity block breaks the instruments rather than the
+ * product, which is the treatment `A3`'s entries already have. Its edits put
+ * back this file's own reading of a gate, the handler that restores an
+ * interrupted entry and the discard of a bundle a gate built under a mutation;
+ * the memory soak's play-continuity guard and the perf report's blank-page
+ * floor, both pinned in `tests/unit/report-gates.test.ts` because their own
+ * gates cost half an hour and a minute of play; the three ways a Playwright
+ * project can be narrowed or emptied without the matrix census seeing it, and
+ * the three ways the workflow's own project list can stop running what it says;
+ * the screen that must not be on the page during a timed phase and the middle
+ * button that must not be suppressed, each of which had a spec assertion that
+ * could pass having checked nothing; and the third age accumulator in the
+ * renderer, whose entry is also what keeps its gate pointed at the path it
+ * grades. Three more joined them at the cure round's review, finding `R-2`,
+ * over `scripts/check-repository-record.mjs`: it is a required merge check that
+ * nothing in the repository read, so four of its behaviours could be reverted
+ * with every gate still green. They break the author half of its body
+ * exemption, its guard for a file that is tracked and not on disk, and the
+ * event-name gate that decides whether an empty pull request body is a finding,
+ * and `tests/unit/repository-policy.test.ts` grades them by running the shipped
+ * file with one import swapped for a stub.
  *
  * The AUDIT-2 block breaks the two-tab cure. Finding `J3-01` measured a second
  * tab of the shipped game destroying the first tab's persisted record on one
@@ -206,9 +242,14 @@
  * Each mutation below damages one thing and requires a named command to go red.
  * If a mutation is applied and the command still passes, that mutation is
  * reported as UNDETECTED and this script exits 1, because a gate that survives
- * its own removal is decoration.
+ * its own removal is decoration. A gate that did not reach a verdict at all is
+ * neither: `classifyGateRun` below stops the sweep rather than write a killed or
+ * crashed gate into the ledger as a detection.
  *
- * Every file is restored in a finally block, including on Ctrl-C. Run it with:
+ * Every file is restored in a finally block, and on `SIGINT` or `SIGTERM` by the
+ * handler `onSignal` installs, which a finally block does not cover. `dist/` is
+ * discarded at the end of every run, because a gate here may have built it from
+ * a mutated tree. Run it with:
  *
  *   npm run verify:mutations
  *
@@ -217,7 +258,7 @@
  * edited.
  */
 
-import { execFileSync } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -227,15 +268,45 @@ const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 // The local CLI entry points, invoked through node directly. Going through a
 // shell would mean passing arguments unescaped, and going through npx would
 // mean the harness could pick up a different version than the merge gate uses.
+/**
+ * What each gate prints when it is the gate that went red, and why it is here.
+ *
+ * A detection is recorded from two facts, the exit status and this pattern, and
+ * neither is sufficient alone. An exit status is the one thing a gate that
+ * failed shares with a gate that was killed, crashed before its first assertion
+ * or could not start at all: on Windows an external kill arrives as status 1
+ * with no signal, and a runner that threw during startup exits 1 too. Every
+ * gate here ends by stating its own verdict, so requiring that sentence is
+ * requiring the gate to have reached the end and said so.
+ *
+ * The patterns are the tools' own summary lines, measured rather than assumed:
+ * `Test Files  1 failed (1)` from `vitest run`, including when a file fails to
+ * transform or import rather than to assert; `2 problems (2 errors, 0 warnings)`
+ * from `eslint`; `1 failed` from Playwright's line reporter; and
+ * `<name> FAILED with 1 breach(es).` from `finish` in
+ * `scripts/report/support.mjs`, which is the one exit path every report takes.
+ *
+ * Exported so `tests/unit/mutation-harness.test.ts` can hold each pattern
+ * against a real summary line and against a run that printed none.
+ */
+export const GATE_RED = Object.freeze({
+  vitest: /Test Files\s+\d+ failed/,
+  eslint: /\d+ problems? \(\d+ errors?/,
+  playwright: /\b\d+ failed\b/,
+  report: /FAILED with \d+ breach/,
+});
+
 const UNIT = {
   label: 'npm run test',
   bin: join(PROJECT_ROOT, 'node_modules', 'vitest', 'vitest.mjs'),
   argv: ['run'],
+  red: GATE_RED.vitest,
 };
 const LINT = {
   label: 'npm run lint',
   bin: join(PROJECT_ROOT, 'node_modules', 'eslint', 'bin', 'eslint.js'),
   argv: ['.', '--ignore-pattern', 'tests/lint/fixtures/**'],
+  red: GATE_RED.eslint,
 };
 
 /**
@@ -267,13 +338,13 @@ const LINT = {
  *
  * The first is that a gate naming `--project=chromium` for that spec would
  * select **no tests at all**. This Playwright treats an empty root suite as an
- * error rather than a pass, so such a gate is red on the unmutated tree, and
- * `main`'s baseline sweep below runs every distinct `detectedBy` before
- * anything is measured and refuses to report at all when one of them is red.
- * Had it exited zero instead, `record(mutation, !passes(...))` would report
- * every mutation measured against it UNDETECTED, which reddens the sweep too.
- * Both directions are loud, which is the property worth stating; what is not
- * available is a quiet pass. `MOTION_DEMO` therefore names a timing project.
+ * error rather than a pass, and that error carries no verdict of the reporter's,
+ * so `classifyGateRun` below stops the sweep on the unmutated tree instead of
+ * reading the exit status as a failing assertion. Had it exited zero instead,
+ * the baseline check would report the gate green and every mutation measured
+ * against it UNDETECTED, which reddens the sweep too. Both directions are loud,
+ * which is the property worth stating; what is not available is a quiet pass.
+ * `MOTION_DEMO` therefore names a timing project.
  *
  * The second is that a project with dependencies drags its whole chain in. Left
  * alone, each single-spec invocation here would run the three timing projects
@@ -293,6 +364,7 @@ function browserGate(spec, project = 'chromium') {
       '--reporter=line',
       `tests/browser/${spec}`,
     ],
+    red: GATE_RED.playwright,
   };
 }
 
@@ -414,6 +486,13 @@ const CAPTURE_ROUTE = browserGate('capture-route.spec.ts');
 // required red by, and the browser ones are the listener's.
 const TWO_TABS = browserGate('two-tabs.spec.ts');
 
+// AUDIT-2's second browser gate, for finding `J4-01`. Item `J5`'s existing
+// evidence is `tests/unit/hand-history.test.ts`, which grades the **record**;
+// the panel that renders it is DOM over the built `dist/` and no unit runner
+// can see it, which is how the only review surface in the product came to print
+// six of the nine fields the record keeps.
+const HISTORY_PANEL = browserGate('history-panel.spec.ts');
+
 /**
  * One measurement report, as a gate. `BJ-22`.
  *
@@ -443,6 +522,7 @@ function reportGate(name) {
     label: `npm run report:${name}`,
     bin: join(PROJECT_ROOT, 'scripts', 'report', 'gate.mjs'),
     argv: [name],
+    red: GATE_RED.report,
   };
 }
 
@@ -4027,10 +4107,14 @@ const EDITS = [
     item: 'I2',
     name: 'a negative count is accepted as a count',
     file: 'src/storage/document.ts',
+    // Re-pointed at `AUDIT-2` W9: the cure for finding `Z6-04` added `+ 0` to
+    // this return, so the line this entry anchored on no longer exists. The
+    // mutation is the same one, the range guard dropped, and it was re-proven
+    // red by hand at the re-point.
     find:
-      "  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;",
+      "  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value + 0 : null;",
     replace:
-      "  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;",
+      "  return typeof value === 'number' && Number.isSafeInteger(value) ? value + 0 : null;",
     detectedBy: UNIT,
   },
   {
@@ -4493,11 +4577,18 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // AUDIT-2 re-pointed this find. Finding `Z1-03` wired the three rule lines
+    // to the constants that decide them, so both lines this entry deletes are
+    // templates now rather than literals. The mutant is unchanged in meaning:
+    // the felt prints three lines where SPEC 16 states four.
     item: 'E5',
     name: 'the insurance line drops off the felt print',
     file: 'src/render/felt.ts',
-    find: "    'INSURANCE PAYS 2 TO 1',\n    'BLACKJACK PAYS 3 TO 2',",
-    replace: "    'BLACKJACK PAYS 3 TO 2',",
+    find:
+      '    `INSURANCE PAYS ${String(INSURANCE_PAYS)} TO 1`,\n' +
+      '    `BLACKJACK PAYS ${String(NATURAL_PAYS.numerator)} TO ${String(NATURAL_PAYS.denominator)}`,',
+    replace:
+      '    `BLACKJACK PAYS ${String(NATURAL_PAYS.numerator)} TO ${String(NATURAL_PAYS.denominator)}`,',
     detectedBy: UNIT,
   },
   {
@@ -4833,8 +4924,15 @@ const EDITS = [
     item: 'M5',
     name: 'the tween ages on the raw delta, so one hostile frame freezes the felt',
     file: 'src/render/scene.ts',
-    find: '  const step = Number.isFinite(dt) && dt > 0 ? dt : 0;',
-    replace: '  const step = dt;',
+    // Re-pointed at AUDIT-2 with `advance`'s own first line: finding `Z3-02`
+    // gave `easeStep` the same guard, so the guard line alone now names two
+    // accumulators and each needs its own entry.
+    find:
+      '  const span = PACING[timer.pacing];\n' +
+      '  const step = Number.isFinite(dt) && dt > 0 ? dt : 0;',
+    replace:
+      '  const span = PACING[timer.pacing];\n' +
+      '  const step = dt;',
     detectedBy: UNIT,
   },
   {
@@ -5122,8 +5220,11 @@ const EDITS = [
     item: 'E9',
     name: 'the hand re-centre ages against the Speed, so a switch re-slides it',
     file: 'src/render/scene.ts',
-    find: '  held.age = Math.min(held.age + dt, PACING.handRecentre);',
-    replace: "  held.age = Math.min(held.age + dt, motion.seconds('handRecentre'));",
+    // Re-pointed at AUDIT-2: the delta this line spends is the guarded `step`
+    // since finding `Z3-02`. The mutation is unchanged, the cap against the
+    // scaled span instead of the unscaled one.
+    find: '  held.age = Math.min(held.age + step, PACING.handRecentre);',
+    replace: "  held.age = Math.min(held.age + step, motion.seconds('handRecentre'));",
     detectedBy: UNIT,
   },
   {
@@ -5842,11 +5943,16 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // Re-pointed at `AUDIT-2`, which moved the line this used to break: rule 3
+    // coalesces within a kind now, so the replacement is the assignment into
+    // the pending set rather than a single slot. The break is the same one, an
+    // entry that joins the line instead of replacing its own kind's, and the
+    // four-card deal still catches it.
     item: 'G4',
     name: 'a polite change queues behind the pending one instead of replacing it',
     file: 'src/ui/announce.ts',
-    find: '      pendingPolite = announcement;',
-    replace: '      pendingPolite = pendingPolite ?? announcement;',
+    find: '      polite[held] = announcement;',
+    replace: '      polite.push(announcement);',
     detectedBy: UNIT,
   },
   {
@@ -6067,22 +6173,36 @@ const EDITS = [
     detectedBy: AUDIO_START,
   },
   {
+    // AUDIT-2 re-pointed this find. Finding `Z5-02` moved the resume behind
+    // `resumeQuietly`, which answers the synchronous throw the `.catch` never
+    // saw, so what the gesture does is one line. The mutant is unchanged in
+    // meaning: the gesture that constructed the context does not resume it.
     item: 'K2',
     name: 'resume stops being called inside the gesture that constructed the context',
     file: 'src/ui/audio.ts',
-    find:
-      "    void context.resume().catch((error: unknown) => {\n      void error;\n    });\n  }\n\n  function onGesture(): void {",
-    replace:
-      "    void Promise.resolve().catch((error: unknown) => {\n      void error;\n    });\n  }\n\n  function onGesture(): void {",
+    find: '    resumeQuietly(context);\n  }\n\n  function onGesture(): void {',
+    replace: '  }\n\n  function onGesture(): void {',
     detectedBy: AUDIO_START,
   },
   {
+    // AUDIT-2 re-pointed this find, and gave the entry a detector it was
+    // missing. Finding `Z5-02` moved the three wiring statements inside this
+    // `try`, so the catch drops the half-built graph as well as the context and
+    // lets go of the page; the mutant is unchanged in meaning.
+    //
+    // **What changed is what catches it.** The entry used to rest on vitest's
+    // unhandled-error channel, which exits non-zero while printing
+    // `Test Files 56 passed (56)` beside `Errors 3 errors`; this harness
+    // requires a gate to print its own verdict before it records a detection,
+    // so the entry stopped the sweep rather than being caught by it (measured
+    // at `AUDIT-2`). `audio.test.ts` now asserts that a refused construction
+    // releases the gesture listeners, which a rethrow never reaches.
     item: 'K2',
     name: 'a failed construction is rethrown instead of swallowed',
     file: 'src/ui/audio.ts',
     find:
-      '      void error;\n      context = null;\n      return;\n    }\n    if (context === null) {',
-    replace: '      throw error;\n    }\n    if (context === null) {',
+      '      void error;\n      context = null;\n      master = null;\n      release();\n      return;',
+    replace: '      throw error;',
     detectedBy: UNIT,
   },
   {
@@ -6178,11 +6298,15 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // AUDIT-2 re-pointed this find: finding `X4-02` moved the scheduling loop
+    // into `playCue`, so the guard around it wraps a body rather than a
+    // paragraph and this line sits one indent level in. The mutant is
+    // unchanged.
     item: 'K3',
     name: 'the noise buffer is regenerated on every percussive cue',
     file: 'src/ui/audio.ts',
-    find: '          if (noise === null) {',
-    replace: '          if (true) {',
+    find: '        if (noise === null) {',
+    replace: '        if (true) {',
     detectedBy: UNIT,
   },
   {
@@ -6429,8 +6553,8 @@ const EDITS = [
     item: 'I5',
     name: 'a staged rule record applies the moment it is staged',
     file: 'src/core/table.ts',
-    find: '    staged = houseRules(next);',
-    replace: '    staged = houseRules(next);\n    applyStagedRules();',
+    find: '    staged = sameRules(next, rules) ? null : houseRules(next);',
+    replace: '    staged = sameRules(next, rules) ? null : houseRules(next);\n    applyStagedRules();',
     detectedBy: UNIT,
   },
   {
@@ -6443,8 +6567,8 @@ const EDITS = [
     item: 'I5',
     name: 'the staged record is the caller\'s own object, editable mid-round',
     file: 'src/core/table.ts',
-    find: '    staged = houseRules(next);',
-    replace: '    staged = next;',
+    find: 'staged = sameRules(next, rules) ? null : houseRules(next);',
+    replace: 'staged = sameRules(next, rules) ? null : next;',
     detectedBy: UNIT,
   },
   {
@@ -6459,8 +6583,10 @@ const EDITS = [
     item: 'C2',
     name: 'a staged deck count is not refused, so an ordinary Deal reaches a wallet throw',
     file: 'src/core/table.ts',
-    find: '    assertDeckCount(next.decks);\n    staged = houseRules(next);',
-    replace: '    staged = houseRules(next);',
+    // The setter grew a paragraph between these two lines at `AUDIT-2`, so the
+    // guard is dropped on its own rather than as part of a two-line block.
+    find: '    assertDeckCount(next.decks);\n',
+    replace: '',
     detectedBy: UNIT,
   },
   {
@@ -6754,11 +6880,15 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // AUDIT-2 re-pointed this find. Finding `X4-01` made the list drop the tags
+    // `Intl` refuses outright and named the fallback, because one malformed tag
+    // refuses the whole list and the appended fallback rescued nothing. The
+    // mutant is unchanged in meaning: the list ends without a fallback.
     item: 'M2',
     name: 'the locale list loses the fallback at the end of it',
     file: 'src/ui/format.ts',
-    find: "  return [...(preferred ?? []), 'en-US'];",
-    replace: '  return [...(preferred ?? [])];',
+    find: '  return [...(preferred ?? []).filter(readable), FALLBACK_LOCALE];',
+    replace: '  return [...(preferred ?? []).filter(readable)];',
     detectedBy: UNIT,
   },
   {
@@ -7548,6 +7678,898 @@ const EDITS = [
     replace: '        const specs = handLayout(cards, centre, topY, fan, faceUpCount, laid.value);',
     detectedBy: UNIT,
   },
+
+  // ------------------------------------------------------------------------
+  // AUDIT-2: the instruments, not the product
+  // ------------------------------------------------------------------------
+  //
+  // Findings `Z7-01`, `Z10-01`, `Z9-02`, `Z8-02`, `Z8-03`, `Z3-02`, `Z9-01` and
+  // `Z9-05`, in that order. Each is a gate that could stop measuring what it
+  // says it measures without anything going red: a project filtered to nothing,
+  // a workflow that stopped asking for an engine, a report guard nothing pinned,
+  // a spec assertion that could execute zero times, a renderer path no gate
+  // reached, and this file's own reading of a gate that never ran. The entries
+  // that name a file under `.github/` or `scripts/` are the first in the ledger
+  // to do so.
+  //
+  // Two of the finds below span two lines or more because they name lines of
+  // **this** file, and that is a requirement rather than a style: a single-line
+  // `find` quoting a line of this file would appear twice, once in the source
+  // and once in its own entry, and `runEdit` refuses a target that is not
+  // unique. A multi-line `find` is written here as escaped newlines inside
+  // quotes and matches only the source.
+  {
+    // AUDIT-2, finding `Z7-01`. The fourth way to claim item `A3` without
+    // meeting it, beside the three the census already resolved: a project that
+    // still exists, still names its channel and still ignores only the timing
+    // spec, and runs no test at all. `npx playwright test --project=msedge
+    // --no-deps --list` reported `Total: 0 tests in 0 files` with the whole
+    // census green.
+    item: 'A3',
+    name: 'a project is filtered to nothing while its name and patterns stay',
+    file: 'playwright.config.ts',
+    find:
+      "      name: 'msedge',\n" +
+      '      testIgnore: [TIMING_SPEC, VISUAL_SPEC],',
+    replace:
+      "      name: 'msedge',\n" +
+      '      grepInvert: /msedge/,\n' +
+      '      testIgnore: [TIMING_SPEC, VISUAL_SPEC],',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'A3',
+    name: 'a filter at the top of the config narrows every project at once',
+    file: 'playwright.config.ts',
+    find:
+      "  testDir: './tests/browser',\n" +
+      '  fullyParallel: true,',
+    replace:
+      "  testDir: './tests/browser',\n" +
+      '  grep: /this title matches nothing at all/,\n' +
+      '  fullyParallel: true,',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'A3',
+    name: 'the runner is pointed at a directory the census does not read',
+    file: 'playwright.config.ts',
+    find: "  testDir: './tests/browser',",
+    replace: "  testDir: './tests',",
+    detectedBy: UNIT,
+  },
+  {
+    // AUDIT-2, finding `Z3-02`. The third age accumulator, and the only one
+    // that was unguarded. It is also the entry that keeps the gate pointed at
+    // the path it grades: with the hostile-clock scene built from chips alone,
+    // as it was, `easeStep` is never called and this mutation goes UNDETECTED
+    // in the sweep rather than red.
+    item: 'M5',
+    name: 'the hand-width ease takes the raw delta, so one bad frame is permanent',
+    file: 'src/render/scene.ts',
+    find:
+      '  const step = Number.isFinite(dt) && dt > 0 ? dt : 0;\n' +
+      "  // The unscaled constant, for `advance`'s reason: the age outlives the Speed\n" +
+      '  // it was accumulated at, and a hand width parked at `0.6 x handRecentre` by\n' +
+      '  // Fast would re-slide on the first Normal frame after a mid-round switch.\n' +
+      '  held.age = Math.min(held.age + step, PACING.handRecentre);',
+    replace: '  held.age = Math.min(held.age + dt, PACING.handRecentre);',
+    detectedBy: UNIT,
+  },
+  {
+    // AUDIT-2, finding `Z8-03`. Item `D5`'s middle-button half had no entry at
+    // all, against three for the `contextmenu` half, and its assertion was a
+    // loop over a list nothing required to be non-empty. The spec now counts
+    // the events first; this is the suppression it has to catch.
+    item: 'D5',
+    name: 'the middle button is suppressed by the one control factory',
+    file: 'src/ui/dom.ts',
+    find:
+      "  node.type = 'button';\n" +
+      '  node.textContent = label;',
+    replace:
+      "  node.type = 'button';\n" +
+      '  node.textContent = label;\n' +
+      "  node.addEventListener('auxclick', (event) => {\n" +
+      '    event.preventDefault();\n' +
+      '  });',
+    detectedBy: SECONDARY_POINTER,
+  },
+  {
+    // AUDIT-2, finding `Z8-02`. `G1`'s completeness argument for SPEC 10's five
+    // timed phases is one test, and its whole verdict used to sit inside a
+    // branch on where a protocol round trip landed: a late read passed it
+    // having asserted nothing. The test now samples the whole round and
+    // requires a timed reading, and this is the entry that shows it can go red
+    // for the reason it is written for, a screen showing on a phase that
+    // accepts no intent.
+    item: 'G1',
+    name: 'the betting screen stays on the page through the deal',
+    file: 'src/ui/components/betting.ts',
+    find: "      setHidden(root, state.readout.phase.kind !== 'betting');",
+    replace: '      setHidden(root, false);',
+    detectedBy: AXE,
+  },
+  {
+    // AUDIT-2, finding `Z10-01`. The layer under the census above: what CI runs
+    // is a hand-typed string, and before this block nothing in the repository
+    // read `.github` at all. `tests/unit/ci-workflow.test.ts` reads the
+    // workflow's own commands against the config's project set.
+    item: 'A3',
+    name: 'an engine is dropped from the browser job the merge is gated on',
+    file: '.github/workflows/ci.yml',
+    find: '          --project=chromium --project=firefox --project=webkit',
+    replace: '          --project=chromium --project=firefox',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'A3',
+    name: 'the baseline job compares nothing and reports success anyway',
+    file: '.github/workflows/ci.yml',
+    find: '        run: npx playwright test --project=chromium --no-deps visual.spec.ts',
+    replace:
+      '        run: npx playwright test --project=chromium --no-deps visual.spec.ts --ignore-snapshots',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'A3',
+    name: 'the container the baselines are rendered in drifts from the pinned runner',
+    file: '.github/workflows/ci.yml',
+    find: '      image: mcr.microsoft.com/playwright:v1.62.1-noble',
+    replace: '      image: mcr.microsoft.com/playwright:v1.61.0-noble',
+    detectedBy: UNIT,
+  },
+  {
+    // AUDIT-2, finding `Z9-02`. The twin of the `perf.mjs` `MIN_ROUNDS` entry in
+    // the `BJ-22` block: `memory.mjs` is measured by half an hour of play, so
+    // its guards are pinned by `tests/unit/report-gates.test.ts` rather than run
+    // end to end, and this one, the cure that turned a falsely passing `H5`
+    // report red, was in neither the pins nor the ledger.
+    item: 'H5',
+    name: 'the memory soak stops requiring every interval to have been played',
+    file: 'scripts/report/memory.mjs',
+    find: '    if (played < 10) {',
+    replace: '    if (played < 0) {',
+    detectedBy: UNIT,
+  },
+  {
+    // The other half of `Z9-02`: the blank-page floor is measured every run and
+    // its comparison was pinned by nothing, so the instrument could report a
+    // floor it never stood on.
+    item: 'H1',
+    name: 'the blank-page control stops being compared against its own floor',
+    file: 'scripts/report/perf.mjs',
+    find: '  if (round2(control.p95) > controlCeiling) {',
+    replace: '  if (round2(control.p95) > Number.POSITIVE_INFINITY) {',
+    detectedBy: UNIT,
+  },
+  {
+    // Findings `Z9-01` and `Z9-05`, this file's own two. **The label is `M4`
+    // because no acceptance item names this harness and QUALITY-BAR section
+    // 12's fail-loudly rule is the property these three break**: a harness that
+    // cannot tell a gate that failed from a gate that never ran, an interrupted
+    // entry left written into `src/`, and a bundle built under a mutation left
+    // where the reports and the fingerprint read it. All three are measured by
+    // `tests/unit/mutation-harness.test.ts`, which imports this file and is
+    // therefore also the only demonstration that the entry-point guard holds.
+    item: 'M4',
+    name: 'the harness reads any non-zero exit as a gate going red again',
+    file: 'scripts/mutation-check.mjs',
+    find:
+      '  if (run.status === 0) {\n' +
+      "    return 'green';\n" +
+      '  }',
+    replace: "  return run.status === 0 ? 'green' : 'red';",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M4',
+    name: 'an interrupted sweep stops restoring the entry it was holding',
+    file: 'scripts/mutation-check.mjs',
+    find:
+      "  process.on('SIGINT', onSignal);\n" +
+      "  process.on('SIGTERM', onSignal);",
+    replace: '  void onSignal;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M4',
+    name: 'the bundle a gate built under a mutation is left where reports read it',
+    file: 'scripts/mutation-check.mjs',
+    find:
+      '    discardBuild();\n' +
+      "    console.log('dist/ was removed: a gate here may have built it under a mutation.');",
+    replace:
+      "    console.log('dist/ was removed: a gate here may have built it under a mutation.');",
+    detectedBy: UNIT,
+  },
+  {
+    // The cure round's review, finding `R-2`, and the same class one file
+    // along: `scripts/check-repository-record.mjs` is a REQUIRED merge check
+    // and nothing in the repository read it. The reviewer reverted four of its
+    // behaviours and typecheck, lint and all 1303 unit tests stayed green. The
+    // three edits here break three of those four, and the fourth, the widening
+    // of the subject and branch forms to the `PF-n` and `ENG-n` areas, is
+    // covered by the same file's own arm rather than by an entry, because a
+    // regular expression narrowed to five of seven areas has no single line to
+    // quote that is not the whole expression.
+    //
+    // `tests/unit/repository-policy.test.ts` runs the shipped file with its one
+    // `node:child_process` import swapped for a stub, so these are graded by the
+    // gate's real exit codes and its real `FAIL:` lines. The label is `M4` for
+    // the reason the three above carry it: no acceptance item names this
+    // script, and what they break is QUALITY-BAR section 12's fail-loudly rule
+    // applied to the merge gate itself.
+    item: 'M4',
+    name: 'the update tooling body exemption is bought by a branch name alone',
+    file: 'scripts/check-repository-record.mjs',
+    find: "  dependencyBranch && process.env.PULL_REQUEST_AUTHOR === 'dependabot[bot]';",
+    replace: '  dependencyBranch;',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M4',
+    name: 'a tracked file missing from the tree kills the scan instead of reporting',
+    file: 'scripts/check-repository-record.mjs',
+    find:
+      '  if (!existsSync(file)) {\n' +
+      '    fail(`${file} is tracked but missing from the working tree`);\n' +
+      '    continue;\n' +
+      '  }\n',
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'M4',
+    name: 'an empty pull request body is excused by its own falsiness again',
+    file: 'scripts/check-repository-record.mjs',
+    find: 'if (onPullRequest || process.env.PULL_REQUEST_BODY) {',
+    replace: 'if (process.env.PULL_REQUEST_BODY) {',
+    detectedBy: UNIT,
+  },
+
+  // -------------------------------------------------------------------------
+  // AUDIT-2, the announcement layer and the staged-rules truth
+  // -------------------------------------------------------------------------
+  //
+  // Findings `Z5-01`, `J1-01`, `J1-02`, `J1-03`, `J2-02` and `Z2-01`. The first
+  // five break the game's voice for a screen-reader player: a sentence one
+  // frame produced beside another sentence, a milestone that happens once, a
+  // refusal that shares its frame with an acceptance, and SPEC 10's peek screen,
+  // which is shorter than the announcement floor. The last two break the
+  // Settings panel's account of what the next deal will be played under.
+  //
+  // Four of them break a **class** rather than an arithmetic: coalescing is per
+  // `AnnouncementKind` now, so the way to lose a sentence again is to put it in
+  // the same class as the sentence that arrives beside it. That is why three of
+  // these read `kind:` and are one word wide. The third was added at the cure
+  // round's review, which found that a frame long enough for two deal steps
+  // produces the dealer's card beside the player's own, so the two are a class
+  // apart as well.
+  // Re-pointed at the cure round's review, which split the dealer's card into
+  // its own kind: the anchor below used to read `kind: 'card'` and the line it
+  // sat under no longer exists. The mutation is the one it always was, the
+  // dealer's card put back into the reveal sentence's own class, and it was
+  // hand-proven red against the re-pointed anchor. The entry beside it is the
+  // other half the split protects.
+  {
+    item: 'G4',
+    name: 'the dealer card shares a class with the reveal sentence that arrives with it',
+    file: 'src/ui/announce.ts',
+    find:
+      '        // **A kind of its own, because a dealer card and a player card CAN be\n' +
+      "        // produced by one frame**, and the reviewer of `AUDIT-2`'s cure round\n" +
+      "        // measured it: `table.ts`'s `update` drains the deal queue in a `while`\n" +
+      '        // loop against the accumulator, so a frame long enough for two deal\n' +
+      '        // steps takes two, and SPEC 4.3 deals player, dealer, player, dealer. A\n' +
+      '        // frame that takes steps two and three produces this sentence beside\n' +
+      "        // the player's second card, and while the two shared a kind this one\n" +
+      '        // replaced that one in place: at the default Speed four of sixty hitch\n' +
+      "        // positions in a 60 fps deal lost the player's card, at Fast fourteen\n" +
+      '        // of sixty. That is the pair rule 3 must not coalesce, which is what\n' +
+      "        // this union's own rule says, so the kind is split rather than the\n" +
+      '        // comment corrected. The reveal frame is unaffected either way: the\n' +
+      '        // sentence it produces beside this one is a phase sentence.\n' +
+      "        kind: 'dealerCard',",
+    replace: "        kind: 'phase',",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'G4',
+    name: "the dealer card is collapsed back into the player's own class",
+    file: 'src/ui/announce.ts',
+    find:
+      '        // sentence it produces beside this one is a phase sentence.\n' +
+      "        kind: 'dealerCard',",
+    replace: "        kind: 'card',",
+    detectedBy: UNIT,
+  },
+  {
+    item: 'G4',
+    name: 'milestones coalesce with each other, so a frame that awarded three announces one',
+    file: 'src/ui/announce.ts',
+    find:
+      "const NEVER_COALESCED: ReadonlySet<AnnouncementKind> = new Set<AnnouncementKind>(['milestone']);",
+    replace:
+      'const NEVER_COALESCED: ReadonlySet<AnnouncementKind> = new Set<AnnouncementKind>([]);',
+    detectedBy: UNIT,
+  },
+  {
+    // The other half of `J1-02`, and the one a single award reaches: with the
+    // milestone in the phase class, the betting screen's own sentence replaces
+    // it the moment the player presses Next Hand, which is what the finding
+    // measured on the shipped page over 45 rounds.
+    item: 'G4',
+    name: 'a milestone shares its class with the screen sentence that replaces it',
+    file: 'src/ui/announce.ts',
+    find:
+      "    said.push({ priority: 'polite', kind: 'milestone', text: `Milestone: ${milestoneText(id)}.` });",
+    replace:
+      "    said.push({ priority: 'polite', kind: 'phase', text: `Milestone: ${milestoneText(id)}.` });",
+    detectedBy: SCREEN_READER,
+  },
+  {
+    item: 'G4',
+    name: 'the peek sentence loses its exemption from the announcement floor',
+    file: 'src/ui/announce.ts',
+    find: "        ...(readout.phase.kind === 'peek' ? { immediate: true } : {}),",
+    replace: '        ...(false ? { immediate: true } : {}),',
+    detectedBy: SCREEN_READER,
+  },
+  {
+    // The queue's side of the same ruling, required red by the unit schedule
+    // rather than by a round: the exemption is what writes an entry ahead of
+    // the floor, and without it the peek sentence waits and is replaced.
+    item: 'G4',
+    name: 'the queue stops writing an exempt entry ahead of the floor',
+    file: 'src/ui/announce.ts',
+    find: '      if (immediate !== null) {',
+    replace: '      if (false && immediate !== null) {',
+    detectedBy: UNIT,
+  },
+  {
+    // `J1-01`, both clears. SPEC 4.11 requires the reason to reach the player,
+    // and each of these two lines on its own is enough to make it reach nothing:
+    // the first when the refused press shares a frame with an accepted one, the
+    // second when it is one frame ahead of it. The spec arm each breaks is the
+    // arm named after that case.
+    item: 'B15',
+    name: 'a refusal is cleared by the phase the accepted intent moved to',
+    file: 'src/main.ts',
+    find: '    if (readout.phase.kind !== was && noticeAge >= NOTICE_FLOOR_SECONDS) {',
+    replace: '    if (readout.phase.kind !== was) {',
+    detectedBy: RAPID_INPUT,
+  },
+  {
+    item: 'B15',
+    name: 'a refusal is cleared by the next accepted action before it can be read',
+    file: 'src/main.ts',
+    find: '    } else if (applied !== null && noticeAge >= NOTICE_FLOOR_SECONDS) {',
+    replace: '    } else if (applied !== null) {',
+    detectedBy: RAPID_INPUT,
+  },
+  {
+    // `J2-02`. The panel renders five toggles and a sentence about one subject;
+    // this puts them back on two different records, which is the contradiction
+    // the finding reproduced three times in both directions.
+    item: 'I5',
+    name: 'the settings sentence states the rules in force while its toggles show the staged ones',
+    file: 'src/ui/components/overlays.ts',
+    find: '      const house = staged ?? state.readout.rules;',
+    replace: '      const house = state.readout.rules;',
+    detectedBy: OVERLAYS,
+  },
+  {
+    item: 'I5',
+    name: 'the settings sentence stops naming which side of SPEC 14 boundary it is on',
+    file: 'src/ui/components/overlays.ts',
+    find: "      const lead = staged === null ? 'This round runs' : 'From your next deal:';",
+    replace: "      const lead = 'This round runs';",
+    detectedBy: OVERLAYS,
+  },
+  {
+    // `Z2-01`. The accessor's `null` half, which the panel above now depends on
+    // to decide which of the two sentences to print: a no-op stage reported as
+    // a pending change puts a sentence about the next deal on a panel that
+    // changed nothing.
+    item: 'I5',
+    name: 'a stage identical to the rules in force is reported as a pending change',
+    file: 'src/core/table.ts',
+    find: '    staged = sameRules(next, rules) ? null : houseRules(next);\n  }',
+    replace: '    staged = houseRules(next);\n  }',
+    detectedBy: UNIT,
+  },
+  {
+    // The comparison behind it. `sameRules` is written out field by field, so
+    // the way to break it quietly is to stop comparing one of the five; the
+    // field census in `house-rules-staging.test.ts` flips each in turn.
+    item: 'I5',
+    name: 'the rule comparison stops reading the split comparison',
+    file: 'src/core/rules.ts',
+    find: '    a.splitRule === b.splitRule\n',
+    replace: '    true\n',
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // AUDIT-2 W5: boot and failure armour. Findings `X4-01`, `J6-01`,
+  // `X4-02`, `X4-03` and `Z5-02`. Item `A5` owns the boot's own answer to
+  // a platform it cannot read, `M4` owns the stop, and `K2` owns the
+  // engine's "never throws".
+  // ------------------------------------------------------------------
+  {
+    // `X4-01`. `Intl.NumberFormat` validates a locale list structurally and
+    // throws on the first malformed tag, so one unreadable entry refuses the
+    // whole list: 10 of 16 plausible lists threw, `['en-US', 'C']` among them,
+    // which is what made the appended fallback decorative. This module is
+    // imported by the composition root, so the throw lands before the error
+    // boundary exists and before the capability probe can write a notice.
+    item: 'A5',
+    name: 'the locale list stops dropping the tags Intl refuses',
+    file: 'src/ui/format.ts',
+    find: '  return [...(preferred ?? []).filter(readable), FALLBACK_LOCALE];',
+    replace: '  return [...(preferred ?? []), FALLBACK_LOCALE];',
+    detectedBy: UNIT,
+  },
+  {
+    // The guard behind the filter, which is what keeps the promise from
+    // resting on the filter being exhaustive: the list is read from a getter a
+    // platform can refuse rather than answer.
+    item: 'A5',
+    name: 'the module-scope formatters rethrow instead of falling back',
+    file: 'src/ui/format.ts',
+    find: '    return createFormatters([FALLBACK_LOCALE]);',
+    replace: '    throw error;',
+    detectedBy: UNIT,
+  },
+  {
+    // `J6-01`. The engine spent its one start on the first gesture of any kind
+    // and never read `context.state` again, so a context the platform declined
+    // to run was permanent silence that every instrument reported as sounding.
+    // This puts the listeners back on the old rule: off after one gesture,
+    // whatever the platform did with the context.
+    item: 'K2',
+    name: 'a later gesture stops asking a suspended context to run',
+    file: 'src/ui/audio.ts',
+    find:
+      "    if (context === null || context.state === 'running') {\n" +
+      '      release();\n      return;\n    }\n    resumeQuietly(context);',
+    replace: '    release();',
+    detectedBy: UNIT,
+  },
+  {
+    // The other side of the same rule: a running context is nothing left to
+    // ask for, and an engine that kept listening for ever would be answering
+    // gestures it has no use for.
+    item: 'K2',
+    name: 'the gesture listeners stay bound after the context is running',
+    file: 'src/ui/audio.ts',
+    find: "    if (context === null || context.state === 'running') {",
+    replace: '    if (context === null) {',
+    detectedBy: UNIT,
+  },
+  {
+    // The retry a player cannot be relied on to make: a session that answered
+    // the gesture policy once and then played by pressing controls produces no
+    // further `pointerdown` on the document between rounds.
+    item: 'K2',
+    name: 'a cue stops asking a suspended context to run',
+    file: 'src/ui/audio.ts',
+    find: "      if (context.state !== 'running') {\n        resumeQuietly(context);\n      }",
+    replace: '      if (false) {\n        resumeQuietly(context);\n      }',
+    detectedBy: UNIT,
+  },
+  {
+    // `X4-02`. `cue` is offered from inside the frame callback, which is the
+    // one thing the composition root wraps in the error boundary, so an
+    // unguarded throw from a context the platform closed is not silence: it is
+    // the full-page recovery panel over an optional subsystem.
+    item: 'K2',
+    name: 'a cue on a dead context takes the page down instead of going silent',
+    file: 'src/ui/audio.ts',
+    find: '        // per cue.\n        void error;',
+    replace: '        throw error;',
+    detectedBy: UNIT,
+  },
+  {
+    // `Z5-02`. The catch drops the half-built graph as well as the context: an
+    // engine that kept a master gain attached to nothing would go on writing
+    // into a chain that reaches no destination, and the envelope's first gain
+    // write lands before the connect that refuses.
+    item: 'K2',
+    name: 'a construction that failed part way keeps its half-built graph',
+    file: 'src/ui/audio.ts',
+    find: '      context = null;\n      master = null;\n      release();\n      return;',
+    replace: '      release();\n      return;',
+    detectedBy: UNIT,
+  },
+  {
+    // `Z5-02`'s other unguarded call. `resume()` is specified to return a
+    // promise, so the `.catch` answers a rejection and never a synchronous
+    // throw; the cue path asks a non-running context to run before it schedules
+    // anything, so the refusal escapes `cue` itself.
+    item: 'K2',
+    name: 'resume loses its guard against a platform that throws from it',
+    file: 'src/ui/audio.ts',
+    find:
+      '  try {\n    void target.resume().catch((error: unknown) => {\n      void error;\n    });\n  } catch (error) {',
+    replace:
+      '  void target.resume().catch((error: unknown) => {\n    void error;\n  });\n  if (false) try {\n    void 0;\n  } catch (error) {',
+    detectedBy: UNIT,
+  },
+  {
+    // `X4-03`. `current` is null for the whole of a boot, so the boundary's
+    // stop resolved to nothing and item `M4`'s "stops the loop cleanly" was
+    // satisfied vacuously on the two routes that enter that window: the page's
+    // own wrapped first boot and the in-page Reset's re-boot.
+    item: 'M4',
+    name: 'the boundary stops nothing when a failure lands during the boot',
+    file: 'src/main.ts',
+    find: '    stopPartialBoot();',
+    replace: '    void stopPartialBoot;',
+    detectedBy: ERROR_BOUNDARY,
+  },
+  {
+    // And the list itself: a subsystem that never registers its teardown is a
+    // listener left behind on a page whose game no longer exists, which is
+    // exactly what the finding measured for the audio engine's gesture pair.
+    item: 'M4',
+    name: 'the audio engine registers no teardown while the boot is running',
+    file: 'src/main.ts',
+    find: '  building.push(() => {\n    audio.dispose();\n  });',
+    replace: '  void audio;',
+    detectedBy: ERROR_BOUNDARY,
+  },
+  // ------------------------------------------------------------------
+  // AUDIT-2 W3: money display truth. Findings `J2-01`, `Z3-03`/`J3-05`,
+  // `J2-03` and `Z1-03`.
+  // ------------------------------------------------------------------
+  {
+    // `Z3-03` and `J3-05`. `scene.ts`'s `advance` and `easeStep` both cap a
+    // tween age at the **unscaled** constant and both say why: SPEC 14 lets
+    // Speed move mid-round, and an age parked at the Fast span reads as
+    // progress 0.6 against the Normal one. The balance count-up is the third
+    // consumer of the same API and capped at the scaled span, so pressing
+    // Normal made the readout jump to a figure the machine never held.
+    item: 'E9',
+    name: 'the balance count-up caps its age at the Speed-scaled span',
+    file: 'src/ui/components/readouts.ts',
+    find: '      counting.age = Math.min(counting.age + step, PACING.balanceCountUp);',
+    replace:
+      "      counting.age = Math.min(counting.age + step, state.motion.seconds('balanceCountUp'));",
+    detectedBy: SPEED_SETTING,
+  },
+  {
+    // `J2-01`. `wallet.wager` is the wager being built at the controls and
+    // `commitInitial` zeroes it at the deal, so SPEC 11's "current wager" read
+    // 0 on every frame from the deal to the round result while the stake sat on
+    // the felt. Below 768 px it is one of only three readouts in the top bar.
+    item: 'C5',
+    name: 'the wager reading falls back to the pending wager during a round',
+    file: 'src/ui/state.ts',
+    find:
+      '  const { hands, wallet } = readout;\n  if (hands.length === 0) {\n' +
+      '    return wallet.wager;\n  }\n' +
+      '  return hands.reduce((total, hand) => total + hand.wager, 0);',
+    replace: '  return readout.wallet.wager;',
+    detectedBy: UNIT,
+  },
+  {
+    // The readout row's own wiring, on the shipped page.
+    item: 'C5',
+    name: 'the wager readout goes back to rendering the pending wager',
+    file: 'src/ui/components/readouts.ts',
+    find: "  { key: 'wager', label: 'Wager', value: (s) => chips(wagerAtStake(s.readout)) },",
+    replace: "  { key: 'wager', label: 'Wager', value: (s) => chips(s.readout.wallet.wager) },",
+    detectedBy: ROUND_FLOW,
+  },
+  {
+    // And the mirror's, which is the only textual surface a screen reader has
+    // for the amount at risk between the deal and the round result.
+    item: 'G4',
+    name: 'the mirror money sentence goes back to the pending wager',
+    file: 'src/ui/components/mirror.ts',
+    find:
+      '        `Chips ${formatChips(readout.wallet.chips)}. Wager ${formatChips(wagerAtStake(readout))}.`,',
+    replace:
+      '        `Chips ${formatChips(readout.wallet.chips)}. Wager ${formatChips(readout.wallet.wager)}.`,',
+    detectedBy: ROUND_FLOW,
+  },
+  {
+    // `J2-03`. SPEC 6 keys Silver to a best balance of 2,500 and Gold to
+    // 10,000 and calls the ladder "what gives the bankroll a purpose beyond not
+    // hitting zero"; neither number appeared anywhere in the shipped page, so
+    // the locked arm asked the player to reach a figure the product never
+    // named. The unaffordable arm needs none: both sides of its comparison are
+    // on screen.
+    item: 'J1',
+    name: 'the locked table sentence stops naming SPEC 6 threshold',
+    file: 'src/ui/text.ts',
+    find:
+      '      return figures === null\n' +
+      "        ? 'That table unlocks at a higher best balance than you have reached.'\n" +
+      '        : `That table unlocks at a best balance of ${chips(figures.unlocksAt)}; ` +\n' +
+      '            `your best is ${chips(figures.bestBalance)}.`;',
+    replace:
+      '      void figures;\n' +
+      "      return 'That table unlocks at a higher best balance than you have reached.';",
+    detectedBy: UNIT,
+  },
+  {
+    // The half that reaches the page: the figures travel with the refusal, so
+    // the greyed button's accessible name and the mirror's list are one
+    // sentence built once rather than two surfaces guessing.
+    item: 'J1',
+    name: 'the chooser stops carrying SPEC 6 numbers beside its refusal',
+    file: 'src/ui/availability.ts',
+    find: '        figures: tableFigures(limits.id, wallet.bestBalance),',
+    replace: '        figures: null,',
+    detectedBy: SCREEN_READER,
+  },
+  {
+    // `Z1-03`. `settlement.ts` exports both terms of the ratio saying the felt
+    // prints from them, and until this cure the felt printed a literal: the
+    // one-place house-rule change those constants exist for moved every payout
+    // in the ladder and left the table advertising a rule the game no longer
+    // followed. Several suites redden on this now; the one that did not before
+    // is `render-felt.test.ts`, which is the wiring this entry is here for.
+    item: 'E5',
+    name: 'the headline payout is retuned to 6:5',
+    file: 'src/core/settlement.ts',
+    find: 'export const NATURAL_PAYS = Object.freeze({ numerator: 3, denominator: 2 });',
+    replace: 'export const NATURAL_PAYS = Object.freeze({ numerator: 6, denominator: 5 });',
+    detectedBy: UNIT,
+  },
+  {
+    // The felt's side of the same wiring, on its own: the printed line reads
+    // both terms of the ratio and reads them the right way round.
+    item: 'E5',
+    name: 'the printed payout swaps the terms of the ratio it reads',
+    file: 'src/render/felt.ts',
+    find:
+      '    `BLACKJACK PAYS ${String(NATURAL_PAYS.numerator)} TO ${String(NATURAL_PAYS.denominator)}`,',
+    replace:
+      '    `BLACKJACK PAYS ${String(NATURAL_PAYS.denominator)} TO ${String(NATURAL_PAYS.numerator)}`,',
+    detectedBy: UNIT,
+  },
+
+  // ------------------------------------------------------------------
+  // AUDIT-2 W8: accessibility semantics. Findings `J4-01`, `Z4-02`,
+  // `J4-02`, `J4-04` and `Z4-03`. Four of the five break a control's or a
+  // panel's standing representation rather than an event, which is the half
+  // a player re-reads by arriving at it later; the fifth breaks the only
+  // surface SPEC 8's record is reviewable from.
+  // ------------------------------------------------------------------
+  {
+    // `J4-01`. The record was complete and the panel printed six of its nine
+    // fields, so the cards were persisted, migrated, reloaded and shown to
+    // nobody. Each of the three absences gets its own entry, because the panel
+    // renders them in three different places and a single one would leave two
+    // of them unwatched.
+    item: 'J5',
+    name: 'the history panel stops printing the cards of each hand',
+    file: 'src/ui/components/overlays.ts',
+    find: '        cardList(hand.cards),',
+    replace: '        cardList([]),',
+    detectedBy: HISTORY_PANEL,
+  },
+  {
+    item: 'J5',
+    name: 'the history panel stops printing the dealer hand',
+    file: 'src/ui/components/overlays.ts',
+    find: '        cardList(entry.dealer),',
+    replace: '        cardList([]),',
+    detectedBy: HISTORY_PANEL,
+  },
+  {
+    // SPEC 8 records the cards "in deal order" and a reversed list is the
+    // shape a count alone cannot see, which is why the spec compares the
+    // rendered words against the recorded hand element by element.
+    item: 'J5',
+    name: 'the history panel prints each hand backwards',
+    file: 'src/ui/components/overlays.ts',
+    find: '    children: cards.map((card) => el(\'li\', { text: cardText(card) })),',
+    replace: '    children: [...cards].reverse().map((card) => el(\'li\', { text: cardText(card) })),',
+    detectedBy: HISTORY_PANEL,
+  },
+  {
+    // SPEC 8's `null` is the coach having been off. Reading every round as
+    // off is the state the panel was in for every round before this cure.
+    item: 'J5',
+    name: 'the history panel reads every round as one the coach was off for',
+    file: 'src/ui/components/overlays.ts',
+    find: '  const verdicts = entry.coach;',
+    replace: '  const verdicts = null;',
+    detectedBy: HISTORY_PANEL,
+  },
+  {
+    // `Z4-02`. The inversion as it shipped: a name that describes the next
+    // press, beside an `aria-pressed` that describes the setting, so "Unmute,
+    // pressed" said that unmuting was on while the sound was off.
+    item: 'K3',
+    name: 'the mute control names the next press instead of the setting it holds',
+    file: 'src/ui/components/sound.ts',
+    find:
+      '    update(state: ChromeState): void {\n' +
+      "      setAttribute(control, 'aria-pressed', String(state.muted));\n" +
+      '    },',
+    replace:
+      '    update(state: ChromeState): void {\n' +
+      "      setAttribute(control, 'aria-pressed', String(state.muted));\n" +
+      "      control.textContent = state.muted ? 'Unmute' : LABEL;\n" +
+      '    },',
+    detectedBy: AUDIO_SETTINGS,
+  },
+  {
+    // `J4-02`. The disclosure reporting a constant collapsed state is what a
+    // missing `aria-expanded` amounts to for a screen reader: the group
+    // appears two tab stops away and the control that revealed it says
+    // nothing.
+    item: 'I5',
+    name: 'the reset disclosure reports itself collapsed however it is pressed',
+    file: 'src/ui/components/overlays.ts',
+    find: "    setAttribute(reset, 'aria-expanded', String(open));",
+    replace: "    setAttribute(reset, 'aria-expanded', 'false');",
+    detectedBy: DATA_RESET,
+  },
+  {
+    // And the other half: a state with no route to what it is about. An
+    // `aria-controls` naming an element that is not on the page is the shape
+    // a stale id takes, which is why the spec resolves it rather than reading
+    // it.
+    item: 'I5',
+    name: 'the reset disclosure names a group that is not on the page',
+    file: 'src/ui/components/overlays.ts',
+    find: "        'aria-controls': CONFIRM_ID,",
+    replace: "        'aria-controls': 'bj-confirm-elsewhere',",
+    detectedBy: DATA_RESET,
+  },
+  {
+    // `J4-04`. Without the value text the platform announces the raw fraction,
+    // "0.99", while the sentence beside the control reads "99% of full" and is
+    // bound to it by nothing.
+    item: 'I5',
+    name: 'the volume slider goes back to announcing a bare fraction',
+    file: 'src/ui/components/overlays.ts',
+    find: "      setAttribute(volume, 'aria-valuetext', volumeReading);",
+    replace: "      setAttribute(volume, 'aria-valuetext', null);",
+    detectedBy: AUDIO_SETTINGS,
+  },
+  {
+    // The half a presence check cannot see: a value text that never moves is
+    // a control that reports full volume for the rest of the session.
+    item: 'I5',
+    name: 'the volume slider states one value however far it is moved',
+    file: 'src/ui/components/overlays.ts',
+    find: "      setAttribute(volume, 'aria-valuetext', volumeReading);",
+    replace: "      setAttribute(volume, 'aria-valuetext', 'Volume 100% of full.');",
+    detectedBy: AUDIO_SETTINGS,
+  },
+  {
+    // `Z4-03`. The clause held constant, which is the state the sentence was
+    // in with the clause missing: it stated a split rule that was true of one
+    // arm and wrong at the other, and `splitRule` is the sole input to
+    // `canSplit`.
+    item: 'G4',
+    name: 'the reachable house rules state one split comparison at both settings',
+    file: 'src/ui/text.ts',
+    find: "    `Split on ${rules.splitRule === 'equalValue' ? 'equal value' : 'equal rank'}.`",
+    replace: '    `Split on equal value.`',
+    detectedBy: UNIT,
+  },
+  {
+    // The reachable copy itself, on the page: QUALITY-BAR section 4 requires
+    // the house rules to be real DOM text somewhere a player can reach, and
+    // the mirror is where they are.
+    item: 'G4',
+    name: 'the mirror stops stating the house rules at all',
+    file: 'src/ui/components/mirror.ts',
+    find: '      setText(rules, houseRulesText(readout.rules));',
+    replace: "      setText(rules, '');",
+    detectedBy: SCREEN_READER,
+  },
+
+  // ------------------------------------------------------------------
+  // AUDIT-2 W9: the truth-and-cleanliness sweep. Findings `Z6-04`,
+  // `X3-03`, `X3-08`, `X3-04` and `Z10-03`. Every one of them is a value
+  // the code produced and nothing read, so each entry breaks the reading
+  // rather than the production: before the cures, all five of these
+  // mutations left the whole suite green.
+  // ------------------------------------------------------------------
+  {
+    // `Z6-04`. `-0` is a safe integer and is `>= 0`, so it passes the count
+    // guard on every reading, survives the counters identity, and prints with
+    // its sign. Dropping the normalisation puts "Lifetime hands -0" back on the
+    // statistics overlay with no repair recorded.
+    item: 'I2',
+    name: 'a stored count of negative zero is carried through as negative zero',
+    file: 'src/storage/document.ts',
+    find: 'Number.isSafeInteger(value) && value >= 0 ? value + 0 : null',
+    replace: 'Number.isSafeInteger(value) && value >= 0 ? value : null',
+    detectedBy: UNIT,
+  },
+  {
+    // The same hole in the signed twin, which feeds every history delta.
+    item: 'I2',
+    name: 'a stored chip delta of negative zero is carried through as negative zero',
+    file: 'src/storage/document.ts',
+    find: 'Number.isSafeInteger(value) ? value + 0 : null',
+    replace: 'Number.isSafeInteger(value) ? value : null',
+    detectedBy: UNIT,
+  },
+  {
+    // `X3-03`. The six-reason taxonomy is the most carefully documented union
+    // in the document module and, until the corrupt matrix read it, a sanitiser
+    // that answered one reason for everything graded the same as the real one.
+    item: 'I2',
+    name: 'every repair reports the same reason, whatever went wrong',
+    file: 'src/storage/document.ts',
+    find: "  return value === undefined ? 'missing' : mismatch;",
+    replace: "  return 'malformed';",
+    detectedBy: UNIT,
+  },
+  {
+    // And the other half of the payload: the dotted path. A repair that names
+    // the document root for a field is a report the degradation readout cannot
+    // use, and it was unpinned in exactly the same way.
+    item: 'I2',
+    name: 'every repair names the document root instead of the field it repaired',
+    file: 'src/storage/document.ts',
+    find: '    repairs.push(Object.freeze({ field, reason }));',
+    replace: "    repairs.push(Object.freeze({ field: '', reason }));",
+    detectedBy: UNIT,
+  },
+  {
+    // `X3-08`. SPEC 9 names each table row after the SPEC 6 table it is about,
+    // and `TABLE_MILESTONES` is where that correspondence is written down.
+    // Swapping its two values used to change nothing at all, because the
+    // awarder spelled both rows out inline and the map had no reader.
+    item: 'J6',
+    name: 'the table milestone map answers each table with the other one',
+    file: 'src/core/statistics.ts',
+    find: "  silver: 'reachedSilver',\n  gold: 'reachedGold',",
+    replace: "  silver: 'reachedGold',\n  gold: 'reachedSilver',",
+    detectedBy: UNIT,
+  },
+  {
+    // `X3-04`. The session value inherits the document's own settings type, so
+    // a ninth persisted setting is a compile error in both places at once. What
+    // a type cannot say is which keys are carved out, and a third carve-out
+    // would take a setting off the session value with the build green.
+    item: 'I4',
+    name: 'a third setting is carved out of the session value',
+    file: 'src/main.ts',
+    find: "export interface SessionState extends Omit<Settings, 'coach' | 'rules'> {",
+    replace: "export interface SessionState extends Omit<Settings, 'coach' | 'rules' | 'volume'> {",
+    detectedBy: UNIT,
+  },
+  {
+    // `Z10-03`. `eslint.config.js` states the rule, "a file the gate does not
+    // match is a file the gate does not check", and the type gate did not
+    // follow it: a `.mts`, `.cts` or `.tsx` module under `src/` was linted,
+    // bundled by Vite and never opened by `tsc`. TypeScript's include patterns
+    // carry no brace expansion, so the narrowing is one pattern at a time.
+    item: 'M3',
+    name: 'the type gate stops opening the module extensions the lint gate matches',
+    file: 'tsconfig.json',
+    find: '    "src/**/*.mts",\n',
+    replace: '',
+    detectedBy: UNIT,
+  },
+  {
+    // `Z10-04`. The one place the syntax level of the shipped bundle is
+    // decided, and nothing read it: the emitted language could be moved off
+    // QUALITY-BAR section 2's floor in either direction with every gate green.
+    // Filed under `A5` because that is the item the floor belongs to: it is
+    // what decides which browsers get the page and which get the notice, and
+    // the `nomodule` fallback beside it in this file is graded there too.
+    item: 'A5',
+    name: 'the bundle is emitted at a language level nothing agreed to',
+    file: 'vite.config.ts',
+    find: "    target: 'es2022',",
+    replace: "    target: 'es2020',",
+    detectedBy: UNIT,
+  },
 ];
 
 /**
@@ -7862,39 +8884,113 @@ const ADDITIONS = [
 const CHILD_ENV = { ...process.env };
 delete CHILD_ENV.BJ_REUSE_SERVER;
 
-/** Run a command and report only whether it succeeded. */
-function passes(command) {
-  try {
-    execFileSync(process.execPath, [command.bin, ...command.argv], {
-      cwd: PROJECT_ROOT,
-      stdio: 'ignore',
-      // Every browser invocation gets its own preview server, and that is a
-      // correctness rule rather than hygiene. The server serves `dist/`, and
-      // `dist/` is rebuilt by the command that starts it; a run that reused a
-      // server left behind by the previous mutation would grade the previous
-      // mutation's build and report this one UNDETECTED. `BJ-14` measured
-      // exactly that, four times in one run, on a `vite preview` process that
-      // outlived the run that spawned it.
-      //
-      // `playwright.config.ts` now refuses reuse unless it is asked for, so this
-      // is belt and braces rather than the mechanism: what it adds is that an
-      // operator who has the opt-in exported in their shell still gets a fresh
-      // server for every entry in the ledger. A harness whose answer depended on
-      // the environment it was started from would be reporting on that
-      // environment rather than on the gates.
-      env: CHILD_ENV,
-    });
-    return true;
-  } catch (error) {
-    // A non-zero exit is the signal this function exists to read. Anything
-    // else is a real failure and is rethrown rather than swallowed, because a
-    // mutation harness that silently reports "detected" when the command could
-    // not even start would be the same defect it is here to prevent.
-    if (error instanceof Error && 'status' in error) {
-      return false;
-    }
-    throw error;
+/**
+ * The one exit status every gate here uses to mean "an assertion failed".
+ *
+ * `vitest run`, `eslint`, `playwright test` and `scripts/report/gate.mjs` all
+ * report a breach as 1. Anything else they emit is about themselves: 2 is
+ * `gate.mjs`'s usage error and eslint's fatal configuration error, and Node
+ * exits 1 for a module it cannot find, which is why the status is read with the
+ * output rather than on its own.
+ */
+const ASSERTION_FAILURE = 1;
+
+/** How much of a gate's output is kept. A full unit run prints far less. */
+const OUTPUT_LIMIT = 64 * 1024 * 1024;
+
+/** The tail of a gate's output, for an error message that can be acted on. */
+function tail(text, lines = 12) {
+  const kept = text.trimEnd().split(/\r?\n/).slice(-lines);
+  return kept.length === 0 ? '(no output)' : kept.join('\n');
+}
+
+/**
+ * What one gate run means: `green`, `red`, or an error that stops the sweep.
+ *
+ * **A gate that did not finish is not evidence, in either direction.** An exit
+ * status read on its own cannot tell three events apart: a gate killed while it
+ * ran, a gate that crashed before its first assertion, and a gate whose command
+ * is missing. All three are non-zero, and a harness that reads non-zero as red
+ * prints them as `detected` in a sweep that runs about two hours over hundreds
+ * of entries and re-checks the environment nowhere after it starts. Both
+ * triggers are recorded here: a foreign server on the preview port reddening 77
+ * specs at `BJ-23`, and two sweeps killed by the harness at the end at `BJ-21`
+ * and `BJ-22`.
+ *
+ * So four facts are read rather than one. A signal, a spawn failure or a missing
+ * status is a gate that never reached a verdict. An exit status the gate does
+ * not use for an assertion failure is the same thing with a different spelling.
+ * And a gate that exited 1 without printing its own summary line stopped
+ * somewhere between its first assertion and its last, which is what an external
+ * kill looks like on Windows, where a kill arrives as status 1 with no signal at
+ * all.
+ *
+ * Exported so the discrimination can be asserted directly by
+ * `tests/unit/mutation-harness.test.ts` over constructed runs. It is pure: the
+ * spawning is `runGate`'s.
+ */
+export function classifyGateRun(command, run) {
+  const output = `${run.stdout ?? ''}${run.stderr ?? ''}`;
+  const refuse = (reason) => {
+    throw new Error(
+      `${command.label}: ${reason}. A gate that did not reach a verdict is not evidence, ` +
+        `so this sweep stops rather than recording one.\n--- last output ---\n${tail(output)}`,
+    );
+  };
+  // The signal first: a run killed on a timeout carries both a signal and an
+  // `ETIMEDOUT` error, and the signal is the truer sentence about it.
+  if (run.signal !== null && run.signal !== undefined) {
+    refuse(`the gate was killed by ${run.signal}`);
   }
+  if (run.error !== undefined && run.error !== null) {
+    refuse(`the gate could not be started (${run.error.code ?? run.error.message})`);
+  }
+  if (run.status === null || run.status === undefined) {
+    refuse('the gate exited with no status');
+  }
+  if (run.status === 0) {
+    return 'green';
+  }
+  if (run.status !== ASSERTION_FAILURE) {
+    refuse(`the gate exited ${String(run.status)}, which it does not use for an assertion failure`);
+  }
+  if (!command.red.test(output)) {
+    refuse(
+      `the gate exited ${String(ASSERTION_FAILURE)} without printing its own verdict ` +
+        `(${String(command.red)})`,
+    );
+  }
+  return 'red';
+}
+
+/** Run one gate and read its verdict. Throws when there is no verdict to read. */
+function runGate(command) {
+  const run = spawnSync(process.execPath, [command.bin, ...command.argv], {
+    cwd: PROJECT_ROOT,
+    encoding: 'utf8',
+    maxBuffer: OUTPUT_LIMIT,
+    // Captured rather than ignored, because the verdict is in it. `spawnSync`
+    // rather than `execFileSync` for the same reason the output is kept: it
+    // hands back `status`, `signal` and `error` as separate facts instead of
+    // folding them into one thrown object whose `status` is present and null.
+    stdio: ['ignore', 'pipe', 'pipe'],
+    // Every browser invocation gets its own preview server, and that is a
+    // correctness rule rather than hygiene. The server serves `dist/`, and
+    // `dist/` is rebuilt by the command that starts it; a run that reused a
+    // server left behind by the previous mutation would grade the previous
+    // mutation's build and report this one UNDETECTED. `BJ-14` measured
+    // exactly that, four times in one run, on a `vite preview` process that
+    // outlived the run that spawned it.
+    //
+    // `playwright.config.ts` now refuses reuse unless it is asked for, so this
+    // is belt and braces rather than the mechanism: what it adds is that an
+    // operator who has the opt-in exported in their shell still gets a fresh
+    // server for every entry in the ledger. A harness whose answer depended on
+    // the environment it was started from would be reporting on that
+    // environment rather than on the gates.
+    env: CHILD_ENV,
+  });
+  return classifyGateRun(command, run);
 }
 
 const results = [];
@@ -7903,6 +8999,46 @@ function record(mutation, detected) {
   results.push({ ...mutation, detected });
   const verdict = detected ? 'detected  ' : 'UNDETECTED';
   console.log(`  ${verdict}  ${mutation.item}  ${mutation.name}`);
+}
+
+/**
+ * How the tree is put back if this process is terminated rather than finished.
+ *
+ * **A `finally` block does not run when a process is killed by a signal**, and
+ * the whole of the restoration below lives in one. Ctrl-C or a harness kill
+ * during any entry therefore left that entry's mutation written into `src/`,
+ * with the next sweep's baseline check as the only net and nothing at all in the
+ * meantime. So the entry in flight publishes how to undo itself here, and the
+ * handler runs it before re-raising the signal it was sent, which is what leaves
+ * the exit status the caller expects.
+ *
+ * `dist/` needs the same treatment for a different reason. Many entries are
+ * measured by a gate that rebuilds the bundle from the mutated tree, and nothing
+ * rebuilds it afterwards, so an interrupted run can leave a mutated bundle
+ * behind for the report scripts and the fingerprint check to read. That is the
+ * stale-dist lesson `BJ-23` recorded, applied to the harness that applies the
+ * mutations, and it is why the bundle goes at the end of every run however the
+ * run ends: removed is honest, and a rebuild is one command.
+ */
+let inFlight = null;
+
+const DIST = join(PROJECT_ROOT, 'dist');
+
+function discardBuild() {
+  rmSync(DIST, { recursive: true, force: true });
+}
+
+function onSignal(signal) {
+  process.off('SIGINT', onSignal);
+  process.off('SIGTERM', onSignal);
+  if (inFlight !== null) {
+    const undo = inFlight;
+    inFlight = null;
+    undo();
+    console.error(`\n${signal}: the mutation in flight was restored.`);
+  }
+  discardBuild();
+  process.kill(process.pid, signal);
 }
 
 function runEdit(mutation) {
@@ -7930,13 +9066,17 @@ function runEdit(mutation) {
     // ledger for `$&`, `` $` ``, `$'`, `$$`, `$<` and `$1` to `$9` finds one
     // occurrence, `'$5 a hand'`, and that is an ADDITION's `content`, written
     // by `runAddition` below and never passed through `replace`.
+    inFlight = () => {
+      writeFileSync(path, original);
+    };
     writeFileSync(
       path,
       original.replace(mutation.find, () => mutation.replace),
     );
-    record(mutation, !passes(mutation.detectedBy));
+    record(mutation, runGate(mutation.detectedBy) === 'red');
   } finally {
     writeFileSync(path, original);
+    inFlight = null;
   }
 }
 
@@ -7946,14 +9086,18 @@ function runAddition(mutation) {
     throw new Error(`${mutation.file} already exists; refusing to overwrite it.`);
   }
   try {
+    inFlight = () => {
+      rmSync(path, { force: true });
+    };
     writeFileSync(path, mutation.content);
-    record(mutation, !passes(mutation.detectedBy));
+    record(mutation, runGate(mutation.detectedBy) === 'red');
   } finally {
     rmSync(path, { force: true });
+    inFlight = null;
   }
 }
 
-function main() {
+function sweep() {
   console.log('Mutation validation for the automated gates built so far.');
   console.log('Each line breaks one thing and requires the named gate to go red.');
   console.log('');
@@ -7966,7 +9110,7 @@ function main() {
   const commands = [UNIT, LINT, ...new Set(EDITS.concat(ADDITIONS).map((m) => m.detectedBy))];
   let baselineGreen = true;
   for (const command of new Set(commands)) {
-    const green = passes(command);
+    const green = runGate(command) === 'green';
     baselineGreen &&= green;
     console.log(`  ${green ? 'green' : 'RED  '}  ${command.label}`);
   }
@@ -7996,6 +9140,21 @@ function main() {
   }
 }
 
+/** The sweep, with the tree put back whichever way the run ends. */
+function main() {
+  process.on('SIGINT', onSignal);
+  process.on('SIGTERM', onSignal);
+  try {
+    sweep();
+  } finally {
+    // The last gate to run may have built the bundle from a mutated tree, and
+    // the entry that built it is not always the last entry. Nothing downstream
+    // may read a bundle whose provenance is a mutation.
+    discardBuild();
+    console.log('dist/ was removed: a gate here may have built it under a mutation.');
+  }
+}
+
 /**
  * Run only when this file is the program, never on import.
  *
@@ -8006,9 +9165,13 @@ function main() {
  * else's failing test. Node's standard entry-point comparison, on the resolved
  * path so that the argument's spelling does not decide it.
  *
- * The safety net for a run that was interrupted rather than imported is the
- * baseline check above: a leftover mutation makes the unmutated tree red, and
- * the script refuses to report anything at all until that is fixed.
+ * A run that is interrupted rather than imported restores the entry in flight
+ * from `onSignal` and discards the bundle, and the baseline check above is the
+ * net behind that: a leftover mutation makes the unmutated tree red, and the
+ * script refuses to report anything at all until that is fixed.
+ *
+ * The classifier is exported for `tests/unit/mutation-harness.test.ts`, which is
+ * an import: nothing below it may run on one.
  */
 if (fileURLToPath(import.meta.url) === resolve(process.argv[1] ?? '')) {
   main();

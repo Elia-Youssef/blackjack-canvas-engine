@@ -215,6 +215,55 @@ test.describe('C1: a complete round through every phase in order', () => {
   });
 });
 
+// ---------------------------------------------------------------------------
+// SPEC 11's "current wager", during the round. `AUDIT-2`, finding `J2-01`
+// ---------------------------------------------------------------------------
+
+test.describe('SPEC 11: the wager readout during a round', () => {
+  test('states the stake on the table from the deal to the round result', async ({ page }) => {
+    // The readout used to render `wallet.wager`, the wager being built at the
+    // controls, which `commitInitial` zeroes at the deal. So it read 0 on every
+    // frame of every phase from the deal to the round result while the stake sat
+    // on the felt, and the accessibility mirror printed the same 0 into its money
+    // sentence. Below 768 px DESIGN section 4 keeps three readouts in the top
+    // bar and this is one of them, so one of the three was dead for the whole of
+    // every hand at the width where the other eleven are behind the disclosure.
+    const { seed } = tenUpRound();
+    await bootGame(page, { seed });
+    await waitForPhase(page, 'start');
+    await control(page, 'start').click();
+    await waitForPhase(page, 'betting');
+
+    // The betting screen is unchanged: what is on the controls is what is shown.
+    await chip(page, FLOW_WAGER).click();
+    await expect.poll(async () => numberOrNull(page, 'wager')).toBe(FLOW_WAGER);
+
+    await control(page, 'deal').click();
+    await waitForPhase(page, 'playerTurn');
+    expect(await numberOrNull(page, 'wager'), 'the stake during the player turn').toBe(
+      FLOW_WAGER,
+    );
+    // And the same number in the mirror, which is the only textual surface a
+    // screen reader has for the amount at risk between the deal and the result.
+    expect(
+      await page.locator('[data-mirror="wallet"]').textContent(),
+      'the mirror money sentence during the player turn',
+    ).toContain(`Wager ${String(FLOW_WAGER)}`);
+
+    await pressOn(page, '[data-action="stand"]', 'playerTurn');
+    await waitForPhase(page, 'roundResult');
+    // SPEC 12's screen, where the machine's own `committed` has been swept to
+    // zero and the hands are still on the felt with their wagers.
+    expect(await numberOrNull(page, 'wager'), 'the stake at the round result').toBe(FLOW_WAGER);
+
+    // The sweep is real: Next Hand clears the felt and the readout goes back to
+    // being the wager the player is building, which is nothing yet.
+    await control(page, 'next-hand').click();
+    await waitForPhase(page, 'betting');
+    await expect.poll(async () => numberOrNull(page, 'wager')).toBe(0);
+  });
+});
+
 /** One readout as a number, or null when it has not rendered yet. */
 async function numberOrNull(page: Page, key: string): Promise<number | null> {
   const text = await page.locator(`[data-readout="${key}"] .bj-readout__value`).textContent();

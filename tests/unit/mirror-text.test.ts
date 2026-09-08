@@ -198,6 +198,24 @@ describe('G6: every screen has a sentence and a title', () => {
       expect(text, `${clause} missing from the house rules sentence`).toContain(clause);
     }
   });
+
+  it('names the split comparison, which is the rule that decides Split', () => {
+    // `AUDIT-2`, finding `Z4-03`. `splitRule` is a SPEC 14 rule the player sets
+    // and the sole input to `canSplit`, so it decides whether a King and a
+    // Queen may be split at all; the reachable sentence named every other rule
+    // and not that one, leaving the greyed Split's "not a pair" unexplained by
+    // anything continuously readable. Both arms, because a sentence that
+    // printed one of them as a constant would say the wrong thing at the other.
+    expect(houseRulesText({ ...DEFAULT_RULES, splitRule: 'equalValue' })).toContain(
+      'Split on equal value',
+    );
+    expect(houseRulesText({ ...DEFAULT_RULES, splitRule: 'equalRank' })).toContain(
+      'Split on equal rank',
+    );
+    expect(houseRulesText({ ...DEFAULT_RULES, splitRule: 'equalRank' })).not.toContain(
+      'equal value',
+    );
+  });
 });
 
 describe('G3: a state carried by colour is carried by words as well', () => {

@@ -10,18 +10,23 @@
  * autoplay policy, which is `tests/browser/audio-start.spec.ts`'s half: there
  * the page's own `AudioContext` is wrapped before anything loads.
  *
- * **"It never throws" is asserted by its effects, and the runner is the real
- * detector.** The engine's promise is kept inside listeners, and
+ * **"It never throws" is asserted by its effects, and an assertion has to be
+ * the detector.** The engine's promise is kept inside listeners, and
  * `EventTarget.dispatchEvent` *reports* a listener's exception rather than
  * propagating it, so `expect(() => target.dispatchEvent(...)).not.toThrow()`
- * passes over a listener that certainly threw. What actually reddens the suite
- * when the engine rethrows, and what the `K2` mutation entry
- * "a failed construction is rethrown instead of swallowed" is caught by, is
- * vitest's unhandled-error channel and its non-zero exit. The assertions below
- * therefore say what the engine did after the gesture, which is a claim a
- * swallowed exception cannot satisfy; nobody should re-introduce the
- * `not.toThrow` shape, and nobody should turn `dangerouslyIgnoreUnhandledErrors`
- * on without reading this paragraph.
+ * passes over a listener that certainly threw. Vitest's unhandled-error channel
+ * does see it and does exit non-zero, and for a long time that was what the
+ * `K2` mutation entry "a failed construction is rethrown instead of swallowed"
+ * relied on. **It is not enough**, measured: with that mutation applied the run
+ * prints `Test Files 56 passed (56)` beside `Errors 3 errors`, and the mutation
+ * harness requires a gate to print its own verdict before it will record a
+ * detection, so the entry stopped the sweep rather than being caught by it. So
+ * every "never throws" arm below states what the engine **did** after the
+ * gesture, and the two that answer a refused context assert that it also let go
+ * of the page, which is the effect a rethrow skips. Nobody should re-introduce
+ * the `not.toThrow` shape, nobody should rely on the unhandled channel as an
+ * entry's only detector, and nobody should turn
+ * `dangerouslyIgnoreUnhandledErrors` on without reading this paragraph.
  */
 
 import { describe, expect, it } from 'vitest';
@@ -42,6 +47,29 @@ import { RecordingAudioContext } from './support/audio-context';
 /** A page-shaped target, with a visibility state a test can set. */
 class FakePage extends EventTarget {
   visibilityState = 'visible';
+}
+
+/**
+ * The same page, recording which listeners the engine took off it.
+ *
+ * The engine's answer to a platform that cannot give it a context is to let go
+ * of the page, and letting go is an absence: nothing about a later gesture
+ * looks different from the outside. So the removals are recorded, which also
+ * makes the "never throws" law visible to an assertion rather than only to
+ * vitest's unhandled-error channel: a construction that rethrows never reaches
+ * the release, and `Test Files ... passed` is what that channel prints.
+ */
+class WatchedFakePage extends FakePage {
+  readonly removed: string[] = [];
+
+  override removeEventListener(
+    type: string,
+    listener: EventListenerOrEventListenerObject | null,
+    options?: boolean | EventListenerOptions,
+  ): void {
+    this.removed.push(type);
+    super.removeEventListener(type, listener, options);
+  }
 }
 
 /** One engine over one recording context, already started by a gesture. */
@@ -119,7 +147,7 @@ describe('K2: no context exists before the first user gesture', () => {
   });
 
   it('never throws when the context cannot be created, and stays silent', () => {
-    const page = new FakePage();
+    const page = new WatchedFakePage();
     const engine = createAudioEngine({
       listeners: page,
       visibility: page,
@@ -133,10 +161,17 @@ describe('K2: no context exists before the first user gesture', () => {
     expect(engine.started()).toBe(true);
     engine.cue('win', 'roundResult');
     expect(engine.offered().win).toBe(1);
+    // And it let go of the page in the same handler. This is the assertion the
+    // rethrow has to fail: a construction that raised out of the gesture never
+    // reached the release, and an exception escaping a listener is reported by
+    // the runner rather than propagated, so nothing else here would notice.
+    expect([...page.removed].sort(), 'the engine kept listening for a gesture it cannot use').toEqual(
+      ['keydown', 'pointerdown'],
+    );
   });
 
   it('stays silent, rather than thrown, over a platform with no constructor', () => {
-    const page = new FakePage();
+    const page = new WatchedFakePage();
     const engine = createAudioEngine({
       listeners: page,
       visibility: page,
@@ -146,9 +181,10 @@ describe('K2: no context exists before the first user gesture', () => {
     expect(engine.started()).toBe(true);
     engine.cue('blackjack', 'roundResult');
     expect(engine.offered().blackjack).toBe(1);
+    expect([...page.removed].sort()).toEqual(['keydown', 'pointerdown']);
   });
 
-  it('takes its gesture listeners off once one has fired, and all of them off at dispose', () => {
+  it('constructs on the first gesture only, and takes every listener off at dispose', () => {
     let calls = 0;
     const page = new FakePage();
     const engine = createAudioEngine({
@@ -165,9 +201,16 @@ describe('K2: no context exists before the first user gesture', () => {
     expect(engine.started()).toBe(false);
     expect(calls).toBe(0);
 
-    // And the once half, live: after the first gesture answers, later
-    // gestures construct nothing, because the listeners are gone rather than
-    // merely quiet.
+    // And the once half, live: after the first gesture answers, later gestures
+    // construct nothing at all.
+    //
+    // **They do still ask the context to run, and that is `AUDIT-2`'s finding
+    // `J6-01`.** The listeners used to come off inside the first gesture of any
+    // kind, which spent the engine's one attempt on a press the platform may
+    // not have counted as an activation and left no way back. What is once here
+    // is the construction; the asking runs until the platform reports a running
+    // context, which the stand-in below never does. The releasing half is
+    // asserted in "stops listening once the context is running".
     const live = new FakePage();
     const liveContext = new RecordingAudioContext();
     createAudioEngine({
@@ -182,7 +225,8 @@ describe('K2: no context exists before the first user gesture', () => {
     live.dispatchEvent(new Event('keydown'));
     live.dispatchEvent(new Event('pointerdown'));
     expect(calls).toBe(1);
-    expect(liveContext.resumed).toBe(1);
+    expect(liveContext.constructed).toBe(1);
+    expect(liveContext.resumed).toBe(3);
   });
 });
 
@@ -272,6 +316,242 @@ describe('K2: the context is resumed again when the page becomes visible', () =>
     expect(engine.started()).toBe(true);
     engine.cue('win', 'roundResult');
     expect(engine.offered().win).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A context the platform will not run. `AUDIT-2`, findings `J6-01` and `X4-02`
+// ---------------------------------------------------------------------------
+
+/**
+ * A context that constructs, wires up, and then dies. `AUDIT-2`, `X4-02`.
+ *
+ * The Web Audio specification requires a closed context to throw
+ * `InvalidStateError` from every factory method, which is what a platform
+ * closing contexts under memory pressure, a page the back/forward cache handed
+ * back without its context, and an audio-service crash all look like from
+ * inside the page. Everything works until `kill()`, so the engine reaches the
+ * state a live session is in before anything refuses.
+ */
+class DyingContext extends RecordingAudioContext {
+  private dead = false;
+
+  kill(): void {
+    this.dead = true;
+  }
+
+  private refuseWhenDead(): void {
+    if (this.dead) {
+      throw new Error('InvalidStateError: AudioContext is closed');
+    }
+  }
+
+  override createGain(): unknown {
+    this.refuseWhenDead();
+    return super.createGain();
+  }
+
+  override createOscillator(): unknown {
+    this.refuseWhenDead();
+    return super.createOscillator();
+  }
+
+  override createBuffer(channels: number, length: number): unknown {
+    this.refuseWhenDead();
+    return super.createBuffer(channels, length);
+  }
+
+  override createBufferSource(): unknown {
+    this.refuseWhenDead();
+    return super.createBufferSource();
+  }
+}
+
+/**
+ * A context that constructs and then refuses to be wired to a destination.
+ * `AUDIT-2`, finding `Z5-02`.
+ *
+ * The three statements after the guarded construction, `createGain`, the gain
+ * write and `connect`, were outside the engine's one `try`. This refuses the
+ * last of them, which is the one that leaves a master gain built and attached
+ * to nothing: an engine that kept it would schedule every later cue into a
+ * graph with no output.
+ */
+class UnconnectableContext extends RecordingAudioContext {
+  override createGain(): unknown {
+    const node = super.createGain() as { connect: () => void };
+    node.connect = (): void => {
+      throw new Error('connect refused');
+    };
+    return node;
+  }
+}
+
+describe('K2: a context the platform will not run is retried, not abandoned', () => {
+  it('keeps listening while the context is not running, and asks again', () => {
+    // `AUDIT-2`, finding `J6-01`. The engine spent its one start on the first
+    // gesture of any kind and never asked again, so a context the platform
+    // declined to run was a permanently silent game that every instrument, the
+    // mute control included, reported as sounding.
+    const page = new FakePage();
+    const context = new RecordingAudioContext();
+    createAudioEngine({
+      listeners: page,
+      visibility: page,
+      contextFactory: () => context as unknown as AudioContext,
+    });
+    page.dispatchEvent(new Event('pointerdown'));
+    expect(context.constructed).toBe(1);
+    expect(context.resumed).toBe(1);
+
+    // The platform did not run it. The next press is the retry the design
+    // assumed the first press would never need, and it constructs nothing.
+    page.dispatchEvent(new Event('keydown'));
+    expect(context.constructed).toBe(1);
+    expect(context.resumed).toBe(2);
+  });
+
+  it('stops listening once the context is running', () => {
+    // The other side of the same rule, and the reason this is a retry rather
+    // than a listener the game keeps for ever: the moment the platform reports
+    // a running context there is nothing left for a gesture to do.
+    const page = new FakePage();
+    const context = new RecordingAudioContext();
+    createAudioEngine({
+      listeners: page,
+      visibility: page,
+      contextFactory: () => context as unknown as AudioContext,
+    });
+    page.dispatchEvent(new Event('pointerdown'));
+    context.state = 'running';
+    page.dispatchEvent(new Event('keydown'));
+    page.dispatchEvent(new Event('pointerdown'));
+    expect(context.resumed).toBe(1);
+  });
+
+  it('stops listening when there is no context to run at all', () => {
+    // A platform with no constructor, and a constructor that threw, are both
+    // answers no later gesture can improve on. The engine lets go of the page.
+    let calls = 0;
+    const page = new FakePage();
+    createAudioEngine({
+      listeners: page,
+      visibility: page,
+      contextFactory: () => {
+        calls += 1;
+        return null;
+      },
+    });
+    page.dispatchEvent(new Event('pointerdown'));
+    page.dispatchEvent(new Event('keydown'));
+    page.dispatchEvent(new Event('pointerdown'));
+    expect(calls).toBe(1);
+  });
+
+  it('asks a suspended context to run when a cue is offered, and a running one never', () => {
+    // The retry the player cannot be relied on to make: a session that started
+    // with one press and then played by clicking controls offers cues without
+    // producing another `pointerdown` on the document until the next press.
+    const { engine, context } = startedEngine();
+    const before = context.resumed;
+    engine.cue('cardDeal', 'dealing');
+    expect(context.resumed).toBe(before + 1);
+    expect(engine.offered().cardDeal).toBe(1);
+
+    context.state = 'running';
+    engine.cue('cardDeal', 'dealing');
+    expect(context.resumed).toBe(before + 1);
+    expect(engine.offered().cardDeal).toBe(2);
+  });
+});
+
+describe('K2: a subsystem that fails after it started degrades to silence', () => {
+  it('answers a cue on a context that died under it', () => {
+    // `AUDIT-2`, finding `X4-02`. `cue()` is offered from inside the frame
+    // callback, which is the one thing the composition root wraps in the error
+    // boundary, so an unguarded throw here is not silence: it is the full-page
+    // recovery panel, the shell removed and the round lost, for an optional
+    // subsystem. QUALITY-BAR section 12: "a missing or failing subsystem
+    // degrades".
+    const context = new DyingContext();
+    const page = new FakePage();
+    const engine = createAudioEngine({
+      listeners: page,
+      visibility: page,
+      contextFactory: () => context as unknown as AudioContext,
+    });
+    page.dispatchEvent(new Event('pointerdown'));
+    engine.cue('cardDeal', 'dealing');
+    expect(context.voices.length).toBeGreaterThan(0);
+
+    context.kill();
+    // Every cue, both branches: the oscillator voices and the percussive ones
+    // cut from the shared noise buffer.
+    for (const cue of CUE_IDS) {
+      expect(() => {
+        engine.cue(cue, 'roundResult');
+      }, cue).not.toThrow();
+    }
+    // The tally is the emission record and still counts the offer, which is
+    // what item `K5`'s "exactly once" is a claim about.
+    expect(engine.offered().win).toBe(1);
+    expect(engine.offered().shuffle).toBe(1);
+  });
+
+  it('drops a context that refused to be wired, rather than playing into it', () => {
+    // `AUDIT-2`, finding `Z5-02`. The engine's own header states the law as
+    // "every entry point below answers rather than raising", and the `try`
+    // covered only the constructor call. A refused `connect` left a master gain
+    // attached to nothing and a graph the engine went on scheduling into.
+    const context = new UnconnectableContext();
+    const page = new FakePage();
+    const engine = createAudioEngine({
+      listeners: page,
+      visibility: page,
+      contextFactory: () => context as unknown as AudioContext,
+    });
+    page.dispatchEvent(new Event('pointerdown'));
+    expect(engine.started()).toBe(true);
+
+    expect(() => {
+      engine.cue('win', 'roundResult');
+    }).not.toThrow();
+    // Nothing was built on the dead graph at all, which is the sharp reading:
+    // the envelope's first gain write happens **before** the connect that
+    // refuses, so an engine that kept its half-built master would leave that
+    // write behind even though no voice ever started.
+    expect(context.gainWrites, 'wrote into a graph with no output').toHaveLength(0);
+    expect(context.voices, 'scheduled into a graph with no output').toHaveLength(0);
+    expect(engine.offered().win).toBe(1);
+  });
+
+  it('answers a cue on a context whose resume throws rather than rejects', () => {
+    // `AUDIT-2`, finding `Z5-02`, the other unguarded call. `resume()` is
+    // specified to return a promise, so the engine's `.catch` answers a
+    // rejection and never a synchronous throw; a platform outside that contract
+    // took the whole frame callback with it, and the frame callback is what the
+    // error boundary wraps.
+    const context = new RecordingAudioContext();
+    context.resume = (): Promise<void> => {
+      throw new Error('resume refused');
+    };
+    const page = new FakePage();
+    const engine = createAudioEngine({
+      listeners: page,
+      visibility: page,
+      contextFactory: () => context as unknown as AudioContext,
+    });
+    page.dispatchEvent(new Event('pointerdown'));
+    expect(engine.started()).toBe(true);
+    // The cue asks a context that is not running to run, so the refusal is on
+    // the path every cue takes and not only on the first gesture's.
+    expect(() => {
+      engine.cue('win', 'roundResult');
+    }).not.toThrow();
+    expect(engine.offered().win).toBe(1);
+    // And it still played: a refused resume is silence at worst, not a cue the
+    // engine declined to schedule.
+    expect(context.voices.length).toBeGreaterThan(0);
   });
 });
 
