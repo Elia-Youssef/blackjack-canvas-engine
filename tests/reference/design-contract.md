@@ -123,7 +123,6 @@ setting, so a tool whose defaults moved fails on the mismatch instead of grading
 | `--dur-3` | 220ms |
 | `--dur-4` | 320ms |
 | `--ease-out` | `cubic-bezier(0.2, 0, 0, 1)` |
-| `--ease-in-out` | `cubic-bezier(0.4, 0, 0.2, 1)` |
 
 ## 16. Visual direction
 

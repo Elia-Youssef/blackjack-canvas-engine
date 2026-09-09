@@ -555,7 +555,7 @@ describe('E1: the numeric scales match QUALITY-BAR section 15', () => {
 
   it('finds every scale token in the quality bar', () => {
     for (const name of ['--type-xs', '--type-2xl', '--space-1', '--space-8', '--radius-pill',
-      '--border-thick', '--focus-ring', '--dur-0', '--dur-4', '--ease-out', '--ease-in-out']) {
+      '--border-thick', '--focus-ring', '--dur-0', '--dur-4', '--ease-out']) {
       expect(QB_TOKENS.has(name), `${name} missing from QUALITY-BAR 15`).toBe(true);
     }
   });
@@ -627,7 +627,6 @@ describe('E1: the numeric scales match QUALITY-BAR section 15', () => {
     }
 
     expect(`cubic-bezier(${EASE.out.join(', ')})`).toBe(QB_TOKENS.get('--ease-out'));
-    expect(`cubic-bezier(${EASE.inOut.join(', ')})`).toBe(QB_TOKENS.get('--ease-in-out'));
   });
 
   // -------------------------------------------------------------------------

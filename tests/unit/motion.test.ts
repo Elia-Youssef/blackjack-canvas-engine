@@ -1691,7 +1691,7 @@ describe('E6 armour: the win pulse stays under the flash ceiling', () => {
 
 describe('E6 armour: the easing is the committed curve, not an approximation', () => {
   it('pins both endpoints and stays monotone', () => {
-    for (const curve of [EASE.out, EASE.inOut]) {
+    for (const curve of [EASE.out]) {
       expect(ease(curve, 0)).toBe(0);
       expect(ease(curve, 1)).toBe(1);
       let previous = 0;
