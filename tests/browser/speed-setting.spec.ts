@@ -378,3 +378,90 @@ test.describe('E9 and SPEC 14: Speed takes effect immediately, mid-round include
     expect(RATIO_HIGH).toBeLessThan(1);
   });
 });
+
+// ---------------------------------------------------------------------------
+// The balance readout across a speed change. `AUDIT-2`, findings `Z3-03`/`J3-05`
+// ---------------------------------------------------------------------------
+
+/** How long a settled scene is left alone before it is called settled. */
+const SETTLE_MS = 2500;
+
+/** The window a finished count is watched over, either side of the switch. */
+const COUNT_QUIET_MS = 600;
+
+declare global {
+  interface Window {
+    /** Every value written to the balance readout, recorded by this spec. */
+    __bjChipsWrites?: string[];
+  }
+}
+
+/** The balance readout's own element, which is the one SPEC 5 asks to count. */
+const CHIPS_VALUE = '[data-readout="chips"] .bj-readout__value';
+
+/** Record every write to the balance readout from this moment on. */
+async function watchChips(page: Page): Promise<void> {
+  await page.evaluate((selector: string) => {
+    window.__bjChipsWrites = [];
+    const node = document.querySelector(selector);
+    if (node === null) {
+      return;
+    }
+    new MutationObserver(() => {
+      window.__bjChipsWrites?.push(node.textContent ?? '');
+    }).observe(node, { characterData: true, childList: true, subtree: true });
+  }, CHIPS_VALUE);
+}
+
+/** What the readout has been written with since `watchChips`. */
+async function chipsWrites(page: Page): Promise<readonly string[]> {
+  return await page.evaluate(() => window.__bjChipsWrites ?? []);
+}
+
+test.describe('E9 and SPEC 5: the balance readout across a speed change', () => {
+  test('never replays a finished count when only the setting moved', async ({ page }) => {
+    // `AUDIT-2`, findings `Z3-03` and `J3-05`. `src/render/scene.ts`'s `advance`
+    // documents at length why a tween age is capped at the **unscaled** constant
+    // and never at `motion.seconds(name)`: a finished age parked at the Fast
+    // span reads as progress 0.6 against the Normal one, and everything that
+    // eased into place eases in again from where it started. The balance
+    // count-up is the third consumer of that same `Motion` API and was capping
+    // at the scaled span, so a player who pressed Normal watched the chips
+    // readout jump to a figure the machine never held and count back.
+    //
+    // Only one direction breaks, which is why it survived: Normal to Fast caps
+    // the parked age **down**, which finishes a count rather than resurrecting
+    // one, and this suite drove that direction only.
+    await atShippedBetting(page);
+    await chooseSpeed(page, 'fast');
+    await playRound(page);
+    // Every count this round started has had many spans to finish in.
+    await page.waitForTimeout(SETTLE_MS);
+
+    await watchChips(page);
+    await page.waitForTimeout(COUNT_QUIET_MS);
+    expect(await chipsWrites(page), 'the readout was still moving before the switch').toEqual([]);
+    const settled = await page.locator(CHIPS_VALUE).textContent();
+
+    await chooseSpeed(page, 'normal');
+    await page.waitForTimeout(COUNT_QUIET_MS);
+    expect(
+      await chipsWrites(page),
+      'the balance readout moved when only the presentation setting did',
+    ).toEqual([]);
+    expect(await page.locator(CHIPS_VALUE).textContent()).toBe(settled);
+
+    // The can-see control, on the same page and the same observer: a balance
+    // that really moves is a balance this instrument reports moving. Without it
+    // an observer watching the wrong node would pass the arm above forever.
+    await control(page, 'next-hand').click();
+    await waitForPhase(page, 'betting');
+    await chip(page, WAGER).click();
+    await control(page, 'deal').click();
+    await expect
+      .poll(async () => (await chipsWrites(page)).length, {
+        message: 'the observer saw nothing when the balance really moved',
+      })
+      .toBeGreaterThan(0);
+  });
+});

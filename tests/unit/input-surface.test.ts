@@ -142,7 +142,7 @@ describe('D1: input is one handler path', () => {
       }
     }
 
-    // Thirteen listeners in the whole product, and each one is somewhere its
+    // Fourteen listeners in the whole product, and each one is somewhere its
     // criterion can be read against: the activation, the keyboard, and the media
     // query that carries the reduced-motion preference are `D1`'s three. The
     // three `BJ-19` added are the audio engine's, and none is an activation
@@ -173,7 +173,16 @@ describe('D1: input is one handler path', () => {
     // `unhandledrejection` are the page telling the game that something it did
     // not do has already failed, which is the opposite end of an input from a
     // player, and QUALITY-BAR section 12 names both as the routes item `M4`
-    // has to answer. They are also the only two listeners in the product that
+    // has to answer. The fourteenth is the composition root's `storage`, added
+    // by the cure for audit finding `J3-01`, and it is the same class of
+    // observation as the loop's three: the origin announcing that ANOTHER TAB
+    // wrote the persisted document, which no control on this page produced and
+    // no player of this page did. It is the one event that fires only in the
+    // tabs that did NOT write, which is what makes it the mechanism for the
+    // half of that cure the save path cannot reach: a background tab that never
+    // re-read the key kept showing the counters it booted with. It is bound
+    // beside the loop's hooks and removed beside them in `dispose`. They are
+    // also the only two listeners in the product that
     // **outlive the element they were bound to and are still never removed**,
     // and that is deliberate rather than an oversight: `src/ui/recovery.ts`
     // belongs to the page rather than to a game, and the moment a failure
@@ -198,6 +207,7 @@ describe('D1: input is one handler path', () => {
       'pagehide',
       'pageshow',
       'pointerdown',
+      'storage',
       'unhandledrejection',
       'visibilitychange',
       'visibilitychange',

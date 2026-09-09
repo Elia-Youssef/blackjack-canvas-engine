@@ -23,8 +23,20 @@
  *      holding a quiet one.
  *   2. *If it is still not running, the game continues silently. It never
  *      throws.* A platform that refuses the context, or a constructor that
- *      throws, leaves the engine unstarted and the game is none the worse:
- *      every entry point below answers rather than raising.
+ *      throws, leaves the engine silent and the game is none the worse: every
+ *      entry point below answers rather than raising, use as well as creation.
+ *      **Silently is not permanently**: the construction happens once, and the
+ *      asking does not. While the context exists and is not running the gesture
+ *      listeners stay on and every later gesture and every offered cue asks it
+ *      again, because a press the platform declined to count as an activation
+ *      is a press the next one may fix (`AUDIT-2`, finding `J6-01`). The
+ *      listeners come off on the **next** gesture after there is nothing left
+ *      to ask for, not the moment there is nothing left to ask for: `resume()`
+ *      is asynchronous, so the gesture that succeeds cannot know it has while
+ *      it is still running, and releasing there would spend the retry on a
+ *      context that may still be suspended. `rearm` reads the state at the top
+ *      of the next gesture and releases then, which costs one listener call and
+ *      cannot strand the engine.
  *   3. *It is resumed again on `visibilitychange` to visible*, because the
  *      platform may suspend it while hidden or during an interruption.
  *   4. *Persisted mute and volume are applied at creation*, so a player who
@@ -188,7 +200,7 @@ const STOP_EPSILON = 0.001;
  *     square so they read as matter moving rather than as music;
  *   - the four results are one short melodic sentence each, rising for the
  *     wins, falling for the loss, level and brief for the push;
- *   - the three events that change the session's shape (bust, shuffle,
+ *   - the four events that change the session's shape (bust, shuffle,
  *     milestone, bust out) are longer and lower, because they are heard across
  *     a change of scene rather than inside one.
  *
@@ -336,6 +348,26 @@ function platformContext(): AudioContext | null {
   return new AudioContext();
 }
 
+/**
+ * Ask a context to run, answering however it refuses. `AUDIT-2`, `Z5-02`.
+ *
+ * Two failures wear one name here. `resume()` is specified to return a promise,
+ * so the rejection handler is the documented refusal; a platform that throws
+ * from the call itself is outside that contract and the handler never sees it,
+ * which is how a `resume` reached the page-level error boundary from inside the
+ * one function this module promises never raises. Both are the same fact to a
+ * game that does not need sound: it is still not running.
+ */
+function resumeQuietly(target: AudioContext): void {
+  try {
+    void target.resume().catch((error: unknown) => {
+      void error;
+    });
+  } catch (error) {
+    void error;
+  }
+}
+
 /** The iOS audio session, behind the feature test the quality bar asks for. */
 function platformAudioSession(): AudioSessionTarget | null {
   if (typeof navigator === 'undefined') {
@@ -445,9 +477,45 @@ export function createAudioEngine(options: AudioEngineOptions = {}): AudioEngine
     return muted ? MIN_VOLUME : volume;
   }
 
+  /** Stop listening for a gesture: there is nothing left for one to do. */
+  function release(): void {
+    if (gestureTarget !== null) {
+      unbindGestures(gestureTarget, onGesture);
+    }
+  }
+
+  /**
+   * A gesture after the one that built the context. `AUDIT-2`, `J6-01`.
+   *
+   * **The construction happens once; the asking does not.** The engine used to
+   * spend its listeners on the first `pointerdown` or `keydown` of any kind and
+   * never ask again, so a context the platform declined to run, which is what
+   * Chrome hands back for a press that failed its activation test, and what a
+   * platform may impose at any later moment, was a permanently silent game that
+   * every instrument reported as sounding: the mute control reads "Mute", the
+   * settings note reads the volume, the cue tally climbs, and nothing sounds.
+   * The only way back was a tab switch the player has no reason to make.
+   *
+   * So the listeners stay while the context is not running, and each later
+   * gesture is the retry, which is exactly the moment the platform is most
+   * likely to allow one. **They come off here**, at the top of the gesture
+   * after there is nothing left to ask for, rather than at the moment there
+   * stops being anything: `resume()` below is asynchronous and the gesture that
+   * finally succeeds is still running when it returns, so releasing there would
+   * spend the retry on a context that may still be suspended. One extra
+   * listener call is the price, and it cannot strand the engine.
+   */
+  function rearm(): void {
+    if (context === null || context.state === 'running') {
+      release();
+      return;
+    }
+    resumeQuietly(context);
+  }
+
   /**
    * The first user gesture. QUALITY-BAR section 10's whole autoplay policy,
-   * in one function that runs at most once.
+   * in one function whose construction runs at most once.
    *
    * The session routing has its own guard rather than sitting inside the
    * context try below: the feature test is the guard against a platform with
@@ -458,12 +526,10 @@ export function createAudioEngine(options: AudioEngineOptions = {}): AudioEngine
    */
   function start(): void {
     if (started) {
+      rearm();
       return;
     }
     started = true;
-    if (gestureTarget !== null) {
-      unbindGestures(gestureTarget, onGesture);
-    }
     const session =
       options.audioSession === undefined ? platformAudioSession() : options.audioSession;
     if (session !== null) {
@@ -481,27 +547,39 @@ export function createAudioEngine(options: AudioEngineOptions = {}): AudioEngine
     }
     try {
       context = factory();
+      if (context !== null) {
+        // **Inside the try with the construction**, because these three are
+        // calls on a platform object and not arithmetic: `AUDIT-2`'s finding
+        // `Z5-02` measured each of them escaping this handler and reaching the
+        // page-level error boundary, which ends the session over a subsystem
+        // the game does not need. The catch below is the right answer to all
+        // four, since a master gain that could not be built or attached is a
+        // context with no output path.
+        master = context.createGain();
+        master.gain.value = level();
+        master.connect(context.destination);
+      }
     } catch (error) {
       // QUALITY-BAR section 10: "never throws when a context cannot be
       // created". The failure is named and the engine stays silent forever
-      // after, which is the quality bar's own answer to it.
+      // after, which is the quality bar's own answer to it. The half-built
+      // graph goes with it, so nothing is scheduled into a chain that reaches
+      // no destination.
       void error;
       context = null;
+      master = null;
+      release();
       return;
     }
     if (context === null) {
+      release();
       return;
     }
-    master = context.createGain();
-    master.gain.value = level();
-    master.connect(context.destination);
     // Resumed here, in the gesture, per the section. The promise is caught
     // because an unhandled rejection would be a page error over a feature the
     // game does not need, and "continues silently" is the section's own rule
     // for a context that still will not run.
-    void context.resume().catch((error: unknown) => {
-      void error;
-    });
+    resumeQuietly(context);
   }
 
   function onGesture(): void {
@@ -517,9 +595,7 @@ export function createAudioEngine(options: AudioEngineOptions = {}): AudioEngine
     if (context === null) {
       return;
     }
-    void context.resume().catch((error: unknown) => {
-      void error;
-    });
+    resumeQuietly(context);
   }
 
   if (gestureTarget !== null) {
@@ -535,48 +611,36 @@ export function createAudioEngine(options: AudioEngineOptions = {}): AudioEngine
       if (context === null || master === null || muted) {
         return;
       }
-      const start = context.currentTime;
-      for (const voice of TONES[cue]) {
-        const at = start + voice.at;
-        if (voice.frequency === 0) {
-          if (noise === null) {
-            // Once, on the first percussive cue, and never regenerated:
-            // QUALITY-BAR section 10's own words. The buffer is created here
-            // rather than at the gesture because a muted session that never
-            // plays a cue has no buffer to make, and making one anyway would
-            // be work the mute was asked to prevent.
-            const samples = Math.max(1, Math.floor(context.sampleRate * NOISE_SECONDS));
-            noise = context.createBuffer(1, samples, context.sampleRate);
-            const channel = noise.getChannelData(0);
-            for (let index = 0; index < samples; index += 1) {
-              // The one random number in the audio layer, and it is the
-              // noise a percussion cue is. This is not `core/`, and no game
-              // decision reads it: two runs differ in hiss and in nothing
-              // else, which is what noise is.
-              channel[index] = Math.random() * 2 - 1;
-            }
-          }
-          const source = context.createBufferSource();
-          source.buffer = noise;
-          const envelope = context.createGain();
-          envelope.gain.setValueAtTime(voice.gain, at);
-          envelope.gain.exponentialRampToValueAtTime(ENVELOPE_FLOOR, at + voice.seconds);
-          source.connect(envelope);
-          envelope.connect(master);
-          source.start(at);
-          source.stop(at + voice.seconds + STOP_EPSILON);
-          continue;
-        }
-        const oscillator = context.createOscillator();
-        oscillator.type = voice.wave;
-        oscillator.frequency.value = voice.frequency;
-        const envelope = context.createGain();
-        envelope.gain.setValueAtTime(voice.gain, at);
-        envelope.gain.exponentialRampToValueAtTime(ENVELOPE_FLOOR, at + voice.seconds);
-        oscillator.connect(envelope);
-        envelope.connect(master);
-        oscillator.start(at);
-        oscillator.stop(at + voice.seconds + STOP_EPSILON);
+      // The retry a player cannot be relied on to make. `AUDIT-2`, `J6-01`: a
+      // session that answered the gesture policy with one press and then played
+      // by pressing controls produces no further `pointerdown` on the document
+      // between rounds, so the cue itself is the frequent moment at which a
+      // context the platform is holding suspended can be asked to run again.
+      // Asking is free where it is already running, and this is the only read of
+      // `state` besides `rearm`'s.
+      if (context.state !== 'running') {
+        resumeQuietly(context);
+      }
+      try {
+        playCue(cue);
+      } catch (error) {
+        // `AUDIT-2`, finding `X4-02`. QUALITY-BAR section 12: "a missing or
+        // failing subsystem degrades: no audio context means a silent game, not
+        // a broken one". The guard above answers a context that was never made;
+        // this answers one that died after it was, which the specification
+        // makes throw `InvalidStateError` from every factory method. `cue` is
+        // offered from inside the frame callback, which is the one thing the
+        // composition root wraps in the error boundary, so without this the
+        // consequence of a dead optional subsystem is the full-page recovery
+        // panel rather than silence.
+        //
+        // **The context is not dropped here.** A throw does not say whether the
+        // platform has closed it for good or refused it for a moment, and the
+        // engine that guessed "for good" would turn the recoverable case, which
+        // is the one `J6-01` is about, into the permanent silence this part
+        // exists to remove. The cost of asking again is one caught exception
+        // per cue.
+        void error;
       }
     },
 
@@ -601,9 +665,7 @@ export function createAudioEngine(options: AudioEngineOptions = {}): AudioEngine
     offeredInPhase: () => Object.freeze({ ...byPhase }),
 
     dispose(): void {
-      if (gestureTarget !== null) {
-        unbindGestures(gestureTarget, onGesture);
-      }
+      release();
       visibilityTarget?.removeEventListener('visibilitychange', onVisibility);
       if (context !== null) {
         const closing = context;
@@ -615,4 +677,64 @@ export function createAudioEngine(options: AudioEngineOptions = {}): AudioEngine
       }
     },
   };
+
+  /**
+   * Schedule one cue's voices on the live context.
+   *
+   * Its own function so that the guard above wraps a body rather than a
+   * paragraph: every call in here is a call on the platform, and the one thing
+   * the caller has to be able to say is "any of them may refuse and none of them
+   * may raise". `context` and `master` are read from the closure and are both
+   * non-null on every path that reaches here.
+   */
+  function playCue(cue: CueId): void {
+    if (context === null || master === null) {
+      return;
+    }
+    const output = master;
+    const live = context;
+    const start = live.currentTime;
+    for (const voice of TONES[cue]) {
+      const at = start + voice.at;
+      if (voice.frequency === 0) {
+        if (noise === null) {
+          // Once, on the first percussive cue, and never regenerated:
+          // QUALITY-BAR section 10's own words. The buffer is created here
+          // rather than at the gesture because a muted session that never
+          // plays a cue has no buffer to make, and making one anyway would
+          // be work the mute was asked to prevent.
+          const samples = Math.max(1, Math.floor(live.sampleRate * NOISE_SECONDS));
+          noise = live.createBuffer(1, samples, live.sampleRate);
+          const channel = noise.getChannelData(0);
+          for (let index = 0; index < samples; index += 1) {
+            // The one random number in the audio layer, and it is the
+            // noise a percussion cue is. This is not `core/`, and no game
+            // decision reads it: two runs differ in hiss and in nothing
+            // else, which is what noise is.
+            channel[index] = Math.random() * 2 - 1;
+          }
+        }
+        const source = live.createBufferSource();
+        source.buffer = noise;
+        const envelope = live.createGain();
+        envelope.gain.setValueAtTime(voice.gain, at);
+        envelope.gain.exponentialRampToValueAtTime(ENVELOPE_FLOOR, at + voice.seconds);
+        source.connect(envelope);
+        envelope.connect(output);
+        source.start(at);
+        source.stop(at + voice.seconds + STOP_EPSILON);
+        continue;
+      }
+      const oscillator = live.createOscillator();
+      oscillator.type = voice.wave;
+      oscillator.frequency.value = voice.frequency;
+      const envelope = live.createGain();
+      envelope.gain.setValueAtTime(voice.gain, at);
+      envelope.gain.exponentialRampToValueAtTime(ENVELOPE_FLOOR, at + voice.seconds);
+      oscillator.connect(envelope);
+      envelope.connect(output);
+      oscillator.start(at);
+      oscillator.stop(at + voice.seconds + STOP_EPSILON);
+    }
+  }
 }

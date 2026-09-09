@@ -439,6 +439,41 @@ describe('J6: SPEC 9 milestones', () => {
       }
     });
 
+    it('awards the milestone the map names for each table, and no other', () => {
+      // `AUDIT-2` finding `X3-08`: every assertion above is shape and
+      // membership, so the map's two values could be swapped with all of them
+      // still true, and until the awarder read the map nothing else could tell.
+      // This is the relation itself: reaching a table's threshold awards what
+      // the map answers for that table, awards the milestone of every table
+      // below it, and awards nothing for a table further up.
+      //
+      // The map is read on both sides of that law, so it cannot be the whole
+      // detector: swap its two values and both sides move together. SPEC 9
+      // names each row after the SPEC 6 table it is about, which is the reading
+      // that does not come from the map, so the correspondence is asserted
+      // first and the awarding relation second.
+      for (const table of MILESTONE_TABLES) {
+        const id = TABLE_MILESTONES[table];
+        if (id === null || id === undefined) {
+          throw new Error(`${table} carries a milestone in SPEC 9 and the map answers none`);
+        }
+        expect(id, `SPEC 9 names ${table}'s row after the table`).toBe(
+          `reached${table[0]?.toUpperCase() ?? ''}${table.slice(1)}`,
+        );
+        const reached = tableLimits(table).unlocksAt;
+        const stats = observeAll(NO_STATISTICS, [{ hands: [WIN], bestBalance: reached }]);
+        expect(isAwarded(stats, id), `${table} awards ${id}`).toBe(true);
+        for (const other of MILESTONE_TABLES) {
+          const otherId = TABLE_MILESTONES[other];
+          if (otherId === null || otherId === undefined || otherId === id) {
+            continue;
+          }
+          const above = tableLimits(other).unlocksAt > reached;
+          expect(isAwarded(stats, otherId), `${table} then ${other}`).toBe(!above);
+        }
+      }
+    });
+
     it('awards nothing for sitting at Bronze with the starting bankroll', () => {
       const stats = repeated(NO_STATISTICS, { hands: [LOSS], chips: SPEC_STARTING_CHIPS }, 3);
       expect(isAwarded(stats, 'reachedSilver')).toBe(false);

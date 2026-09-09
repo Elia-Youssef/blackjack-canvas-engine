@@ -13,13 +13,22 @@
  * phone plays at. `tests/browser/audio-settings.spec.ts` asserts the
  * reachability at wide, medium and compact rather than reading this file.
  *
- * **The state is carried three ways, and all three are the control's own.**
- * `aria-pressed` exposes it to assistive technology; the label changes, from
- * "Mute" to "Unmute", so the state is in words and not only in a colour; and
- * the pressed style the stylesheet already gives every `aria-pressed` control
- * underlines it, which is the non-colour signal that survives forced colors
- * and colour-vision deficiencies alike. That is `BJ-18`'s rule for a state
- * carried by more than colour, applied on arrival rather than retrofitted.
+ * **The state is `aria-pressed`, and the name is the setting.** The label is
+ * "Mute" at both states and never becomes "Unmute": a toggle whose name changes
+ * to describe the next press carries the action in its name and the setting in
+ * its state, so the two halves of one announcement contradict each other, and
+ * "Unmute, toggle button, pressed" says that unmuting is on at the moment the
+ * sound is off. That inversion shipped from `BJ-19` until `AUDIT-2`'s finding
+ * `Z4-02`; the cure is the form the WAI-ARIA practice names first, a static name
+ * with the state in `aria-pressed`, which is also the form every other pressed
+ * control in this chrome already has ("Bronze 10 to 100", "Normal", "Dark",
+ * "Surrender", "6 decks", "125%"). The non-colour signal is unaffected and is
+ * the reason this arm was chosen over dropping `aria-pressed`: the pressed style
+ * the stylesheet gives every `aria-pressed` control underlines it, which
+ * survives forced colors and colour-vision deficiencies alike, and it is
+ * asserted on both arms in `tests/browser/audio-settings.spec.ts`. The change
+ * itself is announced in words by `src/ui/announce.ts`, "Sound muted." and
+ * "Sound on.", which is the event half of the same state.
  *
  * **Never greyed.** Nothing refuses a mute: it decides no round, it is legal
  * in every phase, and the availability layer never hears of it. The control
@@ -28,19 +37,19 @@
  * because `unavailableNow` reads the machine and the machine has no stake in
  * silence.
  *
- * The volume half of SPEC 14's sound is not here. The slider is item `I5` at
- * `BJ-20`, on purpose, and the engine's `setVolume` is the programmatic path
- * it will bind to; what this part ships toward it is the boot pass-through and
- * the read side, both asserted in the spec above.
+ * The volume half of SPEC 14's sound is not here. `BJ-20` built the slider as
+ * item `I5`, in the Settings panel (`src/ui/components/overlays.ts`), where the
+ * setting sits beside the rest of SPEC 14's; it reaches the engine's
+ * `setVolume` through `ChromeActions.setVolume`. Only the single-action clause
+ * is this file's, which is why mute is the one sound control the top bar
+ * carries.
  */
 
-import { button, setAttribute, setText } from '../dom';
+import { button, setAttribute } from '../dom';
 import type { ChromeActions, ChromeState, Component } from '../state';
 
-/** The label at each state. Both are verbs, because both are what one press does. */
-function labelFor(muted: boolean): string {
-  return muted ? 'Unmute' : 'Mute';
-}
+/** The control's name: the setting it holds, at every state. See the header. */
+const LABEL = 'Mute';
 
 /**
  * Build the mute control.
@@ -51,7 +60,7 @@ function labelFor(muted: boolean): string {
  * disagree.
  */
 export function createSound(actions: ChromeActions): Component {
-  const control = button('Mute', () => {
+  const control = button(LABEL, () => {
     actions.toggleMuted();
   }, {
     className: 'bj-button bj-button--quiet',
@@ -62,7 +71,6 @@ export function createSound(actions: ChromeActions): Component {
     root: control,
     update(state: ChromeState): void {
       setAttribute(control, 'aria-pressed', String(state.muted));
-      setText(control, labelFor(state.muted));
     },
   };
 }

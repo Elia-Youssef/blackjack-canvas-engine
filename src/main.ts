@@ -53,9 +53,10 @@
  * `dispose` on the game this module last built, so the loop, every listener and
  * the shell go together and nothing is left half alive.
  *
- * There is still no `catch` in this file. The one `try` in the project's chrome
- * is inside `recovery.ts`, where the value it catches is read and reported;
- * wrapping the loop here without that panel would swallow the failure and leave
+ * There is still no `catch` in this file. Every `try` in the chrome binds the
+ * value it catches and reads it, which is QUALITY-BAR section 12's rule about
+ * the shape, and the one that turns a failure into a panel is `recovery.ts`'s.
+ * Wrapping the loop here without that panel would swallow the failure and leave
  * a frozen canvas, which is the defect item `M4` exists to prevent.
  *
  * **The feature test runs before the boot, and before anything that could
@@ -100,6 +101,7 @@ import { createWallet, tableLimits, type TableId } from './core/wallet';
 import { PACING_NAMES, resolveMotion, type Motion } from './render/animate';
 import {
   createPlaySurface,
+  requiredSurfaceWidth,
   type FanReading,
   type PlaySurface,
   type SceneState,
@@ -123,7 +125,7 @@ import {
   type SurfacePlan,
   type Viewport,
 } from './ui/breakpoints';
-import type { QueueState } from './ui/announce';
+import { NOTICE_FLOOR_SECONDS, type QueueState } from './ui/announce';
 import { createChrome } from './ui/chrome';
 import { resolvedLocale } from './ui/format';
 import { createForcedColorsPreference, type ForcedColorsPreference } from './ui/forced-colors';
@@ -146,7 +148,7 @@ import type {
   Notice,
   OverlayId,
 } from './ui/state';
-import type { GameDocument } from './storage/document';
+import { STORAGE_KEY, mergeDocuments, type GameDocument, type Settings } from './storage/document';
 import { openPersistence, type Persistence } from './storage/persistence';
 
 import './ui/tokens.css';
@@ -166,74 +168,50 @@ const NO_AWARDS: readonly MilestoneId[] = Object.freeze([]);
  * comes from.
  */
 
-/** Everything the composition root holds beside the machine. SPEC 13's set. */
-export interface SessionState {
+/**
+ * Everything the composition root holds beside the machine. SPEC 13's set.
+ *
+ * **The settings half is the document's own `Settings`, minus two, rather than
+ * a second spelling of it.** `AUDIT-2` finding `X3-04`: this record used to
+ * name each setting again, structurally unrelated to the type the save builds,
+ * so a ninth persisted setting was a compile error in `documentNow()` and
+ * compiled silently short here. `Omit` keeps that from being possible: a field
+ * added to `Settings` is a required field of this shape on the same edit, and
+ * `session()` below stops compiling until it answers for it.
+ *
+ * Two are omitted, and each for a stated reason.
+ *
+ *   - **`rules`.** SPEC 14's house rules live on the machine, which owns both
+ *     the record in force and the staged one, and `readout().rules` is where a
+ *     caller reads them. A copy here would be a third answer to a question with
+ *     two honest ones.
+ *   - **`coach`.** The document spells SPEC 7's mode `coach`; this record needs
+ *     that name for the accuracy record, which is not a setting at all, so the
+ *     mode is `coachMode` below. The census in
+ *     `tests/unit/settings-restore.test.ts` holds the rename to exactly this
+ *     pair, so a third divergence cannot appear quietly.
+ *
+ * What the inherited half carries, in one place rather than six: SPEC 5's
+ * Speed, whose only home is the machine (`E9`); QUALITY-BAR section 4's
+ * play-surface size (`F6`); SPEC 14's mute and volume, whose one holder is the
+ * audio engine (`K3`); SPEC 14's theme, which the chrome resolves to the one
+ * `data-theme` attribute (`E2`); and SPEC 14's reduced-motion setting as the
+ * word rather than the boolean the frame resolves (`I5`). Every one of them is
+ * read here and held somewhere else, which is what makes a save have one place
+ * to read and a restore one place to write.
+ */
+export interface SessionState extends Omit<Settings, 'coach' | 'rules'> {
   readonly statistics: Statistics;
   readonly history: History;
   readonly coach: CoachRecord;
+  /** SPEC 7's mode. The document spells this one `settings.coach`. */
   readonly coachMode: CoachMode;
-  /**
-   * SPEC 5's Speed. `BJ-14`, item `E9`.
-   *
-   * In the session value rather than only inside the machine, because SPEC 13
-   * persists the settings and this is the shape `BJ-20` writes. `E9`'s
-   * "persists" clause is ruled to close there, at that part's reload specs; what
-   * `BJ-14` owes it is a value in a serialisable shape, which this is, and a
-   * setting whose only home is the machine so a restore has one place to put it.
-   */
-  readonly speed: Speed;
-  /**
-   * QUALITY-BAR section 4's play-surface size. `BJ-16`, item `F6`.
-   *
-   * Here for the reason `speed` is: SPEC 13 persists the settings, this is the
-   * shape `BJ-20` writes, and `F6`'s "persists" clause is ruled to close there
-   * on the same terms `E9`'s did. What `BJ-16` owes that part is a value in a
-   * serialisable shape whose only home is this record, so a restore has one
-   * place to put it and the layout has one place to read it.
-   */
-  readonly surfaceSize: SurfaceSize;
-  /**
-   * SPEC 14's mute. `BJ-19`, item `K3`.
-   *
-   * Here on the Speed precedent: SPEC 13 persists the settings, `BJ-20` wires
-   * the reload flows, and the "persists" clause closes there with `I4` and
-   * `I5`. What `BJ-19` owes that part is the boot pass-through below, which
-   * applies a restored value at the audio engine's creation exactly as
-   * QUALITY-BAR section 10 asks, and this read side, so a restore has one
-   * place to land and a save has one place to read.
-   */
-  readonly muted: boolean;
-  /**
-   * SPEC 14's volume, `MIN_VOLUME` to `MAX_VOLUME`. `BJ-19`, item `K3`, on the
-   * same terms as `muted` beside it. The slider that writes it is `I5` at
-   * `BJ-20`; the engine's clamping is the only arithmetic either will need.
-   */
-  readonly volume: number;
-  /**
-   * SPEC 14's theme. `BJ-20`, item `E2`.
-   *
-   * On the Speed precedent, in full: the document was the first thing that had
-   * to name it, this is the shape the save reads and the restore writes, and
-   * `BootOptions.theme` is the door an explicit option comes through. The
-   * chrome resolves it to the one `data-theme` attribute the stylesheet's
-   * selectors already answer to; the play surface never sees it, because SPEC
-   * 16 fixes the felt's palette across both themes.
-   */
-  readonly theme: Theme;
-  /**
-   * SPEC 14's reduced-motion setting, as the word rather than the boolean.
-   * `BJ-20`, item `I5`.
-   *
-   * The boolean the frame resolves is `alwaysReduceOf(this) || the platform
-   * query`, which is `resolveReducedMotion`'s whole rule; the word is what
-   * persists and what the Settings control offers.
-   */
-  readonly reducedMotion: MotionSetting;
   /**
    * SPEC 17's How-to-Play seen flag. `BJ-20`, item `J7`.
    *
    * False until the player dismisses the overlay the first time, true from
-   * then on, saved at the dismissal itself so a reload honours it.
+   * then on, saved at the dismissal itself so a reload honours it. Not a
+   * `Settings` field: the document carries it at the top level.
    */
   readonly howToPlaySeen: boolean;
 }
@@ -440,6 +418,39 @@ export interface BootOptions {
 let current: Game | null = null;
 
 /**
+ * What the boot in progress has built so far. `AUDIT-2`, finding `X4-03`.
+ *
+ * The boundary's stop disposes `current`, and `current` is assigned in one
+ * place: the statement before the first synchronous frame. `bootSession`'s own
+ * first statement clears it. So for the whole of a boot there was no handle to
+ * dispose, and item `M4`'s "stops the loop cleanly" was satisfied vacuously on
+ * the two routes that enter that window: the page's own wrapped first boot, and
+ * the in-page Reset's re-boot. What a failure there left behind was the
+ * listeners of every subsystem already constructed, on a page whose game no
+ * longer existed, with the boundary latched shut behind them.
+ *
+ * So each piece registers its own teardown as it is built, and the boundary
+ * stops whichever of the two handles the failure found. The list is emptied at
+ * the publication below, because from that moment `dispose` is the whole
+ * teardown and running both would be running each piece's teardown twice.
+ *
+ * **Nothing here is caught.** A teardown that throws is reported and mounts the
+ * panel through `createErrorBoundary`'s own guard, exactly as a throw from
+ * `dispose` already is, so the two routes fail the same way as well as
+ * succeeding the same way.
+ */
+let building: (() => void)[] = [];
+
+/** Undo a boot that never finished, in the reverse of the order it was built. */
+function stopPartialBoot(): void {
+  const pending = [...building].reverse();
+  building = [];
+  for (const teardown of pending) {
+    teardown();
+  }
+}
+
+/**
  * Where the last boot mounted its chrome, so a failure has somewhere to write.
  *
  * The boundary is installed once, at module scope, before any game exists, and
@@ -462,7 +473,14 @@ let mounted: HTMLElement | null = null;
 const boundary: ErrorBoundary = createErrorBoundary({
   mount: () => mounted ?? document.body,
   stop: () => {
-    current?.dispose();
+    if (current !== null) {
+      current.dispose();
+      return;
+    }
+    // The other half of the same duty. `current` is null for the whole of a
+    // boot and after a dispose, and a failure in that window is exactly the
+    // failure with pieces to take off the page. See `building` above.
+    stopPartialBoot();
   },
 });
 
@@ -538,6 +556,23 @@ function stageBox(body: HTMLElement): StageBox {
  */
 function pixelRatio(): number {
   return devicePixelRatio;
+}
+
+/**
+ * How wide the picture on the felt needs the surface to be. Item `E8`.
+ *
+ * The one number that crosses from the machine's snapshot into the surface
+ * plan, and it crosses here because this is the only place that holds both.
+ * `src/render/scene.ts` owns the arithmetic and the reasoning; what is decided
+ * here is that the bands are counted from the same readout the frame is about
+ * to be drawn from, so the canvas cannot be planned for a round other than the
+ * one on the felt.
+ */
+function surfaceDemand(snapshot: TableReadout): number {
+  return requiredSurfaceWidth(
+    snapshot.hands.map((hand) => hand.cards.length),
+    snapshot.dealerVisible.length + snapshot.dealerConcealed,
+  );
 }
 
 /**
@@ -632,6 +667,12 @@ export function boot(options: BootOptions = {}): Game {
 /** Build a session, optionally carrying an already-open persistence fallback. */
 function bootSession(options: BootOptions, carriedPersistence?: Persistence): Game {
   current?.dispose();
+  // A fresh teardown for a fresh boot. It is already empty on every route the
+  // page takes, because the publication empties it and the boundary's stop
+  // empties it; what this covers is a caller that reached `boot` outside the
+  // boundary, whose failed attempt would otherwise leave its pieces in the list
+  // for the next boot's failure to take down.
+  building = [];
 
   document.documentElement.dataset['game'] = GAME_ID;
   // QUALITY-BAR section 11: the locale is passed to `Intl` explicitly and the
@@ -660,25 +701,21 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       ? { bestBalance: persisted.bestBalance }
       : { bestBalance: options.bestBalance },
   );
-  // SPEC 14's settings, as the session holds them. The rules the panel stages
-  // sit beside the machine's in-force record until the next deal applies them,
-  // which is the one boundary SPEC 14 gives a house-rule change.
-  //
-  // **One merge, above the machine, because both readers must agree.** This is
-  // what the Settings panel shows as pressed state and what `save()` persists,
-  // and it is what the table is built from; two spellings of the same spread
-  // agree today only because `houseRules` is idempotent over a complete record
-  // and `createTable` normalises again anyway, so a default or a validation
-  // added to one of them would have the panel showing rules the round is not
-  // being played under, with no test between them.
-  let settingsRules: HouseRules = houseRules({
+  // SPEC 14's house rules, as the session opens with them: what was persisted,
+  // with anything the boot options name on top. The table is built from this
+  // record and owns it from there on, which is the whole of `AUDIT-2`'s finding
+  // `Z2-01`: this root used to keep the record and go on editing it beside the
+  // machine, so the panel's toggles and the panel's own sentence were two
+  // answers to one question. There is one record now, the machine's, and
+  // `chosenRules` below is how this file reads it back.
+  const launchRules: HouseRules = houseRules({
     ...persisted.settings.rules,
     ...options.rules,
   });
   const tableOptions: TableOptions = {
     wallet,
     table: options.table ?? restored.launch.table,
-    rules: settingsRules,
+    rules: launchRules,
     seed: options.seed ?? Date.now(),
     speed: options.speed ?? persisted.settings.speed,
   };
@@ -697,6 +734,14 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
   // "system" leaves the query to answer, which `resolveReducedMotion` states.
   const preference: MotionPreference = createMotionPreference({
     alwaysReduce: alwaysReduceOf(reducedMotion),
+  });
+  // The first thing this boot has built that holds a platform listener, and so
+  // the first entry in the teardown a failure before the publication uses. Every
+  // `building.push` below sits beside the construction it undoes, and the list
+  // and `dispose` are the two orderings of one set: a subsystem added to one
+  // belongs in the other.
+  building.push(() => {
+    preference.dispose();
   });
   // The only place in the project that asks the platform for forced colors, on
   // the same terms and for the same reason. Item `G9`: the chrome's half is done
@@ -719,6 +764,24 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
   let coachMode: CoachMode = options.coachMode ?? persisted.settings.coach;
   let verdicts: HandVerdict[] | null = coachMode === 'off' ? null : [];
   let notice: Notice | null = null;
+  /**
+   * How long the notice above has been on the page, in seconds. `AUDIT-2`,
+   * finding `J1-01`.
+   *
+   * SPEC 4.11 requires every refusal to reach the player with a reason, and a
+   * reason written and cleared inside one frame reaches nothing: not the notice
+   * line, not the live region that reads the same field, not the mirror, which
+   * lists greyed controls rather than refused ones. That is what happened
+   * whenever a refused press shared a frame with an accepted one, which two
+   * ordinary presses on the betting screen reach: a chip tap over the table
+   * ceiling and Deal. Both routes that clear a notice now wait for this to
+   * reach `NOTICE_FLOOR_SECONDS`, so a reason survives long enough to be read
+   * and long enough for the queue to have a turn in which to say it.
+   *
+   * It starts spent, so the first accepted action of a session is not made to
+   * wait behind a notice that was never written.
+   */
+  let noticeAge = NOTICE_FLOOR_SECONDS;
   let surfaceSize: SurfaceSize = options.surfaceSize ?? persisted.settings.surfaceSize;
   let theme: Theme = options.theme ?? persisted.settings.theme;
   let howToPlaySeen: boolean = restored.howToPlaySeen;
@@ -735,6 +798,9 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     muted: options.muted === undefined ? persisted.settings.muted : options.muted,
     volume: options.volume === undefined ? persisted.settings.volume : options.volume,
   });
+  building.push(() => {
+    audio.dispose();
+  });
 
   /**
    * SPEC 13's save, from the live session. `BJ-20`, item `I4`.
@@ -745,17 +811,42 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
    * high-water mark is the document's `bestBalance`, and the machine's own
    * table names the seat. A write that throws degrades only the carry, which
    * is `persistence.ts`'s contract and not this function's business.
+   *
+   * **The assembly is its own function because two callers need it.** The save
+   * below is one; the `storage` listener further down is the other, and it must
+   * fold what another tab wrote against the session as it stands right now
+   * rather than against the document the last save happened to leave behind,
+   * which can be several coach decisions old inside a round. One assembly, so
+   * the two cannot describe different sessions.
    */
   function save(): void {
+    persistence.save(documentNow());
+  }
+
+  /**
+   * SPEC 14's house rules as the player has chosen them. `AUDIT-2`, `Z2-01`.
+   *
+   * The record staged for the next round when there is one, and the record in
+   * force otherwise, which is `stagedRules()`'s contract read straight. Two
+   * callers, and both want the choice rather than the round: the save, because
+   * a reload must restore what the player picked and not what the round they
+   * left was running under, and the settings merge below, because a patch of
+   * one toggle is a patch of the record the panel is showing.
+   */
+  function chosenRules(): HouseRules {
+    return table.stagedRules() ?? table.readout().rules;
+  }
+
+  function documentNow(): GameDocument {
     const snapshot = table.readout();
-    const document: GameDocument = Object.freeze({
+    return Object.freeze({
       bestBalance: snapshot.wallet.bestBalance,
       table: snapshot.table,
       statistics,
       coach,
       history,
       settings: Object.freeze({
-        rules: settingsRules,
+        rules: chosenRules(),
         coach: coachMode,
         speed: table.speed(),
         surfaceSize,
@@ -766,7 +857,43 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       }),
       howToPlaySeen,
     });
-    persistence.save(document);
+  }
+
+  /**
+   * What another tab wrote, folded into this session. `AUDIT-2`, `J3-01`.
+   *
+   * The `storage` event fires in every tab of the origin EXCEPT the one that
+   * wrote, so this runs exactly when this session's copy of the record has just
+   * gone stale. Without it a background tab kept showing the counters it booted
+   * with while the played tab moved on, and the two disagreed on screen until
+   * one of them was reloaded.
+   *
+   * **Only the fields that cannot go backwards, and never the settings.**
+   * `mergeDocuments` is the one policy, shared with the save path, so what is
+   * adopted here is exactly what a save would have preserved: the lifetime
+   * tallies, the milestones, the longer history and the seen flag. The merge
+   * returns THIS session's settings, Speed, theme, sound, coach mode and the
+   * staged rules, and they are deliberately not read back: taking a player's
+   * controls out from under them because a window they may not be looking at
+   * changed something is worse than the staleness it would cure, and SPEC 14
+   * scopes a settings change to the panel that made it.
+   *
+   * **The high-water mark is not adopted either, and that is a limit rather
+   * than a choice.** SPEC 6's mark lives in the wallet the machine holds, and
+   * `core/wallet.ts` offers no way to raise it from outside a round; the stored
+   * mark is protected by the merge at the save, and this tab's own readout
+   * catches up at its next launch.
+   */
+  function adoptForeignWrite(): void {
+    const merged = mergeDocuments(persistence.stored(), documentNow());
+    statistics = Object.freeze({
+      ...statistics,
+      lifetime: merged.statistics.lifetime,
+      milestones: merged.statistics.milestones,
+    });
+    coach = Object.freeze({ ...coach, lifetime: merged.coach.lifetime });
+    history = merged.history;
+    howToPlaySeen = merged.howToPlaySeen;
   }
 
   const actions: ChromeActions = {
@@ -813,10 +940,14 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     },
     setRules(patch: Partial<HouseRules>): void {
       // SPEC 14: staged, not applied. The machine holds the stage until the
-      // next deal, the panel reads the merged record for its pressed states,
-      // and the save carries the merged record so a reload restores the choice.
-      settingsRules = Object.freeze({ ...settingsRules, ...patch });
-      table.setRules(settingsRules);
+      // next deal, the panel reads the stage back for its pressed states, and
+      // the save carries the same record so a reload restores the choice.
+      //
+      // The patch is merged onto what the player has already chosen, which is
+      // the stage when there is one and the rules in force when there is not.
+      // Merging onto the rules in force alone would undo every other toggle
+      // the player moved since the last deal.
+      table.setRules(Object.freeze({ ...chosenRules(), ...patch }));
       save();
     },
     setTheme(next: Theme): void {
@@ -869,6 +1000,10 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
   };
 
   const chrome = createChrome(actions);
+  building.push(() => {
+    chrome.dispose();
+    chrome.shell.root.remove();
+  });
   const root = mountPoint(options);
   // Where a failure would put the recovery panel. Written before the shell is
   // mounted, so a throw from this boot's own first frame has a home already.
@@ -899,6 +1034,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     layout.breakpoint,
     layout.surfaceSize,
     pixelRatio(),
+    surfaceDemand(table.readout()),
   );
   const surface: PlaySurface = createPlaySurface({
     canvas: chrome.shell.canvas,
@@ -942,7 +1078,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       volume: audio.volume(),
       theme,
       reducedMotion,
-      stagedRules: settingsRules,
+      stagedRules: table.stagedRules(),
       hint: currentHint(readout),
       durable,
     };
@@ -1020,10 +1156,16 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     // A refusal outranks an acceptance in the same frame. SPEC 4.11 requires the
     // reason to reach the player, and a click accepted 16 ms later must not be
     // what decides whether they ever see it.
+    //
+    // **Outranking it here was never enough**, which is finding `J1-01`: the
+    // accepted intent in the same drain changes the phase, and the frame's own
+    // clear below erased the reason before the sync step rendered anything. So
+    // the reason carries an age, and both clears wait for it.
     const refused = report.rejected.at(-1);
     if (refused !== undefined && !refused.ok) {
       notice = { intent: refused.kind, layer: refused.layer, reason: refused.reason };
-    } else if (applied !== null) {
+      noticeAge = 0;
+    } else if (applied !== null && noticeAge >= NOTICE_FLOOR_SECONDS) {
       notice = null;
     }
   }
@@ -1092,6 +1234,9 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       return;
     }
     const was = table.readout().phase.kind;
+    // Before the drain, so a reason written by this drain is nought seconds old
+    // and survives to the sync step at the bottom of this frame.
+    noticeAge += dt;
     drainInput();
     table.update(dt);
 
@@ -1107,9 +1252,18 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     }
     // A reason belongs to the screen it was refused on. SPEC 10 gives each
     // control one screen, so carrying "that is below the table minimum" into the
-    // deal would be a sentence about a control the player can no longer see. A
-    // refusal never changes the phase itself, so this cannot erase a fresh one.
-    if (readout.phase.kind !== was) {
+    // deal would be a sentence about a control the player can no longer see.
+    //
+    // **The premise this used to carry was true and its conclusion was not.** A
+    // refusal never changes the phase itself, so it cannot erase its own
+    // refusal; but the intent *accepted* in the same drain can, and then this
+    // line erased a reason that was written eight lines ago and had reached no
+    // surface at all (finding `J1-01`, the window measured at exactly one
+    // frame). So the screen still owns the reason, and it owns it from
+    // `NOTICE_FLOOR_SECONDS` onward: a reason outlives its screen by up to one
+    // announcement floor, deliberately, because the alternative is a reason
+    // that outlives nothing.
+    if (readout.phase.kind !== was && noticeAge >= NOTICE_FLOOR_SECONDS) {
       notice = null;
     }
     // SPEC 9's awards belong to the frame that made them. `closeRound` writes
@@ -1122,7 +1276,10 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     // The shape of the page, then the surface that has to fit inside it. The
     // breakpoint is resolved from the viewport, which no layout of ours can
     // change, and the box is a grid track of a shell with a definite height, so
-    // neither reading can be moved by what this frame is about to draw. A
+    // neither reading can be moved by what this frame is about to draw. The
+    // third input, the picture's own demand, is a count of cards rather than a
+    // measurement of the page, and the row it is planned into clips rather than
+    // grows, so it cannot feed back either. A
     // resize is one frame behind a rotation, because the attribute that selects
     // the new layout is written in the chrome sync at the end of this frame and
     // the box is measured at the top of the next one; the machine's state is
@@ -1133,6 +1290,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       layout.breakpoint,
       layout.surfaceSize,
       pixelRatio(),
+      surfaceDemand(readout),
     );
     if (!sameSizing(wanted.sizing, plan.sizing)) {
       surface.resize(wanted.sizing);
@@ -1172,6 +1330,38 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       });
     },
     onHidden: save,
+  });
+  building.push(() => {
+    loop.dispose();
+  });
+
+  /**
+   * The product's one `storage` listener. `AUDIT-2`, finding `J3-01`.
+   *
+   * Bound on the global scope by name, the way the viewport and the device
+   * pixel ratio are read above: `tests/unit/storage-write-failure.test.ts`
+   * requires that exactly one file under `src/` names the platform globals, and
+   * the seam it means is `src/storage/store.ts`.
+   *
+   * It is an observation of the origin rather than an input a player made,
+   * which is the class `visibilitychange`, `pagehide` and `pageshow` are
+   * already in, and it comes off in `dispose` beside them so a game that has
+   * been replaced cannot answer for a page it no longer owns.
+   */
+  const onForeignWrite = (event: StorageEvent): void => {
+    // `key` is `null` when a whole origin is cleared, which takes this game's
+    // document with it; any other key belongs to something else on the origin
+    // and is none of this game's business.
+    if (event.key !== null && event.key !== STORAGE_KEY) {
+      return;
+    }
+    // Wrapped like the frame callback, for item `M4`'s reason: a page-level
+    // hook is a route into this game that no wrapper above it covers.
+    boundary.run(adoptForeignWrite);
+  };
+  addEventListener('storage', onForeignWrite);
+  building.push(() => {
+    removeEventListener('storage', onForeignWrite);
   });
 
   const game: Game = {
@@ -1240,7 +1430,14 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       // page it no longer owns. Nothing is saved here, for the reason the
       // reset action spells out: a dispose-time write would race the very
       // reset that disposed it.
+      //
+      // This and `building` above are the same set in two orders, so a
+      // subsystem that grows a listener belongs in both.
       loop.dispose();
+      // The origin listener goes with the loop's, and for the same reason: a
+      // game that has been replaced must not fold another tab's write into a
+      // session nothing is drawing.
+      removeEventListener('storage', onForeignWrite);
       preference.dispose();
       // The audio engine's listeners come off with the rest. It listens on the
       // document rather than in the shell, so a game disposed by a second
@@ -1263,7 +1460,12 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
   // synchronous frame below has to find a handle to dispose; with the
   // publication after it, the one frame most likely to fail on a strange
   // platform would be the one frame that could not be stopped.
+  //
+  // The partial teardown is emptied here rather than left to be harmless: from
+  // this statement on, `dispose` undoes everything the list held, and a stop
+  // that ran both would take each subsystem down twice.
   current = game;
+  building = [];
 
   // One synchronous frame before the loop starts, so the page is never briefly
   // blank and so a caller that reads the DOM immediately after `boot` finds a

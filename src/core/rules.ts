@@ -122,3 +122,30 @@ export const DEFAULT_RULES: HouseRules = Object.freeze({
 export function houseRules(overrides: Partial<HouseRules> = {}): HouseRules {
   return Object.freeze({ ...DEFAULT_RULES, ...overrides });
 }
+
+/**
+ * Whether two records are the same rules. `AUDIT-2`, finding `Z2-01`.
+ *
+ * Field by field rather than by identity, because every record in this game is
+ * a fresh frozen copy: `houseRules` spreads and freezes on the construction
+ * path and again in `table.setRules`, so two identical records are never the
+ * same object. It answers the one question a staged change has, "would the next
+ * round play any differently", which is what lets `table.stagedRules` keep the
+ * `null` half of its contract.
+ *
+ * The five comparisons are written out rather than looped, on
+ * `breakpoints.ts`'s `sameSizing` precedent: a loop over `Object.keys` would
+ * compare whatever the record happens to carry, and a record that had grown a
+ * field neither this function nor a test would notice. The field count is
+ * pinned in `tests/unit/house-rules-staging.test.ts`, so a sixth field reddens
+ * the suite here rather than going quietly unread.
+ */
+export function sameRules(a: HouseRules, b: HouseRules): boolean {
+  return (
+    a.decks === b.decks &&
+    a.doubleAfterSplit === b.doubleAfterSplit &&
+    a.surrender === b.surrender &&
+    a.evenMoney === b.evenMoney &&
+    a.splitRule === b.splitRule
+  );
+}

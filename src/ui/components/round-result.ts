@@ -37,14 +37,7 @@ import type { InsuranceResult, RoundResult, SettledHand } from '../../core/types
 import { button, el, empty, setHidden, setText } from '../dom';
 import { chips as formatChips, delta as formatDelta } from '../format';
 import type { ChromeState, ChromeActions, Component, HandVerdict } from '../state';
-import {
-  actionText,
-  addressText,
-  outcomeText,
-  preferenceText,
-  rungText,
-  sideWagerText,
-} from '../text';
+import { outcomeText, rungText, sideWagerText, verdictText } from '../text';
 
 /** One labelled field of the result, with the field name a test can find. */
 function field(label: string, name: string, text: string): HTMLElement {
@@ -59,26 +52,6 @@ function field(label: string, name: string, text: string): HTMLElement {
       }),
     ],
   });
-}
-
-/**
- * SPEC 7's one-line explanation for a decision.
- *
- * A matched decision gets a line too. SPEC 7 only requires the differing case to
- * be reported, but "Stand matched basic strategy" is a verdict rather than a
- * scolding, and `C8` asks for the coach verdict rather than for the coach
- * correction.
- */
-function verdictText(entry: HandVerdict): string {
-  const { verdict } = entry;
-  const where = addressText(verdict.address);
-  if (verdict.matched) {
-    return `${actionText(verdict.played)} matched basic strategy on ${where}.`;
-  }
-  return (
-    `You played ${actionText(verdict.played)}; basic strategy plays ` +
-    `${actionText(verdict.recommended)} on ${where}, preferring ${preferenceText(verdict.preference)}.`
-  );
 }
 
 /** SPEC 12's "the insurance result if any", as one line. */
@@ -130,7 +103,7 @@ function handEntry(
           className: 'bj-result__coach',
           attributes: { 'data-field': 'coach' },
           children: mine.map((entry) =>
-            el('li', { className: 'bj-result__verdict', text: verdictText(entry) }),
+            el('li', { className: 'bj-result__verdict', text: verdictText(entry.verdict) }),
           ),
         }),
       );

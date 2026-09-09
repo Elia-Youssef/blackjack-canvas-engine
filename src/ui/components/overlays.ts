@@ -48,6 +48,7 @@
  * here once, where the Speed control lands, so nobody "fixes" it.
  */
 
+import type { Card } from '../../core/cards';
 import type { CoachMode } from '../../core/strategy';
 import { COACH_MODES } from '../../core/strategy';
 import { DEFAULT_RULES } from '../../core/rules';
@@ -79,10 +80,12 @@ import {
 import { THEMES, type Theme } from '../theme';
 import {
   accuracyText,
+  cardText,
   milestoneRowText,
   outcomeText,
   playerActionText,
   tableText,
+  verdictText,
 } from '../text';
 
 /**
@@ -113,7 +116,45 @@ function stat(label: string, name: string): { row: HTMLElement; value: HTMLEleme
   };
 }
 
-/** SPEC 8's entry, as one line of the history list. */
+/** One hand's cards, as a nested list of words. The mirror's shape, reused. */
+function cardList(cards: readonly Card[]): HTMLElement {
+  return el('ul', {
+    className: 'bj-history__cards',
+    attributes: { 'data-history-cards': 'true' },
+    children: cards.map((card) => el('li', { text: cardText(card) })),
+  });
+}
+
+/**
+ * SPEC 8's entry, as one item of the history list.
+ *
+ * **All nine recorded fields, because this is the only place they can be
+ * reviewed.** SPEC 8 calls the history "reviewable from the table and from the
+ * game-over screen" and lists what an entry carries; `core/history.ts` records
+ * every one of them and this was printing six, so the player hands' cards, the
+ * dealer hand's cards and the coach verdicts were recorded, persisted, migrated
+ * and shown to nobody (`AUDIT-2`, finding `J4-01`). The felt is swept at Next
+ * Hand, so for a player reading rather than looking, "Loss 15" was the whole of
+ * a hand that was three named cards.
+ *
+ * **The summary first, then the cards as lists.** The sentence is the one this
+ * panel always carried and it is unchanged: the wager, the dealer's value, each
+ * hand's outcome and value, the actions taken and the round's chip delta. What
+ * is added under it is navigable rather than longer prose, which is `BJ-18`'s
+ * shape for the mirror and for the same reason: a screen reader user can walk a
+ * list of cards and cannot re-read the middle of a paragraph. One card per item,
+ * as words, which is QUALITY-BAR section 4's condition on a rank and suit that
+ * live on canvas.
+ *
+ * **The verdicts are the round's own list and are not filed per hand.** SPEC 12's
+ * round result attributes each one to the hand it was made on, because the
+ * composition root knows the active hand at the moment the machine accepts a
+ * decision; SPEC 8 records `CoachVerdict` values with no hand index, in the
+ * order they were made, so that order is what is printed. `null` is the coach
+ * having been off, which prints nothing, and an empty list is the coach having
+ * had no opinion, which prints nothing either: neither is a heading with an
+ * empty list under it.
+ */
 function historyLine(entry: HistoryEntry, index: number): HTMLElement {
   const hands = entry.hands
     .map((hand) => `${outcomeText(hand.outcome)} ${formatChips(hand.value)}`)
@@ -122,12 +163,69 @@ function historyLine(entry: HistoryEntry, index: number): HTMLElement {
     entry.actions.length === 0
       ? 'no actions'
       : entry.actions.map((action) => playerActionText(action)).join(', ');
+
+  const rows: HTMLElement[] = entry.hands.map((hand, handIndex) =>
+    el('li', {
+      attributes: { 'data-history-hand': String(handIndex) },
+      children: [
+        el('p', {
+          className: 'bj-history__label',
+          // The hand's own name, outcome and value, so a row read on its own is
+          // whole: SPEC 8's first field is "the player hands and their values",
+          // and a list item that named only "Hand 2" would send a reader back
+          // to the summary to find out which hand they were in.
+          text: `Hand ${formatChips(handIndex + 1)}, ${outcomeText(hand.outcome)} ${formatChips(hand.value)}.`,
+        }),
+        cardList(hand.cards),
+      ],
+    }),
+  );
+  rows.push(
+    el('li', {
+      attributes: { 'data-history-dealer': 'true' },
+      children: [
+        el('p', {
+          className: 'bj-history__label',
+          // The whole dealer hand, hole card included: the round is over.
+          text: `Dealer, ${formatChips(entry.dealerValue)}.`,
+        }),
+        cardList(entry.dealer),
+      ],
+    }),
+  );
+
+  const children: HTMLElement[] = [
+    el('p', {
+      className: 'bj-history__summary',
+      attributes: { 'data-field': 'history-summary' },
+      text:
+        `Wager ${formatChips(entry.wager)}. Dealer ${formatChips(entry.dealerValue)}. ` +
+        `${hands}. ${actions}. Round ${formatDelta(entry.delta)}.`,
+    }),
+    el('ul', {
+      className: 'bj-history__hands',
+      attributes: { 'data-field': 'history-hands' },
+      children: rows,
+    }),
+  ];
+
+  const verdicts = entry.coach;
+  if (verdicts !== null && verdicts.length > 0) {
+    children.push(
+      el('ul', {
+        className: 'bj-history__coach',
+        attributes: { 'data-field': 'history-coach' },
+        children: verdicts.map((verdict) =>
+          el('li', { className: 'bj-history__verdict', text: verdictText(verdict) }),
+        ),
+      }),
+    );
+  }
+
   return el('li', {
     className: 'bj-history__entry',
     attributes: { 'data-history': String(index) },
-    text:
-      `Wager ${formatChips(entry.wager)}. Dealer ${formatChips(entry.dealerValue)}. ` +
-      `${hands}. ${actions}. Round ${formatDelta(entry.delta)}.`,
+    children,
   });
 }
 
@@ -356,7 +454,16 @@ function settingsPanel(actions: ChromeActions): SettingsPanel {
       step: String(VOLUME_STEP),
     },
   });
-  const volumeText = el('p', { className: 'bj-panel__note' });
+  // The value in words, and the slider's own copy of it. The paragraph is the
+  // only visible label the control has, so it names the setting as well as the
+  // value; `aria-valuetext` below is written from the same string in the same
+  // step, because a range whose value reaches a screen reader as `0.99` while
+  // the sentence beside it reads "99% of full" states one number twice and
+  // makes only one of the two readings reachable (`AUDIT-2`, finding `J4-04`).
+  const volumeText = el('p', {
+    className: 'bj-panel__note',
+    attributes: { 'data-field': 'volume' },
+  });
   // Two events, one gain and one write. `input` fires on every step of a drag
   // and moves the engine's gain live, uncommitted; `change` fires once, when
   // the gesture ends, and is the write. The `BJ-20` review measured the
@@ -462,12 +569,39 @@ function settingsPanel(actions: ChromeActions): SettingsPanel {
   });
   notDurableNote.hidden = true;
 
+  /**
+   * The id `aria-controls` points at, and the one id this file mints.
+   *
+   * A constant rather than a generated one, and safe for the reason
+   * `setDisabled`'s header gives for refusing `aria-describedby`: the danger is
+   * an id a per-frame sync invents, and this is written once at construction on
+   * the single Settings panel `createOverlays` builds.
+   */
+  const CONFIRM_ID = 'bj-confirm-reset';
+
+  // The disclosure's own state. `aria-expanded` is written from `confirming` in
+  // the sync step below, beside the `setHidden` that acts on the same flag, so
+  // the state and the group cannot come apart. Without it the one control in
+  // the game that destroys data reported nothing at all: the group appeared two
+  // tab stops away, the name did not change, focus stayed put and no queue was
+  // written, so a screen reader user pressed it and heard silence (`AUDIT-2`,
+  // finding `J4-02`). The press keeps focus on this control, so the platform
+  // announces the change on the control that changed, exactly as it does for
+  // every `aria-pressed` toggle in this panel; nothing is added to the
+  // announcement queue, which has no arm for a settings control and needs none.
   const reset = button(
     'Reset all data',
     () => {
       confirming = true;
     },
-    { className: 'bj-button', attributes: { 'data-control': 'reset-data' } },
+    {
+      className: 'bj-button',
+      attributes: {
+        'data-control': 'reset-data',
+        'aria-expanded': 'false',
+        'aria-controls': CONFIRM_ID,
+      },
+    },
   );
   const confirmText = el('p', {
     className: 'bj-panel__note',
@@ -489,13 +623,23 @@ function settingsPanel(actions: ChromeActions): SettingsPanel {
   );
   const confirm = el('div', {
     className: 'bj-confirm',
-    attributes: { role: 'group', 'aria-label': 'Confirm reset' },
+    attributes: { role: 'group', 'aria-label': 'Confirm reset', id: CONFIRM_ID },
     children: [
       confirmText,
       el('div', { className: 'bj-modes', children: [confirmReset, cancelReset] }),
     ],
   });
   confirm.hidden = true;
+
+  /**
+   * The disclosure, shown or hidden, with the state on the control that owns
+   * it. One writer for both, so a group that is on the page while its control
+   * reports it collapsed is not a state this panel can be left in.
+   */
+  function showConfirm(open: boolean): void {
+    setHidden(confirm, !open);
+    setAttribute(reset, 'aria-expanded', String(open));
+  }
 
   const inForce = el('p', { className: 'bj-rules', attributes: { 'data-field': 'house-rules' } });
 
@@ -578,16 +722,25 @@ function settingsPanel(actions: ChromeActions): SettingsPanel {
         setAttribute(control, 'aria-pressed', String(size === state.layout.surfaceSize));
       }
 
-      // The house rules, read off the staged record rather than the machine's:
+      // The house rules the panel is about: the record staged for the next
+      // round when there is one, and the rules in force when there is not.
       // SPEC 14 keeps a change off the felt until the next deal, and a control
       // that snapped back to the rules in force would be a control that looked
       // like it did nothing.
+      //
+      // **One record, read once, for the toggles and the sentence both.** They
+      // were two reads of two different values on the same frame, so the panel
+      // rendered a control pressed off beside a sentence saying that rule was
+      // on, about the very round the player was one press away from dealing
+      // (`AUDIT-2`, finding `J2-02`).
+      const staged = state.stagedRules;
+      const house = staged ?? state.readout.rules;
       held = {
-        decks: state.stagedRules.decks,
-        doubleAfterSplit: state.stagedRules.doubleAfterSplit,
-        surrender: state.stagedRules.surrender,
-        evenMoney: state.stagedRules.evenMoney,
-        splitRule: state.stagedRules.splitRule,
+        decks: house.decks,
+        doubleAfterSplit: house.doubleAfterSplit,
+        surrender: house.surrender,
+        evenMoney: house.evenMoney,
+        splitRule: house.splitRule,
       };
       for (const [count, control] of deckButtons) {
         setAttribute(control, 'aria-pressed', String(count === held.decks));
@@ -599,13 +752,16 @@ function settingsPanel(actions: ChromeActions): SettingsPanel {
         setAttribute(control, 'aria-pressed', String(rule === held.splitRule));
       }
 
-      // The statement of the rules in force, which is the read-only sentence
-      // this panel carried before it grew controls, and which now doubles as
-      // the honest answer to "has my change landed yet".
-      const house = state.readout.rules;
+      // The statement of those same rules, which is the read-only sentence this
+      // panel carried before it grew controls and which is the honest answer to
+      // "has my change landed yet". The lead says which of SPEC 14's two sides
+      // of the boundary the sentence is about, because "this round" and "from
+      // your next deal" are different promises and the boundary is the whole of
+      // what the section says about a house-rule change.
+      const lead = staged === null ? 'This round runs' : 'From your next deal:';
       setText(
         inForce,
-        `This round runs ${formatChips(house.decks)} decks. Dealer stands on all 17s. ` +
+        `${lead} ${formatChips(house.decks)} decks. Dealer stands on all 17s. ` +
           `Double after split ${house.doubleAfterSplit ? 'on' : 'off'}. ` +
           `Surrender ${house.surrender ? 'on' : 'off'}. ` +
           `Even money ${house.evenMoney ? 'on' : 'off'}. ` +
@@ -623,7 +779,13 @@ function settingsPanel(actions: ChromeActions): SettingsPanel {
       // straight in: `percentOfHundred` is for a value that arrives as a
       // percentage already, and multiplying by 100 to have it divided again is
       // exactly the round trip that entry point exists to stop.
-      setText(volumeText, `Volume ${percent(state.volume)} of full.`);
+      //
+      // One string, spent twice, so the two readings cannot drift: the visible
+      // sentence and the value the control itself reports. Both writers are
+      // guarded, so this costs nothing on the frames the volume did not move.
+      const volumeReading = `Volume ${percent(state.volume)} of full.`;
+      setText(volumeText, volumeReading);
+      setAttribute(volume, 'aria-valuetext', volumeReading);
 
       for (const [theme, control] of themeButtons) {
         setAttribute(control, 'aria-pressed', String(theme === state.theme));
@@ -637,13 +799,18 @@ function settingsPanel(actions: ChromeActions): SettingsPanel {
       // life of the page and the write below is idempotent.
       setHidden(notDurableNote, state.durable);
 
-      // The confirmation, hidden until asked. The disarm is `disarm()` below,
-      // called from the step that observes the panel close; this frame only
-      // shows the answer.
-      setHidden(confirm, !confirming);
+      // The confirmation, hidden until asked, and the disclosure state that
+      // says so on the control a player pressed to ask. This frame only shows
+      // the answer; the disarm is `disarm()` below, called from the step that
+      // observes the panel close, and it spends the same one writer.
+      showConfirm(confirming);
     },
     disarm(): void {
       confirming = false;
+      // Applied here rather than left to the next frame: this panel is not
+      // updated while it is shut, so the group and the control would otherwise
+      // hold a closed panel's answer until it is opened again.
+      showConfirm(false);
     },
   };
 }

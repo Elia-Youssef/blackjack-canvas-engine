@@ -12,9 +12,15 @@ Nothing under a `core/` directory may:
 
 | Rule | Rejects |
 |---|---|
-| `no-forbidden-imports` | Any specifier with a `render` or `ui` path segment, and anything under `@js-games/engine/render`. Covers `import`, `export ... from`, dynamic `import()`, `require()`, `import x = require()` and `import('...')` in a type position. Specifiers written as **template literals** count, because every bundler resolves them statically |
+| `no-forbidden-imports` | Any specifier with a `render` or `ui` path segment, and anything under `@js-games/engine/render`. Covers `import`, `export ... from`, dynamic `import()`, `require()`, `import x = require()` and `import('...')` in a type position. Specifiers written as **template literals with no expression** count, because every bundler resolves them statically; one carrying an expression, or a concatenation, is not read and is passed |
 | `no-dom` | Any DOM, BOM or canvas global, by scope analysis. Covers value positions, type positions, `globalThis.x`, `self.x`, and a `/// <reference lib="dom" />` comment. **`globalThis` and `self` are refused outright**, whatever the property |
 | `no-math-random` | `Math.random()`, `Math['random']()`, `const { random } = Math`, and **any capture of `Math` itself**: `const m = Math`, `f(Math)`, `Math[key]` |
+
+**`no-forbidden-imports` reads one hop.** It judges the specifier written in the file it is given, not what
+that module imports in turn, so a permitted import that itself re-exports from `render/` or `ui/` reaches
+across the boundary without a report. No core module imports outside `core/` today, and the closure is
+held by the module-graph walk in `tests/unit/core-boundary.test.ts`: a graph question rather than a lint
+one.
 
 Two of those refusals are broader than they first look, and both are deliberate.
 

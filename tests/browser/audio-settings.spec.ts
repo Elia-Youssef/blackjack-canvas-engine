@@ -93,9 +93,14 @@ test.describe('K3: mute is one action from the play screen', () => {
       });
       expect(hit, 'the mute control is what a click on it lands on').toBe(true);
 
+      // The name is the setting and the state is `aria-pressed`, at both
+      // states (`AUDIT-2`, finding `Z4-02`): a name that changed to describe
+      // the next press would be read out beside a pressed state describing the
+      // current one, so "Unmute, pressed" told a screen reader that unmuting
+      // was on while the sound was off.
       await mute.click();
       await expect(mute).toHaveAttribute('aria-pressed', 'true');
-      await expect(mute).toHaveText('Unmute');
+      await expect(mute).toHaveText('Mute');
       await mute.click();
       await expect(mute).toHaveAttribute('aria-pressed', 'false');
       await expect(mute).toHaveText('Mute');
@@ -135,6 +140,7 @@ test.describe('K3: the control carries its state in more than colour', () => {
     // A name that is the visible label, and a state for assistive technology.
     expect(((await mute.textContent()) ?? '').trim().length).toBeGreaterThan(0);
     await expect(mute).toHaveAttribute('aria-pressed', 'false');
+    const restingName = ((await mute.textContent()) ?? '').trim();
 
     // The non-colour signal: the same underline every pressed control in the
     // chrome carries, which survives forced colors and colour-vision
@@ -145,6 +151,13 @@ test.describe('K3: the control carries its state in more than colour', () => {
     await mute.click();
     await expect(mute).toHaveAttribute('aria-pressed', 'true');
     expect(await decoration()).toContain('underline');
+
+    // And the name is the setting rather than the next press, which is what
+    // makes the pressed state above readable: a toggle whose name describes
+    // the action re-describes the action in its state, so the two halves of
+    // one announcement contradict each other. The underline is what carries
+    // the change to an eye, and it is asserted on both arms above.
+    expect(((await mute.textContent()) ?? '').trim()).toBe(restingName);
 
     // Never greyed: no phase refuses a mute, and the availability layer never
     // hears of it. Read on the screens a round passes through.
@@ -173,6 +186,47 @@ test.describe('K3: the control carries its state in more than colour', () => {
     await expect(polite).toHaveText('Sound muted.', { timeout: 5_000 });
     await page.locator(MUTE).click();
     await expect(polite).toHaveText('Sound on.', { timeout: 5_000 });
+  });
+});
+
+test.describe('I5: the volume slider states its value the way the panel does', () => {
+  test('carries the panel sentence as its own value text, at rest and after a move', async ({
+    page,
+  }) => {
+    // `AUDIT-2`, finding `J4-04`. The slider is `min 0 max 1 step 0.01`, so the
+    // value a screen reader announces from the raw number is "0.99" while the
+    // paragraph beside it reads "Volume 99% of full."; the paragraph carried no
+    // `id` and the control pointed at nothing, so the readable form of the value
+    // was legible only to a player who could see it. `aria-valuetext` is the
+    // control's own copy, and it is asserted to be the panel's string
+    // **character for character** rather than merely to exist: one string is
+    // composed and spent twice, so the two readings cannot drift.
+    await page.goto('/');
+    await waitForPhase(page, 'start');
+    await page.locator('[data-open-overlay="settings"]').click();
+    const slider = page.locator('[data-control="volume"]');
+    await expect(slider).toBeVisible();
+    const note = page.locator('[data-panel="settings"] [data-field="volume"]');
+
+    const agree = async (): Promise<void> => {
+      const spoken = (await slider.getAttribute('aria-valuetext')) ?? '';
+      expect(spoken.length, 'the slider states no value in words').toBeGreaterThan(0);
+      expect(spoken, 'the control and the panel state the same value').toBe(
+        ((await note.textContent()) ?? '').trim(),
+      );
+    };
+
+    await expect(note).toHaveText('Volume 100% of full.');
+    await agree();
+
+    // Moved, because a value text written once at build time would pass the
+    // reading above and say 100% for the rest of the session.
+    await slider.scrollIntoViewIfNeeded();
+    await slider.focus();
+    await page.keyboard.press('ArrowDown');
+    await expect(note).toHaveText('Volume 99% of full.');
+    await agree();
+    expect(await slider.getAttribute('aria-valuetext')).toContain('99');
   });
 });
 

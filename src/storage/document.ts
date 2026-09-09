@@ -336,6 +336,157 @@ export function openDocumentSession(document: GameDocument): GameDocument {
 }
 
 // ---------------------------------------------------------------------------
+// Two tabs on one key: the fields that may never go backwards
+// ---------------------------------------------------------------------------
+
+/**
+ * One counter scope, merged so that no tally can go backwards.
+ *
+ * **Per counter, and not whole.** The scope is a unit at the READ, where a
+ * document whose tallies contradict each other has no salvageable meaning; it
+ * is not a unit here, because the two documents being merged are both
+ * internally consistent and the property the merge exists for is stated per
+ * counter: no save may decrease any lifetime tally. Taking the scope with the
+ * larger `handsPlayed` whole would satisfy the count and could still drop a win.
+ *
+ * **The identity is repaired rather than broken.** `statistics.ts` states
+ * `handsPlayed === wins + losses + pushes`, and five independent maxima do not
+ * preserve it: a document with eight wins and one with eight losses would merge
+ * to sixteen outcomes against eight hands, which `countersOf` above would then
+ * refuse whole on the next read, throwing away everything the merge just saved.
+ * So the count is the largest of the two stored counts and the sum of the merged
+ * outcomes, which is monotone in every input and consistent by construction.
+ * `blackjacks` needs no repair, and the reason is a precondition rather than an
+ * accident: both scopes reaching this function have already been through
+ * `countersOf` or come from `statistics.ts` itself, so each has its naturals at
+ * or below its own count, and the maximum of two such is at or below the merged
+ * count. A scope that broke that could not be repaired here anyway, because
+ * there would be no way to know which of its five numbers had moved.
+ *
+ * **What this is not.** It is a lower bound on the pair, not their union. Two
+ * tabs that each played three rounds merge to three, because the document
+ * carries no per-round identity that would let the disjoint ones be counted
+ * once each, and adding one is a schema change item `I1` rules out. Where one
+ * document is the other's own earlier state, which is the ordinary case of a
+ * background tab, the maximum IS the union and the result is exact.
+ */
+function mergeCounters(stored: Counters, ours: Counters): Counters {
+  const wins = Math.max(stored.wins, ours.wins);
+  const losses = Math.max(stored.losses, ours.losses);
+  const pushes = Math.max(stored.pushes, ours.pushes);
+  return Object.freeze({
+    handsPlayed: Math.max(stored.handsPlayed, ours.handsPlayed, wins + losses + pushes),
+    wins,
+    losses,
+    pushes,
+    blackjacks: Math.max(stored.blackjacks, ours.blackjacks),
+  });
+}
+
+/**
+ * SPEC 7's two counters, merged the same way.
+ *
+ * `accuracyOf` refuses `matched > decisions`, and the maxima cannot produce it:
+ * whichever source supplied the larger `matched` had at least that many
+ * decisions of its own, so the merged `decisions` is at least the merged
+ * `matched`. No repair term is needed here, and one would be a second rule.
+ */
+function mergeAccuracy(stored: CoachAccuracy, ours: CoachAccuracy): CoachAccuracy {
+  return Object.freeze({
+    decisions: Math.max(stored.decisions, ours.decisions),
+    matched: Math.max(stored.matched, ours.matched),
+  });
+}
+
+/**
+ * SPEC 9's awarded list, as a union. A milestone is permanent.
+ *
+ * Ours first, then whatever the other document awarded that we have not, so a
+ * live session's own award order is left alone and the additions arrive after
+ * it. SPEC 9 gives no order but award order, and neither tab can know how the
+ * other's awards interleave with its own, so appending is the only honest
+ * answer that keeps both lists whole.
+ */
+function mergeMilestones(
+  stored: readonly MilestoneId[],
+  ours: readonly MilestoneId[],
+): readonly MilestoneId[] {
+  const union: MilestoneId[] = [...ours];
+  for (const id of stored) {
+    if (!union.includes(id)) {
+      union.push(id);
+    }
+  }
+  return Object.freeze(union);
+}
+
+/**
+ * Fold what is stored into what this session holds. `AUDIT-2`, finding `J3-01`.
+ *
+ * **Why this exists.** The document is read once per page, at boot, and every
+ * write replaces the whole key. A second tab of the game therefore held a
+ * private copy from the moment it booted, and any write in it, a round boundary
+ * or one press of a settings button, overwrote everything the other tab had
+ * achieved since: measured, the best chip balance fell from 1,100 to 1,000, the
+ * lifetime tallies and the hand history went to zero, and SPEC 6 re-locked a
+ * table the player had earned. Silent, permanent, and one ordinary press away.
+ *
+ * **The policy, field by field.** Everything SPEC 13 describes as accumulating
+ * takes the value that cannot go backwards, and everything that is a choice
+ * takes ours, because a save is a player of THIS tab saying what they want:
+ *
+ *   - `bestBalance`: the maximum. SPEC 6 keys every unlock to it and SPEC 4.12
+ *     preserves it across a bankroll reset, so it rises and never falls.
+ *   - `statistics.lifetime` and `coach.lifetime`: per counter, see above.
+ *   - `statistics.milestones`: the union. SPEC 9 calls an award permanent.
+ *   - `history`: the longer list, ours on a tie. SPEC 8 keeps the last 50
+ *     completed rounds, and length is the only ordering two documents with no
+ *     round identity can be compared by. The cost is stated rather than hidden:
+ *     where both tabs played, the shorter list's newest entries are not carried
+ *     into the longer one, so a genuinely concurrent pair can lose one tab's
+ *     recent rows from the review list. The tallies those rounds counted are
+ *     not lost, because they are merged per counter above.
+ *   - `settings` and `table`: ours, unmerged. These are the values the press
+ *     being saved is about.
+ *   - `howToPlaySeen`: either. SPEC 17 persists a dismissal, and nothing
+ *     un-dismisses it, so it is monotone in exactly the way the tallies are.
+ *
+ * The session scope is taken from ours throughout and projected out at the
+ * write anyway; merging it would be merging two answers to a question SPEC 13
+ * resets at every launch.
+ *
+ * **One consequence, recorded rather than solved.** If another tab runs Reset
+ * all data while this one is live, the store is emptied and this session's next
+ * save merges its own live state into an absent document, which puts that state
+ * back. Cross-tab reset adoption is not built: it would mean a tab tearing its
+ * own session down because of something that happened in a window the player
+ * may not even have in front of them, and SPEC 14 scopes the reset to the panel
+ * that performs it. The reset still clears the store, and the tab that ran it
+ * re-boots onto the defaults.
+ */
+export function mergeDocuments(stored: GameDocument, ours: GameDocument): GameDocument {
+  return Object.freeze({
+    bestBalance: Math.max(stored.bestBalance, ours.bestBalance),
+    table: ours.table,
+    statistics: Object.freeze({
+      session: ours.statistics.session,
+      lifetime: mergeCounters(stored.statistics.lifetime, ours.statistics.lifetime),
+      streak: ours.statistics.streak,
+      rounds: ours.statistics.rounds,
+      milestones: mergeMilestones(stored.statistics.milestones, ours.statistics.milestones),
+      belowLowWater: ours.statistics.belowLowWater,
+    }),
+    coach: Object.freeze({
+      session: ours.coach.session,
+      lifetime: mergeAccuracy(stored.coach.lifetime, ours.coach.lifetime),
+    }),
+    history: ours.history.length >= stored.history.length ? ours.history : stored.history,
+    settings: ours.settings,
+    howToPlaySeen: ours.howToPlaySeen || stored.howToPlaySeen,
+  });
+}
+
+// ---------------------------------------------------------------------------
 // Repairs, as values a readout can surface
 // ---------------------------------------------------------------------------
 
@@ -409,14 +560,31 @@ function isList(value: unknown): value is readonly unknown[] {
  * refuses `NaN`, both infinities, every fraction and anything past 2^53 - 1,
  * each of which is a number `JSON.parse` will happily produce and none of which
  * is a number of hands, chips or decisions.
+ *
+ * **`-0` is normalised rather than refused**, which is why the return adds zero.
+ * It is a safe integer and it is `>= 0`, so it passes the guard on every
+ * reading; what it is not is a number of hands, and `Intl.NumberFormat` prints
+ * it with its sign, so a document carrying it showed "Lifetime hands -0" with
+ * no repair recorded (`AUDIT-2` finding `Z6-04`). Repairing it would be a false
+ * report of a corrupt field, and refusing it would drop a counter that is
+ * numerically right, so the value is made `+0` here and every caller is covered
+ * at once. `-0 + 0` is `+0`; every other value this function returns is
+ * unchanged by the addition. The game itself cannot write it, since
+ * `JSON.stringify(-0)` is `"0"`; a hand-edited or third-party document can, and
+ * that population is what item `I2` exists for.
  */
 function countOf(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : null;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value + 0 : null;
 }
 
-/** A signed whole number, for a chip delta, which SPEC 4.10 lets go negative. */
+/**
+ * A signed whole number, for a chip delta, which SPEC 4.10 lets go negative.
+ *
+ * Adds zero for the reason `countOf` above does: `-0` is a safe integer, and a
+ * delta of negative zero is not a thing SPEC 8's history can mean.
+ */
 function integerOf(value: unknown): number | null {
-  return typeof value === 'number' && Number.isSafeInteger(value) ? value : null;
+  return typeof value === 'number' && Number.isSafeInteger(value) ? value + 0 : null;
 }
 
 function isMember<T extends string>(value: unknown, allowed: readonly T[]): value is T {

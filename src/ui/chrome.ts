@@ -4,9 +4,10 @@
  * "Sync the DOM chrome from state" is one function, called once per frame after
  * the render, and this is it. It takes the frame's `ChromeState` and hands it to
  * every component; each component reads what it needs and writes only what
- * moved. Nothing here reads the DOM back, so the sync is a pure function of the
- * state as far as the page is concerned, and running it twice on one state
- * produces the same page.
+ * moved. Nothing here reads the DOM back, so for every component but the three
+ * that hold state across frames, named at `Chrome.sync` below, the sync is a
+ * pure function of the state as far as the page is concerned and running it
+ * twice on one state produces the same page.
  *
  * **Every component is assembled here and nowhere else.** The composition root
  * builds the game, this builds the chrome, and the two meet at one call. That is
@@ -60,8 +61,11 @@ export interface Chrome {
    * DESIGN section 3 step 5. Called once per frame, after the render.
    *
    * `dt` is the seconds since the previous frame, handed on to the components.
-   * Only SPEC 5's balance count-up uses it; every other component is a pure
-   * function of the state and ignores it.
+   * Two spend it, SPEC 5's balance count-up and QUALITY-BAR section 4's
+   * announcement queue, and the settings panel's reset confirmation holds a flag
+   * across frames without a clock. Every other component is a pure function of
+   * the state and ignores `dt`, so re-syncing for a repaint is only safe for
+   * those: a second call advances the queue by another frame's interval.
    */
   sync(state: ChromeState, dt: number): void;
   /**

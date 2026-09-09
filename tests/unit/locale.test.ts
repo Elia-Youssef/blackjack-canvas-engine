@@ -16,12 +16,12 @@
  * `toFixed` or their relatives, and no line that writes DOM text may spell a
  * number with `String(`.
  *
- * **The play surface prints two quantities as plain digits, and that is a park
- * the review adjudicated rather than an oversight.** The felt's
- * `MINIMUM 10 - MAXIMUM 100` and the chip's value glyph are artwork under SPEC
- * 16's own language, the last group of tests below carries the reasoning, and
- * the exemption is a list of exactly two sites checked by path: a third drawn
- * quantity fails the suite.
+ * **The play surface prints its quantities as plain digits, and that is a park
+ * the review adjudicated rather than an oversight.** The felt's four printed
+ * lines and the chip's value glyph are artwork under SPEC 16's own language, the
+ * last group of tests below carries the reasoning, and the exemption is exactly
+ * two **files**, with every drawn **line** in them named: a drawn quantity in a
+ * third file, or a line neither file has argued for, fails the suite.
  *
  * **Clause 2 is read as the criterion writes it: assembled by string
  * concatenation.** The scan below finds every place a string is built out of
@@ -77,7 +77,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { stripComments as code } from './support/source-scan';
 
@@ -129,6 +129,89 @@ describe('M2: the locale list is explicit, ordered, and ends in the fallback', (
     const list = localeList();
     expect(list.length).toBeGreaterThan(0);
     expect(list[list.length - 1]).toBe('en-US');
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A5: a language list `Intl` refuses is a fallback, never a blank page
+// ---------------------------------------------------------------------------
+
+/**
+ * Tags a platform can hand over that `Intl` refuses outright.
+ *
+ * Every one of them is reachable: an anti-fingerprinting extension overriding
+ * `navigator.languages`, an embedder passing a POSIX `LANG` such as `C` or an
+ * underscore form such as `en_US` straight through, and a header value arriving
+ * with its quality factor still attached. `Intl.NumberFormat` validates each tag
+ * in the list **structurally**, so one bad tag refuses the whole list however
+ * many good ones sit beside it.
+ */
+const REFUSED_TAGS: readonly string[] = [
+  'en_US',
+  'C',
+  '',
+  'xx-',
+  '*',
+  'en-US;q=0.9',
+  'i-klingon',
+  'x-custom',
+];
+
+describe('A5: a language list Intl refuses never reaches a formatter', () => {
+  it('drops the tags Intl cannot read, and keeps the fallback last', () => {
+    expect(localeList(['en_US'])).toEqual(['en-US']);
+    expect(localeList(['de-DE', 'C', 'fr-FR'])).toEqual(['de-DE', 'fr-FR', 'en-US']);
+    // The row that makes the appended fallback real rather than decorative: a
+    // valid tag first and the fallback last still threw, because the refusal is
+    // about the list and not about the first tag that cannot be served.
+    expect(localeList(['en-US', 'C'])).toEqual(['en-US', 'en-US']);
+  });
+
+  it('builds every formatter over a list of refused tags', () => {
+    for (const tag of REFUSED_TAGS) {
+      // The can-see control, first: the unfiltered list is what the module used
+      // to hand `Intl`, and it throws, so the arm below is a cure rather than a
+      // tag `Intl` was always going to accept.
+      expect(() => new Intl.NumberFormat([tag, 'en-US']), tag).toThrow(RangeError);
+      expect(() => createFormatters(localeList([tag])), tag).not.toThrow();
+    }
+  });
+
+  it('evaluates its own module over a platform that offers only a refused tag', async () => {
+    // Item `A5`: "never a blank canvas and never an uncaught error". This module
+    // is imported by the composition root, so its body runs before the error
+    // boundary is installed and before the capability probe can write a notice;
+    // a throw here has none of the game's three failure answers and is the blank
+    // page the item forbids. The import is the whole assertion.
+    vi.stubGlobal('navigator', { languages: ['en_US'] });
+    vi.resetModules();
+    try {
+      const reloaded = await import('../../src/ui/format');
+      expect(reloaded.chips(1_234)).toBe(createFormatters(['en-US']).chips(1_234));
+      expect(reloaded.resolvedLocale()).toBe('en-US');
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
+  });
+
+  it('evaluates its own module over a platform whose language list throws', async () => {
+    // The other half of the same door: the list is read from a getter, and a
+    // hostile or broken platform can refuse the read itself rather than answer
+    // it with a bad tag.
+    vi.stubGlobal('navigator', {
+      get languages(): readonly string[] {
+        throw new Error('languages refused');
+      },
+    });
+    vi.resetModules();
+    try {
+      const reloaded = await import('../../src/ui/format');
+      expect(reloaded.chips(1_234)).toBe(createFormatters(['en-US']).chips(1_234));
+    } finally {
+      vi.unstubAllGlobals();
+      vi.resetModules();
+    }
   });
 });
 
@@ -438,23 +521,39 @@ function carriesQuantity(line: string): boolean {
 }
 
 /**
- * The two drawn quantities SPEC 16 makes artwork, by path and by their line.
+ * The drawn quantities SPEC 16 makes artwork, by path and by their line.
  *
  * **This is item `M2`'s one park, and it is adjudicated rather than overlooked.**
  * The criterion says every number is formatted through `Intl.NumberFormat` with
- * an explicit locale list, and these two are printed as plain digits:
+ * an explicit locale list, and the play surface prints digits:
  *
- *   - the felt's `MINIMUM 10 - MAXIMUM 100` line, which SPEC 16 calls "a
- *     decorative repeat: the same rules and limits are real DOM text in the
- *     chrome", where they are formatted;
+ *   - the felt's four printed lines, which SPEC 16 calls "a decorative repeat:
+ *     the same rules and limits are real DOM text in the chrome", where they are
+ *     formatted;
  *   - the chip's value glyph, which SPEC 16 gives the chips as object identity,
  *     the same carve-out QUALITY-BAR section 4 already makes for a card's rank.
  *
  * Localised digits on English felt art would be incoherent, and a chip that read
- * differently from the chip beside it would stop being a 100 chip. The ruling is
- * to keep both as artwork and to make the exemption a list of exactly two rather
- * than a habit, which is what the assertion below is for: a third drawn quantity
- * reddens the suite and has to be argued for.
+ * differently from the chip beside it would stop being a 100 chip.
+ *
+ * **The exemption is two files and stays two files, and every drawn line in
+ * them is named**, which is the law the assertions below keep in both shapes: a
+ * drawn quantity in any third file under `src/render/` reddens the suite and has
+ * to be argued for, and so does a line neither of these two files has argued for
+ * here. The two counts are different numbers on purpose and the list below is
+ * the longer one: five lines across the two files, four on the felt and one on
+ * the chip.
+ *
+ * **Three of the felt's lines became quantities at `AUDIT-2`, and the reason is
+ * that they stopped being literals.** Finding `Z1-03`: `settlement.ts` exports
+ * `NATURAL_PAYS` and `INSURANCE_PAYS` saying the felt prints from them, and
+ * `dealer.ts` exports `STANDS_AT` for the same reason, and none of the three was
+ * read: a 6:5 retune moved every payout in the ladder and left the table
+ * printing 3 TO 2. The lines below now read those constants, so what a player
+ * sees is what the game does. No number reached the felt that was not already
+ * printed there, and the park's own reasoning is unchanged: these are the same
+ * English digits on the same artwork, and the authoritative, formatted copy is
+ * still the chrome's DOM text.
  */
 const DRAWN_QUANTITY_SITES: readonly { readonly path: string; readonly line: string }[] = [
   {
@@ -463,9 +562,25 @@ const DRAWN_QUANTITY_SITES: readonly { readonly path: string; readonly line: str
   },
   {
     path: 'src/render/felt.ts',
+    line: '`INSURANCE PAYS ${String(INSURANCE_PAYS)} TO 1`,',
+  },
+  {
+    path: 'src/render/felt.ts',
+    line:
+      '`BLACKJACK PAYS ${String(NATURAL_PAYS.numerator)} TO ${String(NATURAL_PAYS.denominator)}`,',
+  },
+  {
+    path: 'src/render/felt.ts',
+    line: '`Dealer must stand on all ${String(STANDS_AT)}s`,',
+  },
+  {
+    path: 'src/render/felt.ts',
     line: '`MINIMUM ${String(limits.minimum)} - MAXIMUM ${String(limits.maximum)}`,',
   },
 ];
+
+/** The two files SPEC 16 exempts, which is the shape of the park. */
+const DRAWN_QUANTITY_FILES: readonly string[] = ['src/render/chips.ts', 'src/render/felt.ts'];
 
 /**
  * Every `String(` under `src/render/`, per file, so a new one is classified.
@@ -478,7 +593,7 @@ const DRAWN_QUANTITY_SITES: readonly { readonly path: string; readonly line: str
  */
 const RENDER_STRING_CALLS: Readonly<Record<string, number>> = {
   'src/render/chips.ts': 2,
-  'src/render/felt.ts': 2,
+  'src/render/felt.ts': 6,
   'src/render/scene.ts': 3,
   'src/render/surface.ts': 6,
 };
@@ -773,10 +888,10 @@ describe('M2: every number a player reads goes through the one formatter', () =>
 });
 
 // ---------------------------------------------------------------------------
-// The park: the two quantities the play surface prints as artwork
+// The park: the two files whose drawn lines the play surface prints as artwork
 // ---------------------------------------------------------------------------
 
-describe('M2: the play surface prints exactly two quantities, and they are artwork', () => {
+describe('M2: the play surface draws quantities in exactly two files, as artwork', () => {
   it('finds the drawn lines, and tells a constant from a quantity', () => {
     // The can-see control for both halves of the scan below.
     const printed =
@@ -802,11 +917,19 @@ describe('M2: the play surface prints exactly two quantities, and they are artwo
         }
       }
     }
-    // A third drawn quantity fails here and has to be argued for. The two that
-    // are here are named, and the reasoning is on `DRAWN_QUANTITY_SITES`.
+    // A drawn quantity that is not on the list fails here and has to be argued
+    // for. The ones that are here are named, and the reasoning is on
+    // `DRAWN_QUANTITY_SITES`.
     expect(found, 'the play surface draws a quantity somewhere new').toEqual(
       DRAWN_QUANTITY_SITES,
     );
+    // And the park's own shape: two files, which is what SPEC 16 exempts. A
+    // third file drawing a quantity fails here even if somebody added its line
+    // to the list above.
+    expect(
+      [...new Set(found.map((site) => site.path))].sort(),
+      'a third file under src/render/ draws a quantity',
+    ).toEqual([...DRAWN_QUANTITY_FILES].sort());
   });
 
   it('keeps every other drawn line free of a value, so the two are the whole list', () => {

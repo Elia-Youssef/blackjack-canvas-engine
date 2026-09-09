@@ -2,10 +2,12 @@
  * What the DOM sync step is given, and what the chrome may ask the game to do.
  *
  * DESIGN section 3 step 5 is "sync the DOM chrome from state". One value in,
- * every component reads what it needs off it, and no component holds state of
- * its own beyond the elements it built. That is what makes the sync step
- * idempotent: running it twice on the same state produces the same DOM, which
- * is the property a per-frame sync depends on.
+ * every component reads what it needs off it, and three components hold state of
+ * their own beyond the elements they built: SPEC 5's balance count-up, the
+ * announcement queue and the settings panel's reset confirmation, each named at
+ * its own declaration. For every other component the sync step is idempotent,
+ * running it twice on the same state produces the same DOM, which is the
+ * property a per-frame sync depends on.
  *
  * **The overlay is on this state and is not an intent.** SPEC 10 makes
  * Settings, How to Play and Statistics "reachable at any time and never
@@ -190,16 +192,26 @@ export interface ChromeState {
    */
   readonly reducedMotion: MotionSetting;
   /**
-   * SPEC 14's house rules as the Settings panel holds them, staged for the
-   * next round. `BJ-20`.
+   * SPEC 14's house rules staged for the next round, or `null` when the next
+   * round runs under the rules in force. `BJ-20`, corrected at `AUDIT-2`.
    *
    * Deliberately not `readout.rules`, which are the rules in force: SPEC 14
    * applies a change "at the start of the next round, never mid-round", so
    * between the change and that boundary the two records differ, and the
    * panel's pressed states must show what the player chose rather than snap
    * back to what the round is running under.
+   *
+   * **It is the machine's own `stagedRules()` and not a second copy of it.**
+   * The composition root kept a parallel record and published that, so the
+   * panel's toggles and the panel's own sentence about the rules in force were
+   * two answers to one question and contradicted each other for the whole of
+   * the betting screen (finding `J2-02`), while the accessor the machine
+   * published for exactly this shipped uncalled (finding `Z2-01`). `null` is
+   * load-bearing rather than a convenience: it is what tells the panel to
+   * describe the round instead of the deal to come, and the machine resolves a
+   * stage equal to the rules in force to it.
    */
-  readonly stagedRules: HouseRules;
+  readonly stagedRules: HouseRules | null;
   /**
    * SPEC 7's hint for the hand in front of the player, or `null`. `BJ-20`,
    * item `J4`.
@@ -230,6 +242,45 @@ export interface ChromeState {
 }
 
 /**
+ * SPEC 11's "current wager": the money actually at stake this frame.
+ * `AUDIT-2`, finding `J2-01`.
+ *
+ * **`wallet.wager` is the wager being built at the controls, and nothing more.**
+ * `commitInitial` sets it to zero the instant a deal is accepted, so a readout
+ * that showed it read 0 on every frame of `dealing`, `peek`, `insurance`,
+ * `playerTurn`, `reveal`, `dealerTurn`, `settling` and `roundResult` while 460
+ * or 100 and 100 sat on the table. SPEC 11 asks for a continuous readout and
+ * DESIGN section 4 keeps this one of only three in the top bar below 768 px,
+ * where the other eleven are behind the disclosure: one of the three was dead
+ * for the whole of every hand, at the width that can least afford it.
+ *
+ * **The rule is phase-free, because the hands are the fact.** With no hand in
+ * play there is nothing at stake and the pending wager is what the player is
+ * building; with hands in play the money at stake is their wagers, summed,
+ * which is the same number `wallet.committed` carries during the round and the
+ * right one at SPEC 10's round result, where the hands are still on the felt
+ * with their wagers and `committed` has already been swept to zero.
+ *
+ * **The sum rather than the active hand's own wager**, because this readout
+ * sits beside the balance and answers "what is this round costing me": a split
+ * of two hands of 100 has 200 at stake, and the per-hand figure is already in
+ * the mirror's own name for each hand and in SPEC 12's per-hand result. SPEC
+ * 4.7's insurance stake is deliberately not added: it is a side bet with its own
+ * screen and its own sentence, and folding it in would make one number answer
+ * two questions.
+ *
+ * One reading, here, because the readouts panel and the accessibility mirror
+ * both state it and a second derivation is how they came to disagree.
+ */
+export function wagerAtStake(readout: TableReadout): number {
+  const { hands, wallet } = readout;
+  if (hands.length === 0) {
+    return wallet.wager;
+  }
+  return hands.reduce((total, hand) => total + hand.wager, 0);
+}
+
+/**
  * What a control may ask for. Three kinds, and the split is SPEC 10's.
  *
  * `queue` is the only route from a control to the game, and it queues rather
@@ -253,7 +304,7 @@ export interface ChromeActions {
    * Not an intent, and for the same reason the overlays are not: it decides no
    * transition, so a row in SPEC 10's legality table saying it is legal in all
    * eleven phases would say nothing. The composition root passes it straight to
-   * `table.setSpeed`, which is the only thing about a built table that moves.
+   * `table.setSpeed`, the only presentation setting the machine itself holds.
    */
   setSpeed(speed: Speed): void;
   /**
@@ -274,8 +325,10 @@ export interface ChromeActions {
    * are not: it decides no transition, and it must be reachable in one press
    * from the play screen rather than from inside a panel. The composition
    * root wires it to the audio engine, which is the one thing that holds the
-   * value; the volume slider SPEC 14 also lists is `I5` at `BJ-20` and takes
-   * the engine's `setVolume`, which needs no chrome action to be reachable.
+   * value. The volume half SPEC 14 also lists is `setVolume` below, which
+   * `BJ-20` added as its own action when the slider landed; it is the same
+   * route to the same engine, and it is separate because a slider commits on
+   * the gesture's end and a toggle has no such moment.
    */
   toggleMuted(): void;
   /**
@@ -323,11 +376,12 @@ export interface Component {
    * One frame's sync.
    *
    * `dt` is the seconds since the previous frame, the same delta the machine and
-   * the play surface were given. Every component but the readouts ignores it:
-   * the sync step is a pure function of `state` and running it twice on one
-   * state produces the same DOM. SPEC 5's balance count-up is the one exception
-   * in the whole chrome, it holds the number it is currently showing, and its
-   * own header says so.
+   * the play surface were given. Two components spend it: SPEC 5's balance
+   * count-up, which holds the number it is currently showing, and QUALITY-BAR
+   * section 4's announcement queue, which spaces its writes by it. For every
+   * component but those two, and the settings panel's reset confirmation, the
+   * sync step is a pure function of `state` and running it twice on one state
+   * produces the same DOM. Each of the three says so in its own header.
    */
   update(state: ChromeState, dt: number): void;
   readonly root: HTMLElement;

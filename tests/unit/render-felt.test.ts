@@ -21,6 +21,8 @@
 
 import { describe, expect, it } from 'vitest';
 
+import { STANDS_AT } from '../../src/core/dealer';
+import { INSURANCE_PAYS, NATURAL_PAYS } from '../../src/core/settlement';
 import { TABLES, tableLimits } from '../../src/core/wallet';
 import {
   bakeFelt,
@@ -64,12 +66,34 @@ function tiles(felt: FeltName = 'bronze', dpr = 1): GrainTiles {
 
 describe('E5: the printed lines', () => {
   it('prints exactly the four lines SPEC 16 states, in table order', () => {
+    // **These literals are load bearing in one direction.** `AUDIT-2`, finding
+    // `Z1-03`: the three rule lines are built from `NATURAL_PAYS`,
+    // `INSURANCE_PAYS` and `STANDS_AT`, the constants whose own headers say the
+    // felt prints from them, so the house rule those constants exist to make a
+    // one-place change, moving the headline payout to 6:5, now fails here
+    // instead of leaving the table printing a rule the game no longer follows.
+    // Written out as SPEC 16 states them rather than rebuilt from the constants,
+    // because a test that interpolated the same constants would agree with any
+    // value they took.
     expect(feltPrint({ minimum: 10, maximum: 100 })).toEqual([
       'INSURANCE PAYS 2 TO 1',
       'BLACKJACK PAYS 3 TO 2',
       'Dealer must stand on all 17s',
       'MINIMUM 10 - MAXIMUM 100',
     ]);
+  });
+
+  it('reads each rule from the module that decides it', () => {
+    // The other direction, and the one that says these are not three constants
+    // that happen to agree with three sentences: the printed line is what the
+    // ladder and the dealer policy actually use, so the two cannot drift apart
+    // in either direction.
+    const [insurance, natural, stands] = feltPrint({ minimum: 10, maximum: 100 });
+    expect(insurance).toBe(`INSURANCE PAYS ${String(INSURANCE_PAYS)} TO 1`);
+    expect(natural).toBe(
+      `BLACKJACK PAYS ${String(NATURAL_PAYS.numerator)} TO ${String(NATURAL_PAYS.denominator)}`,
+    );
+    expect(stands).toBe(`Dealer must stand on all ${String(STANDS_AT)}s`);
   });
 
   it('prints each real table\'s own limits, from the wallet record', () => {

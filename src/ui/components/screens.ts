@@ -23,7 +23,7 @@
  */
 
 import { bustOut, tableLimits, type TableId, TABLES } from '../../core/wallet';
-import { insuranceRefusal, tableLabel, tableRefusal } from '../availability';
+import { insuranceRefusal, tableFigures, tableLabel, tableRefusal } from '../availability';
 import { button, el, empty, setAttribute, setDisabled, setHidden, setText } from '../dom';
 import { chips as formatChips } from '../format';
 import type { ChromeActions, ChromeState, Component } from '../state';
@@ -86,10 +86,15 @@ export function createStartScreen(actions: ChromeActions): Component {
       const { bestBalance, chips } = state.readout.wallet;
       for (const [id, control] of tableButtons) {
         const refusal = tableRefusal(id, bestBalance, chips);
+        // The figures go with the reason, so this button's accessible name and
+        // the mirror's entry for the same button are one sentence built once.
+        // `AUDIT-2`, finding `J2-03`: SPEC 6's unlock threshold appeared on no
+        // button, no readout and no overlay, so the locked arm asked the player
+        // to reach a number the product never named.
         setDisabled(
           control,
           refusal !== null,
-          refusal === null ? null : reasonText(refusal),
+          refusal === null ? null : reasonText(refusal, tableFigures(id, bestBalance)),
           tableLabel(id),
         );
         setAttribute(control, 'aria-pressed', String(id === state.readout.table));

@@ -39,9 +39,42 @@
  * did not change, and the chrome syncs on every frame by design.
  */
 
+/** The tag every list ends in, and the one this module is written against. */
+const FALLBACK_LOCALE = 'en-US';
+
 /** The platform's preferred languages, or `null` where there is no platform. */
 function platformLanguages(): readonly string[] | null {
   return typeof navigator === 'undefined' ? null : navigator.languages;
+}
+
+/**
+ * Whether `Intl` will accept this tag at all. `AUDIT-2`, finding `X4-01`.
+ *
+ * `Intl.NumberFormat` validates a locale list **structurally** and throws
+ * `RangeError` on the first malformed tag, so one unreadable entry refuses the
+ * whole list however many good tags sit beside it: `['en-US', 'C']` throws with
+ * a valid tag first and the appended fallback last. That is what made the
+ * fallback decorative rather than real. Each tag is therefore tested on its own,
+ * through the one function whose whole job is to say whether a tag is
+ * well formed, and a tag that fails is dropped rather than carried.
+ *
+ * A platform does not have to be hostile to hand one over: an anti-fingerprinting
+ * extension overriding `navigator.languages`, an embedder passing a POSIX `LANG`
+ * value such as `C` or an underscore form such as `en_US` straight through, and
+ * a header value that kept its quality factor all produce one.
+ */
+function readable(tag: string): boolean {
+  try {
+    Intl.getCanonicalLocales(tag);
+    return true;
+  } catch (error) {
+    // The value is the refusal itself and there is nothing to report it to:
+    // this runs during module evaluation, before the page has a console worth
+    // writing to and before the error boundary exists. Bound and read, which is
+    // QUALITY-BAR section 12's rule about this shape.
+    void error;
+    return false;
+  }
 }
 
 /**
@@ -57,11 +90,15 @@ function platformLanguages(): readonly string[] | null {
  * absent argument: a caller passing `undefined` to mean "nothing" would be
  * handed the platform's own answer instead, and the one case that most needs
  * asserting would be the one case that could not be.
+ *
+ * **The filter keeps the player's preference wherever any of it survives.** A
+ * list that filters to empty still yields the fallback alone, which is the same
+ * answer a platform offering nothing already got.
  */
 export function localeList(
   preferred: readonly string[] | null = platformLanguages(),
 ): readonly string[] {
-  return [...(preferred ?? []), 'en-US'];
+  return [...(preferred ?? []).filter(readable), FALLBACK_LOCALE];
 }
 
 /** The four formatters the chrome reads numbers through, for one locale list. */
@@ -123,8 +160,42 @@ export function createFormatters(locales: readonly string[]): Formatters {
   };
 }
 
+/**
+ * The set the chrome uses, built once from the platform's own list.
+ *
+ * **Guarded, because this runs before anything can catch it.** `src/main.ts`
+ * imports this module, so ES module evaluation runs the line below strictly
+ * before the composition root's body: before the error boundary is installed,
+ * before the capability probe writes its unsupported notice, and outside the
+ * `nomodule` fallback, which is for a browser that cannot *parse* a module
+ * rather than one that throws while evaluating it. A throw here has none of the
+ * game's three failure answers and is the blank page with an uncaught error that
+ * item `A5` forbids in as many words.
+ *
+ * The filter in `localeList` is what makes this guard nearly unreachable; the
+ * guard is what makes the promise not depend on the filter being exhaustive. It
+ * also covers the read itself, since `navigator.languages` is a getter a
+ * platform can refuse rather than answer.
+ *
+ * **What it does not cover, stated rather than implied.** A platform with no
+ * `Intl.NumberFormat` at all would throw from the fallback construction too.
+ * That browser cannot run this game and is outside QUALITY-BAR section 2's
+ * support matrix; no arrangement of this file rescues it, because a formatter is
+ * what the module exists to be.
+ */
+function platformFormatters(): Formatters {
+  try {
+    return createFormatters(localeList());
+  } catch (error) {
+    // Named and dropped: the platform's answer is unusable and the fallback is
+    // what the list was always supposed to fall back to.
+    void error;
+    return createFormatters([FALLBACK_LOCALE]);
+  }
+}
+
 /** The set the chrome uses, built once from the platform's own list. */
-const PLATFORM = createFormatters(localeList());
+const PLATFORM = platformFormatters();
 
 /** The locale `Intl` actually resolved, for the document's `lang` attribute. */
 export function resolvedLocale(): string {

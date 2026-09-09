@@ -713,6 +713,44 @@ export async function surfaceMetrics(page: Page): Promise<SurfaceMetrics> {
   });
 }
 
+/**
+ * The surface a box should be given, re-derived from DESIGN section 4's two
+ * framings. `AUDIT-2`, findings `J5-02` and `J1-06`.
+ *
+ * **A second implementation of `planSurface`'s framing choice, kept here so the
+ * two specs that grade it cannot disagree about the rule.** The rule itself is
+ * in `src/ui/breakpoints.ts` and is not imported: a spec that asked the code
+ * what the code does would pass on any answer.
+ *
+ * The choice has one condition beyond the breakpoint's own framing, and the
+ * condition is stated in the framings themselves rather than in a number chosen
+ * here: a box whose own aspect falls outside the band the two framings define is
+ * drawn in whichever of them is nearer its shape. `J5-02` measured what the
+ * unconditional form costs, a 366 x 192 stage drawing a 144 px surface and
+ * leaving 61 percent of its width empty at the one screen whose job is showing
+ * the player what happened.
+ */
+export function expectedSurfaceBox(
+  box: { readonly width: number; readonly height: number },
+  breakpoint: string,
+  framings: {
+    readonly portrait: { readonly width: number; readonly height: number };
+    readonly landscape: { readonly width: number; readonly height: number };
+  },
+): { readonly width: number; readonly height: number } {
+  const preferred = breakpoint === 'portrait' ? framings.portrait : framings.landscape;
+  const widest = framings.landscape.width / framings.landscape.height;
+  const tallest = framings.portrait.width / framings.portrait.height;
+  const aspect = box.width / box.height;
+  const framing =
+    aspect > widest ? framings.landscape : aspect < tallest ? framings.portrait : preferred;
+  const fit = Math.min(box.width / framing.width, box.height / framing.height);
+  return {
+    width: Math.floor(framing.width * fit),
+    height: Math.floor(framing.height * fit),
+  };
+}
+
 /** One control, as the page renders it right now. `BJ-16`, item `F1`. */
 export interface ControlReport {
   /** Whatever names the control: its data attribute, or its text. */

@@ -69,7 +69,7 @@ import {
 import type { Table, TableReadout } from '../../src/core/table';
 import { createTable } from '../../src/core/table';
 import { STARTING_CHIPS, createWallet } from '../../src/core/wallet';
-import type { GameDocument } from '../../src/storage/document';
+import type { GameDocument, RepairReason } from '../../src/storage/document';
 import {
   DEFAULT_DOCUMENT,
   DEFAULT_SETTINGS,
@@ -613,6 +613,163 @@ const WHOLE_DOCUMENT_FIXTURES = CORRUPT.filter((one) => one.reach === 'whole').l
 const PER_FIELD_FIXTURES = CORRUPT.filter((one) => one.reach === 'field').length;
 
 /**
+ * What each fixture is repaired as: the dotted path, and why.
+ *
+ * **The taxonomy needs a reader, or it grades nothing.** `Repair` carries a
+ * `field` and a six-way `reason`, the sanitiser classifies at every site, and
+ * until `AUDIT-2` finding `X3-03` every consumer in the repository read the
+ * list's length. A sanitiser that answered `{ field: '', reason: 'malformed' }`
+ * for every repair it made left the whole suite green, so the most carefully
+ * documented union in `document.ts` was pinned by nothing. This table is the
+ * reader: one expected pair per fixture, keyed by the fixture's name, which the
+ * matrix already asserts is unique.
+ *
+ * **The pairs are derived from SPEC and from the sanitiser's own stated rules,
+ * not read off a run.** A count that is a number but out of its range is
+ * `out-of-range`; one that is the wrong type is `malformed`; an absent key is
+ * `missing`, which is the distinction `reasonFor` exists to make; a string or
+ * number naming nothing the spec defines is `unknown-value`; well-formed fields
+ * that contradict each other are `inconsistent`; and the six envelope reasons
+ * name the document root, because a document with no usable version has no
+ * field to name.
+ *
+ * Totality is asserted below in both directions: every fixture appears here, and
+ * every key here names a fixture.
+ */
+const REPAIRED_AS: Readonly<Record<string, readonly [string, RepairReason]>> = Object.freeze({
+  // The store refused the read.
+  'a store that throws SecurityError on the read': ['', 'unreadable'],
+  'a store that throws something that is not an Error': ['', 'unreadable'],
+
+  // `JSON.parse` refused the string.
+  'an empty string': ['', 'unparseable'],
+  'a blank string': ['', 'unparseable'],
+  'a truncated object': ['', 'unparseable'],
+  prose: ['', 'unparseable'],
+
+  // It parsed, and is not an object with fields.
+  'a JSON null': ['', 'not-a-document'],
+  'a JSON number': ['', 'not-a-document'],
+  'a JSON string': ['', 'not-a-document'],
+  'a JSON array': ['', 'not-a-document'],
+
+  // The envelope.
+  'an envelope with no version': ['', 'bad-version'],
+  'a version of zero': ['', 'bad-version'],
+  'a negative version': ['', 'bad-version'],
+  'a fractional version': ['', 'bad-version'],
+  'a version that is a string': ['', 'bad-version'],
+  'a version that is null': ['', 'bad-version'],
+  'a version from the future': ['', 'future-version'],
+  'a version far in the future': ['', 'future-version'],
+
+  // A readable envelope whose payload is not a document.
+  'a payload that is missing': ['', 'not-a-document'],
+  'a payload that is null': ['', 'not-a-document'],
+  'a payload that is an array': ['', 'not-a-document'],
+  'a payload that is a number': ['', 'not-a-document'],
+
+  // SPEC 13's best chip balance: a number outside the range is out of range,
+  // any other type is malformed, and an absent key is missing.
+  'a mark below the starting bankroll': ['bestBalance', 'out-of-range'],
+  'a mark of zero': ['bestBalance', 'out-of-range'],
+  'a negative mark': ['bestBalance', 'out-of-range'],
+  'a fractional mark': ['bestBalance', 'out-of-range'],
+  'a mark past the safe integers': ['bestBalance', 'out-of-range'],
+  'a mark that is a string': ['bestBalance', 'malformed'],
+  'a mark that is a boolean': ['bestBalance', 'malformed'],
+  'a mark that is null': ['bestBalance', 'malformed'],
+  'no mark at all': ['bestBalance', 'missing'],
+
+  // SPEC 6's seat: a string naming no table is an unknown value, and the empty
+  // string is one of those rather than a missing key.
+  'a table SPEC 6 does not name': ['table', 'unknown-value'],
+  'a table that is empty': ['table', 'unknown-value'],
+  'a table that is a number': ['table', 'malformed'],
+  'no table at all': ['table', 'missing'],
+
+  // SPEC 11's counters. The identity `handsPlayed === wins + losses + pushes`
+  // and the blackjack bound are the two inconsistencies.
+  'statistics that are a string': ['statistics', 'malformed'],
+  'a lifetime scope that is a number': ['statistics.lifetime', 'malformed'],
+  'a lifetime scope with a negative tally': ['statistics.lifetime', 'malformed'],
+  'a lifetime scope with a fractional tally': ['statistics.lifetime', 'malformed'],
+  'a lifetime scope whose tallies do not add up': ['statistics.lifetime', 'inconsistent'],
+  'more blackjacks than hands played': ['statistics.lifetime', 'inconsistent'],
+  'a milestone list that is a string': ['statistics.milestones', 'malformed'],
+  'a milestone SPEC 9 does not name': ['statistics.milestones', 'unknown-value'],
+  'the same milestone twice': ['statistics.milestones', 'inconsistent'],
+  'a negative round count': ['statistics.rounds', 'out-of-range'],
+  'a low-water latch that is a string': ['statistics.belowLowWater', 'malformed'],
+
+  // SPEC 7's accuracy, per scope.
+  'a coach record that is a string': ['coach', 'malformed'],
+  'more matches than decisions': ['coach.lifetime', 'inconsistent'],
+  'a negative decision count': ['coach.session', 'malformed'],
+
+  // SPEC 8's history. A list longer than the rule is truncated, which is the
+  // one `too-long` in the whole document; an entry is dropped whole, and the
+  // path names its index.
+  'a history that is a string': ['history', 'malformed'],
+  'a history longer than SPEC 8 keeps': ['history', 'too-long'],
+  'an entry that is a number': ['history[0]', 'malformed'],
+  'an entry missing the dealer hand': ['history[0]', 'malformed'],
+  'an entry missing its hands': ['history[0]', 'malformed'],
+  'an entry with an impossible card': ['history[0]', 'malformed'],
+  'an entry with an unknown action': ['history[0]', 'malformed'],
+  'an entry with an unknown outcome': ['history[0]', 'malformed'],
+  'an entry whose coach field is a number': ['history[0]', 'malformed'],
+  'an entry whose hand is a number': ['history[0]', 'malformed'],
+  'an entry whose hand wager is a string': ['history[0]', 'malformed'],
+  'an entry whose coach list holds a malformed verdict': ['history[0]', 'malformed'],
+  'an entry whose dealer card is a number': ['history[0]', 'malformed'],
+
+  // SPEC 14's settings.
+  'settings that are a string': ['settings', 'malformed'],
+  'rules that are a number': ['settings.rules', 'malformed'],
+  'a shoe size SPEC 4.1 does not deal': ['settings.rules.decks', 'unknown-value'],
+  'a split comparison SPEC 4.6 does not name': ['settings.rules.splitRule', 'unknown-value'],
+  'a house-rule toggle that is a string': ['settings.rules.surrender', 'malformed'],
+  'a coach mode SPEC 7 does not have': ['settings.coach', 'unknown-value'],
+  'a speed SPEC 5 does not have': ['settings.speed', 'unknown-value'],
+  'a surface size QUALITY-BAR 4 does not list': ['settings.surfaceSize', 'unknown-value'],
+  'a theme SPEC 14 does not have': ['settings.theme', 'unknown-value'],
+  'a reduced-motion setting SPEC 14 does not have': ['settings.reducedMotion', 'unknown-value'],
+  'a volume above the ceiling': ['settings.volume', 'out-of-range'],
+  'a volume below the floor': ['settings.volume', 'out-of-range'],
+  'a volume that is a string': ['settings.volume', 'malformed'],
+  'a mute that is a string': ['settings.muted', 'malformed'],
+
+  // SPEC 17's seen flag.
+  'a seen flag that is a number': ['howToPlaySeen', 'malformed'],
+});
+
+/**
+ * Every reason the matrix reaches, written out.
+ *
+ * The list is the non-vacuity guard on the table above: a cure that flattened
+ * `reasonFor` to one answer, or a table that lost the fixtures carrying a
+ * distinction, changes this set rather than merely changing which pairs match.
+ * `no-migration` and `migration-failed` are absent on purpose: this build
+ * registers no migration steps and `DOCUMENT_VERSION` is the lowest version, so
+ * neither is reachable from a stored string. `tests/unit/storage-migration.test.ts`
+ * drives both through the seam.
+ */
+const REASONS_REACHED: readonly RepairReason[] = Object.freeze([
+  'bad-version',
+  'future-version',
+  'inconsistent',
+  'malformed',
+  'missing',
+  'not-a-document',
+  'out-of-range',
+  'too-long',
+  'unknown-value',
+  'unparseable',
+  'unreadable',
+]);
+
+/**
  * Stored marks a trusting loader cannot survive.
  *
  * Each is a value `createWallet` refuses by contract: not a whole number, or
@@ -733,6 +890,53 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
       }
     });
 
+    it('names the field and the reason SPEC and the sanitiser state, on every one', () => {
+      // `AUDIT-2` finding `X3-03`: the length above is satisfied by a repair
+      // that says nothing. This reads the payload.
+      for (const fixture of CORRUPT) {
+        const expected = REPAIRED_AS[fixture.name];
+        expect(expected, `${fixture.name} has no expected repair`).toBeDefined();
+        if (expected === undefined) {
+          continue;
+        }
+        const [field, reason] = expected;
+        const { report } = loadDocument(fixture.store());
+        expect(report.repairs, fixture.name).toContainEqual({ field, reason });
+      }
+    });
+
+    it('expects a repair for every fixture and no fixture that is not there', () => {
+      // Both directions, so the table cannot be kept green by shrinking: a
+      // fixture added without an expected pair fails the first assertion, and a
+      // key left behind by a deleted fixture fails the second.
+      const named = new Set(CORRUPT.map((one) => one.name));
+      expect(Object.keys(REPAIRED_AS).sort()).toEqual([...named].sort());
+    });
+
+    it('reaches every reason the taxonomy has a fixture for, and no other', () => {
+      const reached = new Set(Object.values(REPAIRED_AS).map(([, reason]) => reason));
+      expect([...reached].sort()).toEqual([...REASONS_REACHED].sort());
+    });
+
+    it('names the document root for a whole reach and a real path for a field one', () => {
+      // The salvage boundary again, read off the repair rather than off the
+      // document: a document discarded whole has no field to blame, and a field
+      // repair that named the root would be a report a player's readout cannot
+      // use. The top segment of every field path is one of SPEC 13's own keys.
+      const roots = new Set(SPEC_13_PERSISTED.flatMap((group) => group.keys));
+      for (const fixture of CORRUPT) {
+        const { report } = loadDocument(fixture.store());
+        for (const repair of report.repairs) {
+          if (fixture.reach === 'whole') {
+            expect(repair.field, fixture.name).toBe('');
+          } else {
+            const top = repair.field.split(/[.[]/)[0] ?? '';
+            expect([...roots], `${fixture.name} repaired ${repair.field}`).toContain(top);
+          }
+        }
+      }
+    });
+
     it('seats the player somewhere SPEC 6 opens on every one', () => {
       for (const fixture of CORRUPT) {
         const persistence = createPersistence({
@@ -795,6 +999,72 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
       expect(entry?.coach, 'the hunted seed produced no verdicts').not.toBeNull();
       expect(entry?.coach?.length ?? 0).toBeGreaterThan(0);
       expect(COACHED_ROUND.verdicts.length).toBeGreaterThan(0);
+    });
+  });
+
+  describe('negative zero, which is a number and is not a count', () => {
+    /**
+     * A stored `-0`, which the game itself cannot write.
+     *
+     * `JSON.stringify(-0)` is `"0"`, so this document can only come from a hand
+     * edit, a migration or a third party, which is exactly the population SPEC
+     * 18 and this item exist for. It passes every guard a count has:
+     * `Number.isSafeInteger(-0)` is true, `-0 >= 0` is true, and the counters
+     * identity holds because `-0 + -0 + -0 !== -0` is false. `AUDIT-2` finding
+     * `Z6-04` measured what that reached: `Intl.NumberFormat` prints the sign,
+     * so the Statistics overlay read "Lifetime hands -0" with no repair
+     * recorded and nothing for the degradation note to say.
+     *
+     * It is normalised rather than repaired, because the value is not corrupt,
+     * only spelled with a sign that means nothing here. So this fixture belongs
+     * beside the positive control and not in the matrix: the assertion is that
+     * it loads clean AND comes back as `+0`.
+     */
+    const SENTINEL = 123_456_789;
+
+    function storedWithNegativeZeros(payload: unknown, expectedCount: number): string {
+      const text = JSON.stringify({ version: DOCUMENT_VERSION, data: payload });
+      const found = text.split(String(SENTINEL)).length - 1;
+      expect(found, 'the sentinel did not land where the fixture puts it').toBe(expectedCount);
+      return text.replaceAll(String(SENTINEL), '-0');
+    }
+
+    it('loads a lifetime scope of negative zeros clean, and as positive zero', () => {
+      const zeros = {
+        handsPlayed: SENTINEL,
+        wins: SENTINEL,
+        losses: SENTINEL,
+        pushes: SENTINEL,
+        blackjacks: SENTINEL,
+      };
+      const text = storedWithNegativeZeros(
+        { ...HEALTHY, statistics: { ...HEALTHY.statistics, lifetime: zeros } },
+        5,
+      );
+      expect(text).toContain('"handsPlayed":-0');
+
+      const loaded = loadDocument(storeHolding(text));
+      expect(loaded.report.repairs).toEqual([]);
+      const { lifetime } = loaded.document.statistics;
+      for (const [name, value] of Object.entries(lifetime)) {
+        expect(Object.is(value, 0), `${name} came back as negative zero`).toBe(true);
+      }
+    });
+
+    it('loads a history delta of negative zero clean, and as positive zero', () => {
+      const entry = REAL_HISTORY[0];
+      if (entry === undefined) {
+        throw new Error('the real round produced no entry');
+      }
+      const text = storedWithNegativeZeros(
+        { ...HEALTHY, history: [{ ...entry, delta: SENTINEL }] },
+        1,
+      );
+
+      const loaded = loadDocument(storeHolding(text));
+      expect(loaded.report.repairs).toEqual([]);
+      expect(loaded.document.history).toHaveLength(1);
+      expect(Object.is(loaded.document.history[0]?.delta, 0)).toBe(true);
     });
   });
 
@@ -1049,6 +1319,21 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
   });
 
   describe('overwritten on the next successful write', () => {
+    /**
+     * The mark this test writes to show that its own write landed.
+     *
+     * **Above every mark any fixture holds, and that is a requirement rather
+     * than a spare digit.** The witness used to be 3,000, which is below
+     * `HEALTHY`'s 12,500, and since the `J3-01` cure the save path merges the
+     * high-water mark monotonically: a lower witness is discarded by the merge
+     * and the reader cannot tell "our write landed" from "nothing was written
+     * at all", which is exactly what this test is for. A value above every
+     * stored mark survives the merge, so the assertion below still separates
+     * the two. What is being graded is unchanged: the corrupt document is
+     * replaced and the next load repairs nothing.
+     */
+    const REPLACEMENT_MARK = 40_000;
+
     it('replaces the corrupt document, so the next load repairs nothing', () => {
       // Over every fixture that has something stored to replace. The two whose
       // store refuses the read have nothing to overwrite and nothing to read
@@ -1056,13 +1341,20 @@ describe('I2: a corrupt saved value does not prevent the game from starting', ()
       for (const fixture of STORED) {
         const store = fixture.store();
         const persistence = createPersistence({ store, durable: true, failure: null });
-        const next: GameDocument = { ...persistence.document(), bestBalance: 3_000 };
+        const next: GameDocument = { ...persistence.document(), bestBalance: REPLACEMENT_MARK };
         expect(persistence.save(next).ok, fixture.name).toBe(true);
 
         const again = loadDocument(store);
         expect(again.report.source, fixture.name).toBe('stored');
         expect(again.report.repairs, fixture.name).toEqual([]);
-        expect(again.document.bestBalance, fixture.name).toBe(3_000);
+        expect(again.document.bestBalance, fixture.name).toBe(REPLACEMENT_MARK);
+        // The witness is only a witness while it is above what was stored, so
+        // the premise is asserted rather than assumed: a fixture whose salvaged
+        // mark ever reached it would make the line above pass for free.
+        expect(
+          persistence.document().bestBalance,
+          `${fixture.name} stores a mark the witness cannot outrank`,
+        ).toBe(REPLACEMENT_MARK);
       }
     });
   });

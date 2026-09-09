@@ -60,6 +60,10 @@ declare global {
     __bjFrames?: number;
     /** Calls the broken play surface has refused. */
     __bjThrows?: number;
+    /** `pointerdown` listeners bound on the document, counted by the init script. */
+    __bjGestureBinds?: number;
+    /** The same listeners taken off again. */
+    __bjGestureUnbinds?: number;
   }
 }
 
@@ -315,6 +319,100 @@ test.describe('M4: a page-level failure', () => {
     await expect(page.locator(PANEL)).toBeVisible();
     await expect(shell(page)).toHaveCount(0);
     expect(await framesOver(page, QUIET_MS), 'the loop kept running').toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Route 4: a failure while the composition root is still being assembled
+// ---------------------------------------------------------------------------
+
+/**
+ * Count the audio engine's gesture listener, and refuse the boot's last one.
+ *
+ * `AUDIT-2`, finding `X4-03`. The boundary's stop disposes the game the
+ * composition root last published, and that publication is the statement before
+ * the first frame, so for the whole of a boot the stop had nothing to dispose
+ * and "stops the loop cleanly" was true of the panel and not of the stop. What
+ * a failure in that window leaves behind is the listeners of every subsystem
+ * already built, on a page whose game no longer exists.
+ *
+ * Two wrappers, both installed before any page script runs and neither known to
+ * anything under `src/`:
+ *
+ *   - `document.addEventListener` / `removeEventListener` are counted for
+ *     `pointerdown`, which is the audio engine's gesture listener and the only
+ *     `pointerdown` this product binds. It is bound early in the boot and taken
+ *     off by `audio.dispose()`, so the pair is a direct reading of whether the
+ *     teardown ran.
+ *   - `window.addEventListener` refuses `storage`, which the composition root
+ *     binds as its last act before publishing the game. That is a genuine
+ *     platform refusal at a real point in the boot, after the motion query, the
+ *     audio engine, the chrome and the frame loop have all been constructed,
+ *     and it is reached through the same wrapped call the page always makes.
+ */
+async function refuseTheLastListener(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    window.__bjGestureBinds = 0;
+    window.__bjGestureUnbinds = 0;
+    type Bind = typeof document.addEventListener;
+    type Unbind = typeof document.removeEventListener;
+    const bind: Bind = document.addEventListener.bind(document);
+    const unbind: Unbind = document.removeEventListener.bind(document);
+    document.addEventListener = ((
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ): void => {
+      if (type === 'pointerdown') {
+        window.__bjGestureBinds = (window.__bjGestureBinds ?? 0) + 1;
+      }
+      bind(type, listener, options);
+    }) as Bind;
+    document.removeEventListener = ((
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | EventListenerOptions,
+    ): void => {
+      if (type === 'pointerdown') {
+        window.__bjGestureUnbinds = (window.__bjGestureUnbinds ?? 0) + 1;
+      }
+      unbind(type, listener, options);
+    }) as Unbind;
+
+    type GlobalBind = typeof window.addEventListener;
+    const globalBind: GlobalBind = window.addEventListener.bind(window);
+    window.addEventListener = ((
+      type: string,
+      listener: EventListenerOrEventListenerObject,
+      options?: boolean | AddEventListenerOptions,
+    ): void => {
+      if (type === 'storage') {
+        throw new Error('the origin refused a listener');
+      }
+      globalBind(type, listener, options);
+    }) as GlobalBind;
+  });
+}
+
+test.describe('M4: a failure during the boot', () => {
+  test('takes down what the boot had already built, and shows the panel', async ({ page }) => {
+    await countFrames(page);
+    await refuseTheLastListener(page);
+    await page.goto('/');
+
+    await expect(page.locator(PANEL)).toBeVisible();
+    await expect(shell(page)).toHaveCount(0);
+    expect(await framesOver(page, QUIET_MS), 'the loop kept running').toBe(0);
+
+    const listeners = await page.evaluate(() => ({
+      bound: window.__bjGestureBinds ?? 0,
+      unbound: window.__bjGestureUnbinds ?? 0,
+    }));
+    // The can-see half: the wrapper really did watch a boot that got as far as
+    // constructing the audio engine, so "unbound" below is a reading of the
+    // teardown rather than of a listener that was never there.
+    expect(listeners.bound, 'the boot never reached the audio engine').toBe(1);
+    expect(listeners.unbound, 'the half-built game kept its gesture listener').toBe(1);
   });
 });
 

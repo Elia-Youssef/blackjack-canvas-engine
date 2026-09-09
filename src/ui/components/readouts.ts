@@ -38,11 +38,11 @@
 
 import { handValue } from '../../core/hand';
 import { tableLimits } from '../../core/wallet';
-import { countUp } from '../../render/animate';
+import { PACING, countUp } from '../../render/animate';
 import type { BreakpointName } from '../breakpoints';
 import { el, setText } from '../dom';
 import { NOTHING_YET, chips, percent } from '../format';
-import type { ChromeState, Component } from '../state';
+import { wagerAtStake, type ChromeState, type Component } from '../state';
 import { tableText } from '../text';
 
 /** One readout: a stable key, its label, and how its value is read. */
@@ -96,8 +96,32 @@ function activeHandTerm(state: ChromeState): string {
 
 /** SPEC 11's list, in SPEC 11's order. */
 const ROWS: readonly ReadoutRow[] = Object.freeze([
-  { key: BALANCE_KEY, label: 'Chips', value: (s) => chips(s.readout.wallet.chips) },
-  { key: 'wager', label: 'Wager', value: (s) => chips(s.readout.wallet.wager) },
+  {
+    key: BALANCE_KEY,
+    label: 'Chips',
+    /**
+     * **This row lags the balance and never leads it, deliberately.**
+     * `AUDIT-2`, finding `J1-05`. SPEC 5 asks the balance to count rather than
+     * snap, so for `PACING.balanceCountUp` after a settlement this element and
+     * the mirror's own `Chips` sentence, which holds the settled figure from
+     * the first frame, are two numbers in one accessibility tree. Measured on
+     * the shipped page at up to 157 chips apart for about 235 ms, and the
+     * disagreement reaches SPEC 10's betting screen whenever Next Hand is
+     * pressed before the count finishes.
+     *
+     * It is accepted rather than cured, and the direction is the reason. A loss
+     * takes its chips at the deal, so a settlement's count only ever runs
+     * upward and this row is never above the wallet: measured over sixteen
+     * max-wager rounds, above on 0 of 3,318 betting-screen frames and below on
+     * 89. The chip controls are greyed from the machine's balance rather than
+     * from this text, so no player can be led into a tap the machine then
+     * refuses, and every count converges on the exact integer, which is what
+     * `countUp`'s progress of 1 guarantees. Under reduced motion the count does
+     * not run at all and the two are equal on every frame.
+     */
+    value: (s) => chips(s.readout.wallet.chips),
+  },
+  { key: 'wager', label: 'Wager', value: (s) => chips(wagerAtStake(s.readout)) },
   { key: 'hand-value', label: 'Hand', value: activeHandValue },
   {
     key: 'dealer-value',
@@ -152,10 +176,14 @@ function showsEveryReadout(breakpoint: BreakpointName): boolean {
 /**
  * SPEC 5: "the balance counts up rather than snapping".
  *
- * The one piece of the chrome that holds presentation state across frames, and
- * the only place in `src/ui/` where the sync step is not a pure function of the
- * frame's `ChromeState`. It holds the number currently on screen and walks it
- * toward the machine's, over `PACING.balanceCountUp`.
+ * One of the three pieces of the chrome that hold presentation state across
+ * frames, and one of the two that spend the frame's `dt`: the others are
+ * QUALITY-BAR section 4's announcement queue in
+ * `src/ui/components/announcer.ts`, which spends `dt` as well, and the settings
+ * panel's reset confirmation in `src/ui/components/overlays.ts`, which holds a
+ * flag but no clock. For every other component the sync step is a pure function
+ * of the frame's `ChromeState`. This one holds the number currently on screen
+ * and walks it toward the machine's, over `PACING.balanceCountUp`.
  *
  * **Under reduced motion it holds nothing.** `motion.progress` answers 1 from
  * the first frame, so the shown value is the target on the frame the balance
@@ -268,7 +296,18 @@ export function createReadouts(): Component {
       // rest of the session. A large delta is still allowed to saturate, which
       // is how a resume lands the count on its target.
       const step = Number.isFinite(dt) && dt > 0 ? dt : 0;
-      counting.age = Math.min(counting.age + step, state.motion.seconds('balanceCountUp'));
+      // **Capped at the unscaled constant, and the cap is the whole rule.**
+      // `scene.ts`'s `advance` and `easeStep` both carry it with the reasoning:
+      // SPEC 14 lets Speed move mid-round, and an age parked at the Fast span,
+      // 0.6 of the constant, divides by the full constant on the next Normal
+      // frame and reads as progress 0.6. Everything that had finished then eases
+      // in again from where it started. This is the third consumer of the same
+      // `Motion` API and it was capping at the scaled span, so a player who
+      // pressed Normal watched the balance jump to a figure the machine never
+      // held and count back to the one it does (`AUDIT-2`, `Z3-03`/`J3-05`).
+      // Only one direction broke: Normal to Fast caps the parked age down, which
+      // finishes a count instead of resurrecting one.
+      counting.age = Math.min(counting.age + step, PACING.balanceCountUp);
     }
     counting.shown = countUp(
       counting.from,

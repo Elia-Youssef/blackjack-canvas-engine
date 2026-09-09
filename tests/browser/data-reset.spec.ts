@@ -98,6 +98,50 @@ test.describe('I5: Reset all data', () => {
     await expect(control(page, 'confirm-reset')).toBeHidden();
   });
 
+  test('states its expansion on the control that expands it', async ({ page }) => {
+    // `AUDIT-2`, finding `J4-02`. "Reset all data" is a disclosure: it reveals a
+    // group two tab stops away, and it did so with no `aria-expanded`, no
+    // `aria-controls` and no change to its own accessible name, so the one
+    // control in the game that destroys data reported nothing at all to a
+    // screen reader. Focus stays on the button across the press, which is what
+    // makes the state the platform's own announcement rather than a queued
+    // sentence: every other settings control is a toggle whose `aria-pressed`
+    // flip is announced the same way.
+    await page.goto('/');
+    await expect(shell(page)).toBeVisible();
+    await openSettings(page);
+
+    const reset = control(page, 'reset-data');
+    await expect(reset).toHaveAttribute('aria-expanded', 'false');
+    // The group the state is about, named by the control rather than found by
+    // walking: `aria-controls` has to resolve to an element that is on the page.
+    const controls = (await reset.getAttribute('aria-controls')) ?? '';
+    expect(controls.length, 'the control names nothing').toBeGreaterThan(0);
+    const group = page.locator(`#${controls}`);
+    await expect(group).toHaveCount(1);
+    await expect(group).toBeHidden();
+
+    await reset.click();
+    await expect(reset, 'the press reported nothing').toHaveAttribute('aria-expanded', 'true');
+    await expect(group).toBeVisible();
+    await expect(reset, 'the name changed instead of the state').toHaveText('Reset all data');
+
+    // And it collapses again on the cancel, so the state is the disclosure's
+    // rather than a latch the first press sets forever.
+    await control(page, 'cancel-reset').click();
+    await expect(reset).toHaveAttribute('aria-expanded', 'false');
+    await expect(group).toBeHidden();
+
+    // The disarm on close is the same state: a re-opened panel reports a
+    // collapsed disclosure, because it has one.
+    await reset.click();
+    await expect(reset).toHaveAttribute('aria-expanded', 'true');
+    await control(page, 'close-overlay').click();
+    await openSettings(page);
+    await settle(page);
+    await expect(control(page, 'reset-data')).toHaveAttribute('aria-expanded', 'false');
+  });
+
   test('requires confirmation, and cancelling clears nothing', async ({ page }) => {
     // A persisted state worth keeping: the harness brings Gold's unlock mark,
     // the round saves it at the real boundary, and the document is in the

@@ -71,9 +71,14 @@ export interface FocusOptions {
  * What `Tab` may land on, as a selector.
  *
  * Deliberately short, and deliberately not a general implementation of the
- * platform's sequential focus rules: this page's focusable elements are buttons
- * and one `<summary>`, plus the two elements that carry `tabindex="-1"` and are
- * therefore not in this list. A general version would be a second, weaker
+ * platform's sequential focus rules: this page's focusable elements are buttons,
+ * one `<summary>` and the settings panel's one `<input type="range">`, plus the
+ * elements that carry a `tabindex` of their own, three at `-1` (the anchor, the
+ * overlay host, the recovery panel) and the play stage's labelled `0`. None of
+ * the four needs to be in this list: it is only ever applied inside the overlay
+ * host, and none of them lives there.
+ * An element class added to the page belongs in this sentence and in the
+ * selector below. A general version would be a second, weaker
  * reading of a rule the browser already applies correctly everywhere else.
  * `tests/browser/keyboard.spec.ts` walks the real tab order with real `Tab`
  * presses and compares it against the DOM, so a focusable element this query

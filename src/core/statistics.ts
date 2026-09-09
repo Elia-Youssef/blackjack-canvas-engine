@@ -395,6 +395,33 @@ function accurateEnough(coach: CoachRecord): boolean {
 }
 
 /**
+ * SPEC 9 rows 6 and 7, read off `TABLE_MILESTONES`.
+ *
+ * **The map is the one reading, not a picture of one.** Until `AUDIT-2` finding
+ * `X3-08` the awarder spelled the two rows out inline, `isUnlocked('silver',
+ * best)` and `isUnlocked('gold', best)`, so the map's stated guarantee, that a
+ * fourth table cannot be added to SPEC 6 without answering the question there,
+ * was half true: the answer was a compile error to omit and had no effect once
+ * given. Swapping the map's two values changed nothing a player or a test could
+ * see. Now the answer decides the award, so a fourth table with a milestone is
+ * awarded by adding its row to `MILESTONES` and its answer to the map, and a
+ * table answered `null` awards nothing.
+ *
+ * `TABLES` gives the order, through `MILESTONE_TABLES`, and `wallet.ts` keeps
+ * both thresholds: nothing about SPEC 6 is restated here.
+ */
+function tableMilestonesMet(best: number): Readonly<Partial<Record<MilestoneId, boolean>>> {
+  const met: Partial<Record<MilestoneId, boolean>> = {};
+  for (const table of MILESTONE_TABLES) {
+    const id = TABLE_MILESTONES[table];
+    if (id !== null) {
+      met[id] = isUnlocked(table, best);
+    }
+  }
+  return Object.freeze(met);
+}
+
+/**
  * Fold one completed round into the record. SPEC 11's counters, SPEC 9's
  * milestones, and item `J6`'s "exactly once".
  *
@@ -501,11 +528,12 @@ export function observeRound(
     // and because a bankroll doubled and then lost inside one round was still
     // doubled. `>=` and not `===`, since a single 3:2 natural can step over it.
     doubledBankroll: best >= DOUBLED_BANKROLL,
-    // Rows 6 and 7 through SPEC 6's own predicate, so the two thresholds live
-    // in `wallet.ts` alone. `TABLE_MILESTONES` is where Bronze's absence is
-    // stated.
-    reachedSilver: isUnlocked('silver', best),
-    reachedGold: isUnlocked('gold', best),
+    // Rows 6 and 7 are answered by the spread at the end of this record, from
+    // `TABLE_MILESTONES`. They are named here so the record stays total over
+    // `MilestoneId` and a twelfth row is still a compile error; `false` is
+    // what a table the map answers `null` for leaves behind, which is Bronze.
+    reachedSilver: false,
+    reachedGold: false,
     // Rows 8 and 9 on the lifetime scope: SPEC 9's milestones are permanent, so
     // the hands that count are every hand the player has played.
     hundredHands: lifetime.handsPlayed >= HUNDRED_HANDS,
@@ -514,6 +542,7 @@ export function observeRound(
     // Row 11's second half. "Recovering to the starting amount" is the balance
     // at rest reaching 1,000 again, measured at the same boundary as the fall.
     survivedAndRecovered: belowLowWater && chips >= STARTING_CHIPS,
+    ...tableMilestonesMet(best),
   });
 
   const awarded = MILESTONES.filter((id) => met[id] && !stats.milestones.includes(id));

@@ -80,7 +80,7 @@ import { offersInsurance, peek, peeksOn, shouldHit } from './dealer';
 import { TARGET, canSplit, handValue, isBust, isNatural } from './hand';
 import { createRng } from './rng';
 import type { HouseRules } from './rules';
-import { houseRules } from './rules';
+import { houseRules, sameRules } from './rules';
 // `settleInsurance` is aliased because `wallet.ts` exposes a method of the same
 // name that answers a different question: this one turns a stake and the peek's
 // bit into a net, and the wallet's turns a net into a balance movement.
@@ -147,8 +147,10 @@ export const TIMINGS = Object.freeze({
  *
  * Named beside them because SPEC 5 puts it there and because a multiplier
  * defined next to the control that toggles it would be a second copy of a
- * number the simulation has to agree with. **`speedMultiplier` below is the one
- * reader**, and `timedStep` is the one consumption site. Item `E9` grades the
+ * number the simulation has to agree with. **`speedMultiplier` below is the only
+ * reader in `core/`**, and `timedStep` is the machine's one consumption site;
+ * `src/render/animate.ts` is the presentation layer's, and it imports both the
+ * constant and that function rather than restating either. Item `E9` grades the
  * whole clause: Fast multiplies every pacing constant by 0.6, applies in both
  * motion modes, persists, and changes neither the sequence of states nor any
  * outcome.
@@ -811,10 +813,11 @@ export interface Table {
    *
    * A setter rather than a construction-time option alone, because SPEC 14 says
    * Speed "takes effect immediately, mid-round included, because neither can
-   * change an outcome". It is the one thing about a table a caller may change
-   * after it is built, and it is safe to be exactly because it decides no
-   * transition: `timedStep` reads it, `apply` does not, and the accumulator is
-   * left alone so a phase already half spent stays half spent.
+   * change an outcome". It is one of the two things a caller may change after
+   * the table is built and the only one that takes effect at once, `setRules`
+   * below staging rather than applying, and it is safe to be exactly because it
+   * decides no transition: `timedStep` reads it, `apply` does not, and the
+   * accumulator is left alone so a phase already half spent stays half spent.
    */
   setSpeed(next: Speed): void;
   /** The Speed in force, so a caller need not keep a second copy of it. */
@@ -841,6 +844,14 @@ export interface Table {
    * The house rules staged for the next round but not yet in force, or `null`
    * when the next round runs under the current ones. A settings panel reads
    * this to show what it changed; the machine itself applies it at the deal.
+   *
+   * **A record equal to the rules in force is not a staged change**, and
+   * `setRules` resolves it to `null` rather than holding it. That is this
+   * sentence read literally: the next round would run under the current rules
+   * either way, so reporting a pending change would be reporting one that does
+   * not exist. It is not a hypothetical shape, which is why the setter answers
+   * for it: the settings panel forwards a whole merged record on every touch,
+   * so a player re-picking the deck count they already have staged a no-op.
    */
   stagedRules(): HouseRules | null;
 }
@@ -2031,7 +2042,18 @@ export function createTable(options: TableOptions = {}): Table {
    */
   function setRules(next: HouseRules): void {
     assertDeckCount(next.decks);
-    staged = houseRules(next);
+    // **A record equal to the rules in force is not a staged change.** The
+    // accessor's contract is "`null` when the next round runs under the current
+    // ones", and it is read by the Settings panel to decide whether to describe
+    // the round in force or the deal to come, so a no-op stage held here would
+    // put a sentence about the next deal on a panel that changed nothing. The
+    // panel forwards a whole merged record on every touch, which is what makes
+    // a no-op stage ordinary rather than exotic: a player re-picking the deck
+    // count they already have sends one. Compared against the rules in force
+    // and not against the previous stage, because that is the question the
+    // contract asks; a stage that walks back to the rules in force clears
+    // itself for the same reason.
+    staged = sameRules(next, rules) ? null : houseRules(next);
   }
 
   return Object.freeze({

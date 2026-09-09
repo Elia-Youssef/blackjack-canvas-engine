@@ -1,7 +1,8 @@
 /**
  * SPEC 13's settings, restored: the census the boot side never had.
  *
- * The save side is compiler-enforced. `save()` in `src/main.ts` builds a whole
+ * The save side is compiler-enforced. `documentNow()` in `src/main.ts`, which
+ * the save calls, builds a whole
  * `Settings` literal, so a ninth persisted setting is a compile error there
  * until it is written. The restore side is eight separate reads with no shape
  * between them, so a ninth field sanitised in `src/storage/document.ts` and
@@ -209,18 +210,68 @@ describe('SPEC 13: the composition root reads every one of them at boot', () => 
 
   it('writes all eight back, which the compiler already enforces', () => {
     // The other end of the round trip, asserted here so the two halves are
-    // stated together rather than one of them being assumed. `save()` builds a
-    // whole `Settings` literal, so this cannot fail without the compiler
-    // failing first; what it buys is that the key list below is the same list
-    // the restore census walks.
-    const save = MAIN.slice(MAIN.indexOf('function save('));
-    expect(save.length).toBeGreaterThan(0);
-    const settings = save.slice(save.indexOf('settings:'), save.indexOf('howToPlaySeen'));
+    // stated together rather than one of them being assumed. `documentNow()`
+    // builds a whole `Settings` literal, so this cannot fail without the
+    // compiler failing first; what it buys is that the key list below is the
+    // same list the restore census walks.
+    //
+    // **It reads `documentNow` and not `save`, and the rename is the point.**
+    // The assembly moved out of `save()` at the `J3-01` cure, because the
+    // `storage` listener that folds another tab's write has to compare against
+    // the session as it stands rather than against the document the last save
+    // left behind. A slice from `function save(` still happened to reach the
+    // literal, since the two functions sit next to each other, which is exactly
+    // the kind of accident a census must not rest on.
+    const assembly = MAIN.slice(MAIN.indexOf('function documentNow('));
+    expect(assembly.length, 'the document assembly was not found').toBeGreaterThan(0);
+    const settings = assembly.slice(assembly.indexOf('settings:'), assembly.indexOf('howToPlaySeen'));
     expect(settings.length).toBeGreaterThan(0);
     // Either spelling: a named property or the shorthand, which two of the
     // eight use because the binding already carries the key's name.
     for (const key of SETTING_KEYS) {
       expect(new RegExp(`\\b${key}\\s*[:,]`).test(settings), `${key} is not saved`).toBe(true);
+    }
+  });
+
+  /**
+   * The third surface the same eight reach, and the one that used to be able to
+   * come up short. `AUDIT-2`, finding `X3-04`.
+   *
+   * `SessionState` spelled every persisted setting a second time, structurally
+   * unrelated to `Settings`, so the save was compiler-enforced and the session
+   * value was not: a ninth setting added to the document and left out of
+   * `session()` compiled, shipped and reported nothing. The type now inherits
+   * `Omit<Settings, 'coach' | 'rules'>`, which makes that a compile error, and
+   * the compiler is the enforcement.
+   *
+   * What is asserted here is the part a type cannot say: which two keys are
+   * carved out, and that the carve-outs still have their homes. A third
+   * omission added to the `Omit` would take a setting out of the session value
+   * with the build green, and this is what refuses it.
+   */
+  it('carries every persisted setting on the session value, minus two named carve-outs', () => {
+    const declaration = MAIN.slice(
+      MAIN.indexOf('export interface SessionState'),
+      MAIN.indexOf('export interface MotionProbe'),
+    );
+    expect(declaration.length, 'SessionState was not found').toBeGreaterThan(0);
+    expect(declaration).toContain("extends Omit<Settings, 'coach' | 'rules'>");
+
+    const literal = MAIN.slice(MAIN.indexOf('session: () => ({'));
+    expect(literal.length, 'the session literal was not found').toBeGreaterThan(0);
+    const body = literal.slice(0, literal.indexOf('}),'));
+    expect(body).toContain('statistics');
+
+    for (const key of SETTING_KEYS) {
+      // `rules` lives on the machine and `coach` is the mode, which this record
+      // spells `coachMode` because it needs `coach` for the accuracy record.
+      const spelling = key === 'rules' ? null : key === 'coach' ? 'coachMode' : key;
+      if (spelling === null) {
+        expect(body, 'the session value restates the house rules').not.toMatch(/\brules\s*[:,]/);
+        continue;
+      }
+      expect(new RegExp(`\\b${spelling}\\s*[:,]`).test(body), `${spelling} is not on the session`)
+        .toBe(true);
     }
   });
 });

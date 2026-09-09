@@ -213,6 +213,19 @@ describe('BJ-22: a sampler that measures nothing is a failure and not a silence'
     ['perf.mjs', PERF, 'frames were sampled, so the sampler saw almost nothing'],
     ['perf.mjs', PERF, '    if (entry.rounds < MIN_ROUNDS) {'],
     ['perf.mjs', PERF, 'the blank-page control sampled only '],
+    // The control's own reading, beside the count of what it sampled: a floor
+    // that is measured and then not compared is a floor nothing stands on.
+    ['perf.mjs', PERF, '  if (round2(control.p95) > controlCeiling) {'],
+    // AUDIT-1's memory cure, and the twin of `perf.mjs`'s `MIN_ROUNDS` guard
+    // three lines above. Two runs of the soak reported the same 103 rounds at
+    // fifteen minutes and at thirty, and a heap that had stopped changing was
+    // about to be read as a heap that does not grow. The guard is the whole of
+    // that cure, `memory.mjs` has no end-to-end entry in the ledger because its
+    // gate is half an hour of play, and until AUDIT-2 nothing at all pinned it:
+    // the threshold could be weakened to `played < 0` with every unit test and
+    // every ledger entry green.
+    ['memory.mjs', MEMORY, '    if (played < 10) {'],
+    ['memory.mjs', MEMORY, 'rounds were played in the interval ending at minute'],
     ['memory.mjs', MEMORY, 'a snapshot reported no retained size, so the parser read nothing'],
     ['memory.mjs', MEMORY, 'the timer census did not follow a timer it was shown'],
     ['memory.mjs', MEMORY, '  if (shortened) {'],

@@ -15,7 +15,7 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { DEFAULT_RULES, type HouseRules } from '../../src/core/rules';
+import { DEFAULT_RULES, sameRules, type HouseRules } from '../../src/core/rules';
 import { createRng } from '../../src/core/rng';
 import { createTable } from '../../src/core/table';
 import { STARTING_CHIPS } from '../../src/core/wallet';
@@ -66,6 +66,66 @@ describe('SPEC 14: a staged rule record waits for the next round', () => {
     expect(table.readout().rules.surrender, 'surrender is still on in force').toBe(true);
   });
 
+  it('compares every field a house-rule record has', () => {
+    // `sameRules` is written out field by field, so a sixth field would be a
+    // field it silently ignored and a stage that changed it would resolve to
+    // "no change at all". This is the pin its own comment names: the count is
+    // asserted, and each field is then flipped and required to make the two
+    // records differ.
+    const fields = Object.keys(DEFAULT_RULES);
+    expect(fields.sort()).toEqual(
+      ['decks', 'doubleAfterSplit', 'evenMoney', 'splitRule', 'surrender'].sort(),
+    );
+    expect(sameRules(DEFAULT_RULES, { ...DEFAULT_RULES })).toBe(true);
+
+    const flipped: readonly HouseRules[] = [
+      { ...DEFAULT_RULES, decks: DEFAULT_DECKS === 6 ? 8 : 6 },
+      { ...DEFAULT_RULES, doubleAfterSplit: !DEFAULT_RULES.doubleAfterSplit },
+      { ...DEFAULT_RULES, surrender: !DEFAULT_RULES.surrender },
+      { ...DEFAULT_RULES, evenMoney: !DEFAULT_RULES.evenMoney },
+      {
+        ...DEFAULT_RULES,
+        splitRule: DEFAULT_RULES.splitRule === 'equalValue' ? 'equalRank' : 'equalValue',
+      },
+    ];
+    expect(flipped, 'one record per field, or a field goes uncompared').toHaveLength(fields.length);
+    for (const record of flipped) {
+      expect(sameRules(DEFAULT_RULES, record), JSON.stringify(record)).toBe(false);
+    }
+  });
+
+  it('resolves a stage identical to the rules in force to no stage at all', () => {
+    // **`AUDIT-2` finding `Z2-01`.** The accessor's contract is "the house
+    // rules staged for the next round but not yet in force, or `null` when the
+    // next round runs under the current ones", and staging a record equal to
+    // the rules in force left it non-null while the next round demonstrably ran
+    // under the current ones. It is not a hypothetical shape: the panel
+    // forwards a whole merged record on every settings touch, so a player
+    // re-picking the deck count they already have staged a no-op that this
+    // accessor reported as a pending change. From `AUDIT-2` the panel reads
+    // this accessor to decide what to say, so a no-op stage that answered
+    // "pending" would put a sentence about the next deal on a panel that
+    // changed nothing.
+    const table = createTable({ seed: 7 });
+    table.apply({ kind: 'start' });
+    const inForce = table.readout().rules;
+
+    table.setRules({ ...inForce });
+    expect(table.stagedRules(), 'an identical record is not a staged change').toBeNull();
+    expect(table.readout().rules, 'and the rules in force are the same object').toBe(inForce);
+
+    // A record that differs by one field is still a stage, so the comparison
+    // is over the record rather than a switch that turned staging off.
+    table.setRules({ ...inForce, surrender: !inForce.surrender });
+    expect(table.stagedRules()?.surrender).toBe(!inForce.surrender);
+
+    // And staging back to the rules in force clears the stage rather than
+    // holding a change of nothing: this is the settings panel pressing a
+    // toggle twice.
+    table.setRules({ ...inForce });
+    expect(table.stagedRules(), 'a toggle pressed twice left a stage behind').toBeNull();
+  });
+
   it('holds a copy of the record, frozen, and never the caller\'s own object', () => {
     // `TableReadout`'s own header promises "a snapshot rather than a view" with
     // "every array copied on the way out and every object frozen", and the
@@ -75,7 +135,9 @@ describe('SPEC 14: a staged rule record waits for the next round', () => {
     const table = createTable({ seed: 7 });
     table.apply({ kind: 'start' });
 
-    const mine: HouseRules = { ...DEFAULT_RULES, surrender: true };
+    // A record that differs from the rules in force, because from `AUDIT-2` an
+    // identical one is no stage at all and there would be nothing to copy.
+    const mine: HouseRules = { ...DEFAULT_RULES, surrender: false };
     table.setRules(mine);
     const staged = table.stagedRules();
     expect(staged, 'the stage is held, not applied').toEqual(mine);
@@ -92,18 +154,20 @@ describe('SPEC 14: a staged rule record waits for the next round', () => {
     table.apply({ kind: 'start' });
 
     // Deliberately not a `HouseRules`-typed const: the hole is a runtime one,
-    // and a caller who kept a mutable reference is what reaches it.
-    const mine = { ...DEFAULT_RULES, surrender: true };
+    // and a caller who kept a mutable reference is what reaches it. The record
+    // has to DIFFER from the rules in force or nothing is staged and nothing is
+    // installed, which would make the mutation below unreachable.
+    const mine = { ...DEFAULT_RULES, surrender: false };
     table.setRules(mine);
     table.apply({ kind: 'tapChip', chip: 50 });
     expect(table.apply({ kind: 'deal' }).ok).toBe(true);
-    expect(table.readout().rules.surrender, 'the round opened with surrender on').toBe(true);
+    expect(table.readout().rules.surrender, 'the round opened with surrender off').toBe(false);
 
-    mine.surrender = false;
+    mine.surrender = true;
     expect(
       table.readout().rules.surrender,
       'a caller edited the rules in force in the middle of a round',
-    ).toBe(true);
+    ).toBe(false);
     // And the control the construction path has always passed, beside it.
     const options = { ...DEFAULT_RULES, surrender: true };
     const built = createTable({ seed: 7, rules: options });

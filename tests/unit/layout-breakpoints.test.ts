@@ -23,8 +23,9 @@
  *   not move when the setting does, which is the property that keeps item `F6`'s
  *   "by that factor" from becoming "by roughly that factor after two frames".
  *
- * And one drift guard: `SurfaceSize` is declared in two files that may not
- * import each other before `BJ-20`, so the two declarations are compared here.
+ * And one drift guard: `SurfaceSize` is declared in `src/render/surface.ts` and
+ * re-exported by `src/storage/document.ts`, so what is compared here is that the
+ * persisted names are still that one declaration and not a re-introduced copy.
  */
 
 import { readFileSync } from 'node:fs';
@@ -283,6 +284,84 @@ describe('F3: portrait is framed as portrait, not as a squashed landscape', () =
     }
   });
 
+  it('keeps the breakpoints framing for every box inside the band', () => {
+    // The boxes the shipped page hands the row while a round is being played,
+    // measured by `AUDIT-2`'s journey `J5` at 390 x 844: the betting screen, the
+    // player's turn, and the same two at the smallest viewport this game
+    // supports. Every one of them is inside the band, so the rule below changes
+    // nothing about them, and item `F3`'s aspect discriminator still measures
+    // the portrait framing on the screen it measures.
+    for (const box of [
+      { width: 366, height: 355 },
+      { width: 366, height: 411 },
+      { width: 288, height: 192 },
+      { width: 288, height: 355 },
+    ]) {
+      expect(framingFor('portrait', box), `${String(box.width)}x${String(box.height)}`).toEqual(
+        SURFACE_FRAMING.portrait,
+      );
+    }
+    for (const box of [
+      { width: 1256, height: 560 },
+      { width: 876, height: 470 },
+      { width: 696, height: 400 },
+    ]) {
+      expect(framingFor('wide', box)).toEqual(SURFACE_FRAMING.landscape);
+    }
+  });
+
+  it('draws a box outside the band in the framing nearer its own shape', () => {
+    // `J5-02`'s box: SPEC 10's round result on a 390 x 844 phone leaves the row
+    // 366 x 192, which is wider than the widest framing this design has.
+    expect(framingFor('portrait', { width: 366, height: 192 })).toEqual(SURFACE_FRAMING.landscape);
+    // And the mirror image, which no viewport in the graded set reaches but
+    // which the rule has to answer for: a row taller than the portrait framing,
+    // at a breakpoint whose own framing is landscape.
+    expect(framingFor('wide', { width: 740, height: 1100 })).toEqual(SURFACE_FRAMING.portrait);
+    // A box with no shape at all is the first frame, before anything is laid
+    // out, and it keeps the breakpoint's own framing.
+    for (const box of [
+      { width: 0, height: 0 },
+      { width: 100, height: 0 },
+      { width: -1, height: 10 },
+    ]) {
+      expect(framingFor('portrait', box)).toEqual(SURFACE_FRAMING.portrait);
+    }
+  });
+
+  it('never gives up the axis the box binds on when it switches', () => {
+    // The property that makes the switch safe, and the reason the band is the
+    // two framings rather than the larger drawn area: where the box is outside
+    // the band, both framings are bound by the same axis, so the switch spends
+    // only the axis the row was wasting. A rule that maximised area instead
+    // would shorten a 288 x 192 surface to 162 px and draw the player's row of
+    // floored cards through the bottom edge.
+    const fit = (
+      framing: { width: number; height: number },
+      box: { width: number; height: number },
+    ): { width: number; height: number } => {
+      const scale = Math.min(box.width / framing.width, box.height / framing.height);
+      return {
+        width: Math.floor(framing.width * scale),
+        height: Math.floor(framing.height * scale),
+      };
+    };
+    for (const box of [
+      { width: 366, height: 192 },
+      { width: 800, height: 200 },
+      { width: 1256, height: 300 },
+    ]) {
+      const chosen = planSurface(box, 'portrait', 100, 2);
+      const upright = fit(SURFACE_FRAMING.portrait, box);
+      expect(chosen.framing).toEqual(SURFACE_FRAMING.landscape);
+      expect(chosen.sizing.height, `${String(box.width)}x${String(box.height)}`).toBe(
+        upright.height,
+      );
+      expect(chosen.sizing.width).toBeGreaterThan(upright.width);
+      expect(chosen.sizing.width).toBeLessThanOrEqual(box.width);
+    }
+  });
+
   it('gives the two framings genuinely different aspects', () => {
     const landscape = SURFACE_FRAMING.landscape.width / SURFACE_FRAMING.landscape.height;
     const portrait = SURFACE_FRAMING.portrait.width / SURFACE_FRAMING.portrait.height;
@@ -337,9 +416,17 @@ describe('F1 and F6: the surface plan', () => {
 
   it('holds the framing aspect at every size and every box', () => {
     for (const box of BOXES) {
-      const framing = framingFor(box.breakpoint);
       for (const size of SURFACE_SIZES) {
         const plan = planSurface(box, box.breakpoint, size, DPR);
+        // **The framing the plan drew in, not the one the breakpoint prefers.**
+        // `AUDIT-2` finding `J5-02`: a box outside the band the two framings
+        // define is drawn in whichever of them is nearer its shape, and the
+        // 366 x 192 row in this list is exactly such a box. The plan publishes
+        // what it chose, which is the number a picture's aspect is a claim
+        // about; asserting against the breakpoint's preference instead would be
+        // asserting the rule this file no longer holds.
+        const framing = plan.framing;
+        expect([SURFACE_FRAMING.portrait, SURFACE_FRAMING.landscape]).toContainEqual(framing);
         const wanted = (plan.sizing.width * framing.height) / framing.width;
         expect(Math.abs(plan.sizing.height - wanted)).toBeLessThanOrEqual(1);
       }
@@ -394,6 +481,40 @@ describe('F1 and F6: the surface plan', () => {
     expect(planSurface(box, 'wide', 100, -1).sizing.dpr).toBe(1);
   });
 
+  it('never plans a surface narrower than the picture it has to draw', () => {
+    // Item `E8`'s fourth regime, at the plan's end of it. `AUDIT-2` findings
+    // `Z3-01`, `J5-01`, `J1-06` and `J5-02`: a surface narrower than the room
+    // its bands need does not compress the fan, it loses cards off the edge of
+    // the bitmap, so the demand is a floor under the width.
+    for (const box of BOXES) {
+      const base = planSurface(box, box.breakpoint, 100, DPR);
+      for (const demand of [0, 1, base.sizing.width - 1, base.sizing.width + 137, 2048]) {
+        const plan = planSurface(box, box.breakpoint, 100, DPR, demand);
+        const label = `${String(box.width)}x${String(box.height)} demanding ${String(demand)}`;
+        expect(plan.sizing.width, label).toBeGreaterThanOrEqual(demand);
+        expect(plan.sizing.width, label).toBe(Math.max(base.sizing.width, Math.ceil(demand)));
+        // Only the width. The height is what the row gave, and a height that
+        // grew with the demand would put the picture off the bottom of a stage
+        // that is already the right height for it.
+        expect(plan.sizing.height, label).toBe(base.sizing.height);
+        // And nothing else about the plan moves: the scale and the framing are
+        // still the ones the box chose, so item `F6`'s "by exactly the factor"
+        // is measured against the same base at every demand.
+        expect(plan.scale, label).toBe(base.scale);
+        expect(plan.baseScale, label).toBe(base.baseScale);
+        expect(plan.framing, label).toEqual(base.framing);
+      }
+    }
+  });
+
+  it('ignores a demand that is not a width', () => {
+    const box = { width: 1256, height: 560 };
+    const base = planSurface(box, 'wide', 100, DPR);
+    for (const demand of [0, -1, Number.NaN, Number.POSITIVE_INFINITY]) {
+      expect(planSurface(box, 'wide', 100, DPR, demand).sizing.width).toBe(base.sizing.width);
+    }
+  });
+
   it('compares two sizings on all three fields', () => {
     const a = { width: 100, height: 50, dpr: 1 };
     expect(sameSizing(a, { ...a })).toBe(true);
@@ -417,12 +538,13 @@ describe('F3: the narrow top bar keeps three readouts and discloses the rest', (
   });
 });
 
-describe('F6: the two declarations of SurfaceSize agree', () => {
+describe('F6: the persisted document takes SurfaceSize from its owner', () => {
   it('lists the same four values in the same order', () => {
-    // `src/render/surface.ts` owns the type for the presentation layer and
-    // `src/storage/document.ts` owns it for SPEC 13's document. Neither may
-    // import the other before `BJ-20` wires the reload flows, so the guarantee
-    // that they say the same thing is this test and nothing else.
+    // `src/render/surface.ts` owns the type and `src/storage/document.ts`
+    // re-exports it, so these two names are one value today and this pair
+    // passes by identity. It is kept as the guard against the copy coming
+    // back: a second declaration in either file makes it a real comparison
+    // again, and a disagreeing one is red here.
     expect([...STORED_SURFACE_SIZES]).toEqual([...SURFACE_SIZES]);
     expect(STORED_DEFAULT_SURFACE_SIZE).toBe(DEFAULT_SURFACE_SIZE);
   });

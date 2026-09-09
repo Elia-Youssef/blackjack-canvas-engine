@@ -28,6 +28,20 @@
  *      cannot reconstruct from the mirror a second later, because the felt is
  *      swept at Next Hand.
  *
+ * **Rule 3 coalesces within a class, not across all of them, and `AUDIT-2` is
+ * why.** One frame of this machine produces several announcements: entering
+ * SPEC 10's `reveal` turns the hole card face up in the same step, and SPEC
+ * 4.6's split deals onto both halves in the step that splits. With one pending
+ * entry the second of them overwrote the first before any tick could write it,
+ * so the reveal sentence was spoken in no round at any frame rate and a split's
+ * own sentence was always lost (finding `Z5-01`, 42 of 42 reveals silent). Every
+ * announcement therefore carries an `AnnouncementKind`, and the pending set
+ * holds at most one entry per kind, replaced in place so the order they arrived
+ * in is the order they are said in. Two kinds sit outside that: outcomes, by
+ * rule 4, and milestones, whose award happens exactly once and can be
+ * reconstructed from nothing afterwards (finding `J1-02`), which is the same
+ * reading of rule 4's carve-out that outcomes already have.
+ *
  * Without rule 2 the four-card deal at SPEC 5's 0.22 s interval clobbers itself
  * before anything is spoken, which is the defect the section names outright and
  * which `tests/unit/announce.test.ts` reproduces with a queue-free control.
@@ -76,19 +90,95 @@ import {
  */
 export const POLITE_INTERVAL_SECONDS = 0.5;
 
+/**
+ * How long a refusal stays readable before anything may clear it, in seconds.
+ * `AUDIT-2`, finding `J1-01`.
+ *
+ * The same number as the floor above rather than a second constant, and the
+ * derivation is the reason: the queue cannot write two polite entries closer
+ * together than one floor, so a reason that survives one floor is a reason the
+ * queue had the chance to speak. A shorter window would clear the line before
+ * the sentence it carries could be said. It is not a new duration, which
+ * matters: QUALITY-BAR section 15 owns every number of that kind, and this
+ * layer has no business minting one.
+ *
+ * It lives here rather than beside the notice it guards because the number is
+ * the announcement floor and would otherwise be a copy of it.
+ */
+export const NOTICE_FLOOR_SECONDS = POLITE_INTERVAL_SECONDS;
+
 /** Which of the two regions an announcement is written to. */
 export type AnnouncementPriority = 'polite' | 'assertive';
+
+/**
+ * What kind of change an announcement reports, which is what rule 3 coalesces
+ * within. `AUDIT-2`, finding `Z5-01`.
+ *
+ * One kind per thing a player is told about rather than one per sentence: two
+ * cards arriving on the same hand inside one interval are still one card to
+ * announce, which is rule 3's own example. What must not share a kind is
+ * anything a single frame can produce together, because those are exactly the
+ * pairs one pending entry collapsed.
+ */
+export type AnnouncementKind =
+  /** SPEC 10's screen changed. */
+  | 'phase'
+  /** SPEC 4.6's split, which shares its frame with the cards it deals. */
+  | 'split'
+  /** A card arriving on one of the player's hands. */
+  | 'card'
+  /** A card arriving in front of the dealer, which can share a frame with one. */
+  | 'dealerCard'
+  /** Which hand SPEC 4.6 is now asking about. */
+  | 'activeHand'
+  /** SPEC 4.11's refused action, with its reason. */
+  | 'refusal'
+  /** SPEC 9's award. Never coalesced: it happens once and is gone. */
+  | 'milestone'
+  /** SPEC 14's mute, as an event. */
+  | 'sound'
+  /** SPEC 12's round result and SPEC 4.12's bust-out. Never coalesced. */
+  | 'outcome';
 
 /** One thing to say, and which region says it. */
 export interface Announcement {
   readonly priority: AnnouncementPriority;
+  /** What changed, which decides what this entry may replace. */
+  readonly kind: AnnouncementKind;
   readonly text: string;
+  /**
+   * Written on the frame it arrives, ahead of rule 2's floor.
+   *
+   * **One sentence in the game carries this, and it is a ruling rather than an
+   * implementation choice.** SPEC 10 gives the dealer's peek a screen of its
+   * own, and SPEC 5's Fast multiplier makes that screen 0.18 s long, which is
+   * inside the 500 ms floor: the sentence was still pending when the player's
+   * turn arrived and the next phase sentence replaced it, so a screen-reader
+   * player at Fast was never told the dealer was checking, in any round, while
+   * a sighted player watched the screen go by (finding `J1-03`). The ruling at
+   * `AUDIT-2` is that this sentence is exempt from the floor: it is always
+   * spoken and never dropped, and the price, accepted, is that whatever the
+   * region was carrying may be replaced sooner than a floor after it was
+   * written. The alternative readings were both worse: shortening the floor
+   * changes an accessibility number for every sentence in the game, and making
+   * Fast keep the peek screen open longer changes what Speed means.
+   */
+  readonly immediate?: boolean;
 }
 
 /** What the queue is holding right now, for a test and for the probe. */
 export interface QueueState {
-  /** The polite entry waiting, or `null`. At most one, by rule 3. */
+  /** The next polite entry due, or `null`. */
   readonly pendingPolite: string | null;
+  /**
+   * Every polite entry waiting, in the order they will be said.
+   *
+   * At most one per `AnnouncementKind` by rule 3, except milestones, which are
+   * never collapsed. Before `AUDIT-2` this was one entry in total, and the
+   * sentences a single frame produced beside another sentence could not be
+   * spoken at all.
+   */
+  readonly pendingPolites: readonly string[];
   /** How many outcomes are waiting. Never collapsed, by rule 4. */
   readonly pendingOutcomes: number;
   /** Seconds since the last write. */
@@ -115,6 +205,20 @@ export interface QueueOptions {
   readonly interval?: number;
 }
 
+/**
+ * The polite kind that is queued rather than coalesced. `AUDIT-2`, `J1-02`.
+ *
+ * SPEC 9 awards a milestone exactly once and never re-announces it, so an award
+ * replaced while it waits is destroyed rather than delayed: the finding's
+ * 45-round session at natural pacing awarded four and spoke none, because
+ * pressing Next Hand inside the floor pushes the betting screen's own sentence
+ * over the top of it. That is the case QUALITY-BAR section 4's rule 4 carve-out
+ * describes, "entries a player cannot reconstruct", and the round outcome is
+ * already treated that way. A `Set` of one rather than a comparison, because the
+ * next entry that earns the treatment should be a name in this list.
+ */
+const NEVER_COALESCED: ReadonlySet<AnnouncementKind> = new Set<AnnouncementKind>(['milestone']);
+
 export function createAnnouncementQueue(options: QueueOptions = {}): AnnouncementQueue {
   const interval = options.interval ?? POLITE_INTERVAL_SECONDS;
   /**
@@ -123,8 +227,22 @@ export function createAnnouncementQueue(options: QueueOptions = {}): Announcemen
    * half a second after the page has already moved on.
    */
   let since = interval;
-  let pendingPolite: Announcement | null = null;
+  /**
+   * The polite entries waiting, in the order they will be said.
+   *
+   * Bounded by the number of kinds plus the milestones a session has left to
+   * award, so it cannot grow with the length of a session: everything but the
+   * milestone kind replaces its own predecessor rather than joining the line.
+   */
+  const polite: Announcement[] = [];
+  /** The one entry exempt from rule 2, or `null`. See `Announcement.immediate`. */
+  let immediate: Announcement | null = null;
   const outcomes: Announcement[] = [];
+
+  /** What is waiting, in the order it will be said. The exempt entry is first. */
+  function waiting(): readonly Announcement[] {
+    return immediate === null ? polite : [immediate, ...polite];
+  }
 
   return {
     push(announcement: Announcement): void {
@@ -132,16 +250,43 @@ export function createAnnouncementQueue(options: QueueOptions = {}): Announcemen
         // Rule 4. Appended rather than replacing, and never compared against
         // what is already waiting: two hands of a split can settle to the same
         // sentence, and dropping the second because it reads like the first
-        // would be dropping an outcome.
+        // would be dropping an outcome. Checked before the exemption below so
+        // an outcome can never leave the queue rule 4 puts it in.
         outcomes.push(announcement);
         return;
       }
-      // Rule 3, in one line. Whatever was waiting is replaced.
-      pendingPolite = announcement;
+      if (announcement.immediate === true) {
+        immediate = announcement;
+        return;
+      }
+      if (NEVER_COALESCED.has(announcement.kind)) {
+        polite.push(announcement);
+        return;
+      }
+      // Rule 3, within the kind. Whatever of this kind was waiting is replaced,
+      // **in place**: an entry that moved to the back of the line would be said
+      // after sentences it arrived before, and `announcementsFor` returns its
+      // entries in the order they should be said.
+      const held = polite.findIndex((entry) => entry.kind === announcement.kind);
+      if (held === -1) {
+        polite.push(announcement);
+        return;
+      }
+      polite[held] = announcement;
     },
 
     tick(dt: number): Announcement | null {
       since += dt;
+      if (immediate !== null) {
+        // Ahead of the floor and ahead of everything waiting, which is the
+        // whole of the exemption: the sentence is about a screen that is
+        // already going away. The clock is reset with it, so the floor governs
+        // everything after it exactly as before.
+        const due = immediate;
+        immediate = null;
+        since = 0;
+        return due;
+      }
       if (since < interval) {
         return null;
       }
@@ -155,17 +300,17 @@ export function createAnnouncementQueue(options: QueueOptions = {}): Announcemen
         since = 0;
         return outcome;
       }
-      if (pendingPolite === null) {
+      const next = polite.shift();
+      if (next === undefined) {
         return null;
       }
-      const polite = pendingPolite;
-      pendingPolite = null;
       since = 0;
-      return polite;
+      return next;
     },
 
     state: (): QueueState => ({
-      pendingPolite: pendingPolite?.text ?? null,
+      pendingPolite: waiting()[0]?.text ?? null,
+      pendingPolites: waiting().map((entry) => entry.text),
       pendingOutcomes: outcomes.length,
       since,
     }),
@@ -238,6 +383,13 @@ export function roundOutcomeText(result: RoundResult): string {
  * announcer pushes each entry into the queue, and the queue decides which of
  * them a player actually hears.
  *
+ * **"In the order it should be said" is a promise the queue keeps, and until
+ * `AUDIT-2` it did not.** One frame can produce several entries and the queue
+ * held one; the last of them won and the rest were never spoken. Each entry
+ * now carries the `AnnouncementKind` it belongs to, the queue holds one per
+ * kind and replaces in place, and the order this function returns is the order
+ * a region is written in.
+ *
  * **`previous` is `null` on the first frame of a session, and that frame
  * announces nothing at all.** Two reasons, and the second is the load-bearing
  * one. A session opening by reciting an empty felt would be announcing the
@@ -270,16 +422,36 @@ export function announcementsFor(
   // bust-out is the session's.
   if (before.phase.kind !== readout.phase.kind) {
     if (readout.phase.kind === 'roundResult') {
-      said.push({ priority: 'assertive', text: roundOutcomeText(readout.phase.result) });
+      said.push({
+        priority: 'assertive',
+        kind: 'outcome',
+        text: roundOutcomeText(readout.phase.result),
+      });
     } else if (readout.phase.kind === 'bustOut') {
       said.push({
         priority: 'assertive',
+        kind: 'outcome',
         text:
           `Out at this table. Your balance is ${formatChips(readout.wallet.chips)}, ` +
           'below the table minimum.',
       });
     } else {
-      said.push({ priority: 'polite', text: phaseText(readout.phase, readout.hands.length) });
+      said.push({
+        priority: 'polite',
+        kind: 'phase',
+        text: phaseText(readout.phase, readout.hands.length),
+        // The one exempt sentence. SPEC 5's Fast multiplier makes the peek
+        // screen 0.18 s long, which is shorter than the floor between polite
+        // writes, so this sentence was still pending when the player's turn
+        // arrived and the player-turn sentence replaced it: at Fast it was
+        // announced in no round at all (finding `J1-03`). The ruling at
+        // `AUDIT-2` exempts it; `Announcement.immediate` carries the reasoning
+        // and what the exemption costs. It is a property of the screen rather
+        // than of the Speed setting because this file is deliberately blind to
+        // Speed, which its own header states and which the announcement floor
+        // depends on.
+        ...(readout.phase.kind === 'peek' ? { immediate: true } : {}),
+      });
     }
   }
 
@@ -289,6 +461,7 @@ export function announcementsFor(
   if (readout.hands.length > before.hands.length && readout.phase.kind === 'playerTurn') {
     said.push({
       priority: 'polite',
+      kind: 'split',
       text: `Split. ${formatChips(readout.hands.length)} hands in play.`,
     });
   }
@@ -319,6 +492,7 @@ export function announcementsFor(
     const where = readout.hands.length === 1 ? '' : `Hand ${formatChips(index + 1)}: `;
     said.push({
       priority: 'polite',
+      kind: 'card',
       text: `${where}${cardText(arrived)}.${totalOf(hand.cards)}`,
     });
   });
@@ -331,6 +505,20 @@ export function announcementsFor(
     if (arrived !== undefined) {
       said.push({
         priority: 'polite',
+        // **A kind of its own, because a dealer card and a player card CAN be
+        // produced by one frame**, and the reviewer of `AUDIT-2`'s cure round
+        // measured it: `table.ts`'s `update` drains the deal queue in a `while`
+        // loop against the accumulator, so a frame long enough for two deal
+        // steps takes two, and SPEC 4.3 deals player, dealer, player, dealer. A
+        // frame that takes steps two and three produces this sentence beside
+        // the player's second card, and while the two shared a kind this one
+        // replaced that one in place: at the default Speed four of sixty hitch
+        // positions in a 60 fps deal lost the player's card, at Fast fourteen
+        // of sixty. That is the pair rule 3 must not coalesce, which is what
+        // this union's own rule says, so the kind is split rather than the
+        // comment corrected. The reveal frame is unaffected either way: the
+        // sentence it produces beside this one is a phase sentence.
+        kind: 'dealerCard',
         text: `Dealer: ${cardText(arrived)}.${totalOf(readout.dealerVisible)}`,
       });
     }
@@ -346,6 +534,7 @@ export function announcementsFor(
     if (active !== undefined) {
       said.push({
         priority: 'polite',
+        kind: 'activeHand',
         text: `${handMirrorName(
           active,
           { index: readout.phase.activeHand, of: readout.hands.length, active: true },
@@ -361,19 +550,25 @@ export function announcementsFor(
   // not looking at the notice line. The mirror carries the standing half.
   const reason = next.context.notice;
   if (reason !== null && reason !== prior.context.notice) {
-    said.push({ priority: 'polite', text: reasonText(reason.reason) });
+    said.push({ priority: 'polite', kind: 'refusal', text: reasonText(reason.reason) });
   }
 
-  // SPEC 9's milestones, which are awarded exactly once each.
+  // SPEC 9's milestones, which are awarded exactly once each. The kind is the
+  // one polite kind that queues rather than coalescing, for the reason
+  // `NEVER_COALESCED` gives.
   for (const id of next.context.awarded) {
-    said.push({ priority: 'polite', text: `Milestone: ${milestoneText(id)}.` });
+    said.push({ priority: 'polite', kind: 'milestone', text: `Milestone: ${milestoneText(id)}.` });
   }
 
   // SPEC 14's mute, as an event. `BJ-19`: the control carries `aria-pressed`
   // for the standing state and this is the half that reaches a player who was
   // not looking at it, in words rather than in a colour or an underline.
   if (next.context.muted !== prior.context.muted) {
-    said.push({ priority: 'polite', text: next.context.muted ? 'Sound muted.' : 'Sound on.' });
+    said.push({
+      priority: 'polite',
+      kind: 'sound',
+      text: next.context.muted ? 'Sound muted.' : 'Sound on.',
+    });
   }
 
   return said;

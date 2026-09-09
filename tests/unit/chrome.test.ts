@@ -12,9 +12,9 @@
 
 import { describe, expect, it } from 'vitest';
 
-import { INTENT_KINDS } from '../../src/core/table';
+import { INTENT_KINDS, createTable } from '../../src/core/table';
 import type { Rank, Suit } from '../../src/core/cards';
-import { STARTING_CHIPS, TABLES, canEnter, isUnlocked } from '../../src/core/wallet';
+import { STARTING_CHIPS, TABLES, canEnter, createWallet, isUnlocked } from '../../src/core/wallet';
 import type { FeltSpec } from '../../src/render/felt';
 import {
   SCENE_GEOMETRY,
@@ -25,9 +25,10 @@ import {
   type Fan,
 } from '../../src/render/scene';
 import { HIGH_CONTRAST_PALETTE, STANDARD_PALETTE } from '../../src/render/tokens';
-import { tableRefusal } from '../../src/ui/availability';
+import { tableFigures, tableRefusal } from '../../src/ui/availability';
+import { chips } from '../../src/ui/format';
 import { createFrameLoop } from '../../src/ui/loop';
-import { OVERLAY_IDS, OVERLAY_TITLES } from '../../src/ui/state';
+import { OVERLAY_IDS, OVERLAY_TITLES, wagerAtStake } from '../../src/ui/state';
 import {
   actionText,
   outcomeText,
@@ -105,7 +106,7 @@ describe('B15 armour: every refusal has a sentence, and no two share one', () =>
   it('gives each reason a sentence of its own', () => {
     // Two reasons sharing a sentence is the defect a switch with a fallthrough
     // produces, and it reads as working until a player is told the wrong thing.
-    const sentences = EVERY_REASON.map(reasonText);
+    const sentences = EVERY_REASON.map((reason) => reasonText(reason));
     expect(new Set(sentences).size).toBe(EVERY_REASON.length);
   });
 
@@ -141,6 +142,40 @@ describe('B15 armour: every refusal has a sentence, and no two share one', () =>
     // reached, and the shortfall is about the table's minimum.
     expect(reasonText('table-not-unlocked')).toMatch(/unlocks|best balance/i);
     expect(reasonText('table-unaffordable')).toMatch(/minimum/i);
+  });
+
+  it('names SPEC 6 threshold on the locked arm, and the mark it is measured against', () => {
+    // `AUDIT-2`, finding `J2-03`. SPEC 6 keys Silver to a best balance of 2,500
+    // and Gold to 10,000 and calls the ladder "what gives the bankroll a purpose
+    // beyond not hitting zero", and neither number appeared anywhere in the
+    // product: a scan of the shipped page's every panel, every table button and
+    // both accessible names found neither. The unaffordable arm needs no number
+    // because both sides of its comparison are on screen, the button carrying
+    // the table's minimum and the Chips readout the balance; the locked arm
+    // compares the best balance against a threshold that is on neither.
+    const silver = tableFigures('silver', STARTING_CHIPS);
+    expect(silver).toEqual({ unlocksAt: 2_500, bestBalance: STARTING_CHIPS });
+
+    const sentence = reasonText('table-not-unlocked', silver);
+    expect(sentence, 'the threshold').toContain(chips(2_500));
+    expect(sentence, 'the mark it is measured against').toContain(chips(STARTING_CHIPS));
+    // Both numbers go through the formatter, which is item `M2`: the sentence is
+    // DOM text and every number a player reads is formatted.
+    expect(sentence).toBe(
+      `That table unlocks at a best balance of ${chips(2_500)}; ` +
+        `your best is ${chips(STARTING_CHIPS)}.`,
+    );
+
+    // Gold's threshold is Gold's, so the sentence is per table rather than one
+    // sentence with a number bolted on.
+    expect(reasonText('table-not-unlocked', tableFigures('gold', STARTING_CHIPS))).toContain(
+      chips(10_000),
+    );
+
+    // The other arms are untouched by the figures, which is what keeps this one
+    // sentence rather than a second vocabulary.
+    expect(reasonText('table-unaffordable', silver)).toBe(reasonText('table-unaffordable'));
+    expect(reasonText('table-locked', silver)).toBe(reasonText('table-locked'));
   });
 });
 
@@ -751,5 +786,122 @@ describe('a hidden tab pauses the loop and a visible one resumes it', () => {
     clock.tick(2000);
     expect(frames, 'a disposed game does not come back from the cache').toBe(1);
     expect(loop.running(), 'a disposed game stays stopped').toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// SPEC 11's "current wager", against a real machine. `AUDIT-2`, `J2-01`
+// ---------------------------------------------------------------------------
+
+/** SPEC 4.11's grid, and a wager two chips of it build. */
+const STAKE_CHIP = 50;
+
+/** A frame long enough to pay for any one timed step. */
+const STEP = 0.25;
+
+/** Bounded, so a machine that stalls fails loudly rather than hanging. */
+const DRIVE_LIMIT = 500;
+
+/**
+ * Play one round from the start screen, reporting what SPEC 11's wager readout
+ * would have said on every frame, beside what the machine held.
+ *
+ * The readout is read through `wagerAtStake`, which is the one reading the
+ * readouts panel and the accessibility mirror both render, so this is the
+ * shipped answer and not a second derivation of it.
+ */
+function wagerTrace(): { phase: string; shown: number; committed: number; hands: number }[] {
+  const table = createTable({
+    wallet: createWallet(),
+    table: 'bronze',
+    seed: 7,
+  });
+  const trace: { phase: string; shown: number; committed: number; hands: number }[] = [];
+  for (let step = 0; step < DRIVE_LIMIT; step += 1) {
+    const readout = table.readout();
+    trace.push({
+      phase: readout.phase.kind,
+      shown: wagerAtStake(readout),
+      committed: readout.wallet.committed,
+      hands: readout.hands.length,
+    });
+    if (readout.phase.kind === 'roundResult') {
+      return trace;
+    }
+    switch (readout.phase.kind) {
+      case 'start':
+        table.apply({ kind: 'start' });
+        break;
+      case 'betting':
+        table.apply(
+          readout.wallet.wager === 0
+            ? { kind: 'tapChip', chip: STAKE_CHIP }
+            : { kind: 'deal' },
+        );
+        break;
+      case 'insurance':
+        table.apply({ kind: 'declineInsurance' });
+        break;
+      case 'playerTurn':
+        table.apply({ kind: 'stand' });
+        break;
+      default:
+        break;
+    }
+    table.drain();
+    table.update(STEP);
+  }
+  throw new Error('the round never reached SPEC 10 round result');
+}
+
+describe('SPEC 11: the wager readout states the money at stake', () => {
+  it('is the pending wager while one is being built, and the stake after it', () => {
+    const trace = wagerTrace();
+    const dealt = trace.findIndex((frame) => frame.hands > 0);
+    expect(dealt, 'the round never dealt a hand').toBeGreaterThan(0);
+
+    // Before the deal: the wager being built at the controls, which is the one
+    // number there is. The frame before the deal has the whole chip on it.
+    const built = trace.slice(0, dealt).map((frame) => frame.shown);
+    expect(built.at(-1), 'the wager built at the controls').toBe(STAKE_CHIP);
+
+    // After it: never zero, on any frame, in any phase. This is the finding:
+    // `wallet.wager` is zeroed by `commitInitial`, so a readout that showed it
+    // read 0 from the deal to the round result while the stake sat on the table.
+    for (const frame of trace.slice(dealt)) {
+      expect(frame.shown, `the wager readout at ${frame.phase}`).toBe(STAKE_CHIP);
+    }
+
+    // And it reaches SPEC 10's round result, which is the phase the machine's
+    // own `committed` has already been swept to zero in, so a readout built on
+    // that field alone would have gone blank exactly where SPEC 12 prints the
+    // outcome.
+    const settled = trace.at(-1);
+    expect(settled?.phase).toBe('roundResult');
+    expect(settled?.committed, 'the sweep really did happen').toBe(0);
+    expect(settled?.shown, 'the stake the round was played for').toBe(STAKE_CHIP);
+
+    // While the round is live the two agree, which is what makes this the
+    // machine's own number rather than a chrome-side tally.
+    const live = trace.slice(dealt).filter((frame) => frame.committed > 0);
+    expect(live.length, 'no frame carried a committed stake').toBeGreaterThan(0);
+    for (const frame of live) {
+      expect(frame.shown, `committed at ${frame.phase}`).toBe(frame.committed);
+    }
+  });
+
+  it('sums the hands of a split rather than naming one of them', () => {
+    // A table-level readout beside the balance: SPEC 4.6 puts two wagers on the
+    // felt and the round costs their sum. The per-hand figure is the mirror's,
+    // in each hand's own accessible name, and SPEC 12's per-hand result.
+    const hands = [
+      { wager: 100, cards: [] },
+      { wager: 100, cards: [] },
+    ];
+    const readout = {
+      hands,
+      wallet: { wager: 0 },
+    } as unknown as Parameters<typeof wagerAtStake>[0];
+    expect(wagerAtStake(readout)).toBe(200);
   });
 });

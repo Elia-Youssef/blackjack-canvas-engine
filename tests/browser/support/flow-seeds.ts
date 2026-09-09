@@ -370,6 +370,88 @@ export function differingSplit(): SplitSeed {
   throw new Error('no seed inside the search limit splits into differing outcomes');
 }
 
+/** The four-hand search's answer, with what the round it found ends holding. */
+export interface FourWaySeed {
+  readonly seed: number;
+  /** How many cards each hand holds at the round result, in play order. */
+  readonly cards: readonly number[];
+}
+
+let fourWay: FourWaySeed | null = null;
+
+/**
+ * A seed whose first round splits all the way to SPEC 4.6's four hands.
+ *
+ * `AUDIT-2`'s findings `Z3-01`, `J5-01`, `J1-06` and `J5-02` are all measured
+ * at the widest picture the game can draw, and four hands is that picture:
+ * `src/core/table.ts` caps a round at three splits, so four bands sharing one
+ * surface is the most pressure item `E8`'s fan can be put under by playing.
+ *
+ * The route is the one the browser spec drives, press for press: split whenever
+ * the machine offers it and the balance funds it, then stand every hand. The
+ * search reports the card counts the round ends with so the spec can state the
+ * shape it is measuring rather than discovering it, and a retune that stops the
+ * seed reaching four hands fails here rather than quietly grading two.
+ */
+export function fourWaySplit(): FourWaySeed {
+  if (fourWay !== null) {
+    return fourWay;
+  }
+  for (let seed = 1; seed <= SEED_LIMIT; seed += 1) {
+    const table = createTable({ seed });
+    table.apply({ kind: 'start' });
+    table.apply({ kind: 'tapChip', chip: FLOW_WAGER });
+    table.apply({ kind: 'deal' });
+    if (settle(table) !== 'playerTurn') {
+      continue;
+    }
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const dealt = table.readout();
+      const active = dealt.phase.kind === 'playerTurn' ? dealt.phase.activeHand : -1;
+      const hand = active < 0 ? undefined : dealt.hands[active];
+      if (hand === undefined) {
+        break;
+      }
+      if (splitRefusal(hand, { rules: dealt.rules, splits: dealt.splits }) !== null) {
+        break;
+      }
+      if (!canFund(hand.wager, dealt.wallet.chips)) {
+        break;
+      }
+      table.apply({ kind: 'split' });
+      if (settle(table) !== 'playerTurn') {
+        break;
+      }
+    }
+    if (table.readout().hands.length !== 4) {
+      continue;
+    }
+    for (let stands = 0; stands < 8; stands += 1) {
+      if (table.readout().phase.kind !== 'playerTurn') {
+        break;
+      }
+      table.apply({ kind: 'stand' });
+      settle(table);
+    }
+    for (let frame = 0; frame < SEARCH_FRAMES; frame += 1) {
+      if (table.readout().phase.kind === 'roundResult') {
+        break;
+      }
+      table.update(SEARCH_STEP);
+    }
+    const finished = table.readout();
+    if (finished.phase.kind !== 'roundResult' || finished.hands.length !== 4) {
+      continue;
+    }
+    fourWay = Object.freeze({
+      seed,
+      cards: Object.freeze(finished.hands.map((hand) => hand.cards.length)),
+    });
+    return fourWay;
+  }
+  throw new Error('no seed inside the search limit splits into four hands');
+}
+
 // ---------------------------------------------------------------------------
 // BJ-23: the double-bust journey, and the second offer a first one cannot see
 // ---------------------------------------------------------------------------

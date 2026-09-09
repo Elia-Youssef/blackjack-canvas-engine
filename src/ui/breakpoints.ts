@@ -177,9 +177,72 @@ export const SURFACE_FRAMING: Readonly<Record<'landscape' | 'portrait', Framing>
   portrait: Object.freeze({ width: 720, height: 960 }),
 });
 
-/** Which framing a breakpoint draws in. Only `portrait` turns the space. */
-export function framingFor(breakpoint: BreakpointName): Framing {
-  return breakpoint === 'portrait' ? SURFACE_FRAMING.portrait : SURFACE_FRAMING.landscape;
+/**
+ * The aspect of a framing: its width over its height.
+ *
+ * Local rather than exported: the specs that grade the choice below re-derive it
+ * from `SURFACE_FRAMING` themselves, which is what makes them a second reading
+ * rather than a restatement of this file.
+ */
+function framingAspect(framing: Framing): number {
+  return framing.width / framing.height;
+}
+
+/**
+ * Which framing a box is drawn in. The breakpoint's, unless the box says
+ * otherwise.
+ *
+ * **The breakpoint decides, and the row's own shape is the one thing that can
+ * overrule it.** DESIGN section 4 gives portrait "a portrait framing of the same
+ * logical space rather than a squashed landscape one", and a squashed landscape
+ * is what a 1280 x 720 space fitted into a tall row looks like. `AUDIT-2`
+ * finding `J5-02` measured the mirror image of that defect on the shipped page:
+ * at SPEC 10's round result the phone's play-surface row is 366 x 192, a box
+ * **wider** than the widest framing this design has, and fitting a 3:4 portrait
+ * space into it drew a 144 px surface and left 61 percent of the row's width
+ * empty, at the one screen whose whole job is showing the player what happened.
+ * The cards of a split round were then drawn off both edges of that canvas
+ * (`J1-06`, `Z3-01`).
+ *
+ * So the rule is: **a box whose own aspect falls outside the band the two
+ * framings define is drawn in whichever of them is nearer its shape.** Inside
+ * the band, which is every box the shipped page hands the row while it is
+ * playing, the breakpoint's framing is used exactly as before and nothing moves.
+ *
+ * Two properties make this safe to state as a rule rather than as a special
+ * case, and both are asserted in `tests/unit/layout-breakpoints.test.ts`:
+ *
+ * - **It never gives up the axis the box binds on.** Where the box is wider than
+ *   the landscape framing, both framings are bound by the box's height, so the
+ *   switch keeps the height the row gave and spends only the width the row was
+ *   wasting. Where the box is taller than the portrait framing, both are bound
+ *   by its width, and the switch keeps the width. A rule that picked the larger
+ *   drawn area instead would trade height for width in between, and at 288 x 192
+ *   that shortens the surface below the two rows of floored cards item `E8`
+ *   requires.
+ * - **The band is stated in the framings themselves.** No threshold is chosen
+ *   here: the two numbers are `SURFACE_FRAMING`'s own aspects.
+ *
+ * Given no box, this answers the breakpoint's framing, which is what the
+ * declaration of the two framings means on its own.
+ */
+export function framingFor(breakpoint: BreakpointName, box?: StageBox): Framing {
+  const preferred =
+    breakpoint === 'portrait' ? SURFACE_FRAMING.portrait : SURFACE_FRAMING.landscape;
+  if (box === undefined) {
+    return preferred;
+  }
+  const aspect = box.width / box.height;
+  if (!Number.isFinite(aspect) || aspect <= 0) {
+    return preferred;
+  }
+  if (aspect > framingAspect(SURFACE_FRAMING.landscape)) {
+    return SURFACE_FRAMING.landscape;
+  }
+  if (aspect < framingAspect(SURFACE_FRAMING.portrait)) {
+    return SURFACE_FRAMING.portrait;
+  }
+  return preferred;
 }
 
 /**
@@ -235,21 +298,45 @@ export interface SurfacePlan {
  *    the layout gives the row, which no canvas is inside, so there is no path by
  *    which a larger surface makes the next frame's base larger or smaller. A
  *    plan that measured the scrolling stage would have exactly that loop.
+ *
+ * `demandWidth` is the one thing that can widen the plan past its box at 100
+ * percent, and it is item `E8`'s fourth regime rather than an exception to
+ * property 1. `src/render/scene.ts` publishes the width below which some band
+ * of the picture cannot be drawn at both floors; a surface narrower than that
+ * does not compress the fan, it **loses cards off the edge of the bitmap**,
+ * which is what `AUDIT-2`'s findings measured on the shipped page. So the
+ * picture's own demand is a floor under the width, the height is untouched, and
+ * the stage scrolls to whatever the viewport cannot show, which is the criterion
+ * in as many words: "past both floors the hand band overflows into the pannable
+ * stage rather than breaking either".
+ *
+ * **The demand cannot feed back into the plan.** It is a function of how many
+ * cards are on the felt, and the box above is the shell's middle row, which the
+ * canvas is not inside: `src/ui/chrome.css` clips the row and scrolls the stage
+ * within it, so a wider canvas cannot widen or shorten the box that planned it.
+ * The width therefore changes at most once per card dealt, on the narrow
+ * viewports where the demand exceeds the framing's fit at all, and each change
+ * costs one bake of a felt this small.
  */
 export function planSurface(
   box: StageBox,
   breakpoint: BreakpointName,
   size: SurfaceSize,
   dpr: number,
+  demandWidth = 0,
 ): SurfacePlan {
-  const framing = framingFor(breakpoint);
+  const framing = framingFor(breakpoint, box);
   const fitted = Math.min(box.width / framing.width, box.height / framing.height);
   const usable = Number.isFinite(fitted) && framing.width * fitted >= 1 && framing.height * fitted >= 1;
   const baseScale = usable ? fitted : FALLBACK_SURFACE_WIDTH / framing.width;
   const scale = baseScale * surfaceSizeFactor(size);
+  // Ceiling, not floor: the demand is the width at which the tightest band
+  // lands exactly on its room, so a width rounded down by a fraction of a pixel
+  // is a width the band overflows by that fraction.
+  const demanded = Number.isFinite(demandWidth) && demandWidth > 0 ? Math.ceil(demandWidth) : 0;
   return {
     sizing: {
-      width: Math.floor(framing.width * scale),
+      width: Math.max(Math.floor(framing.width * scale), demanded),
       height: Math.floor(framing.height * scale),
       dpr: dpr > 0 ? dpr : 1,
     },
