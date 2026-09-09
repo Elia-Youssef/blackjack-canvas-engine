@@ -299,22 +299,22 @@ export const DURATION = {
 } as const satisfies Record<string, number>;
 
 /**
- * The two easings, as their cubic-bezier control points. The renderer needs a
+ * The easing, as its cubic-bezier control points. The renderer needs a
  * function and CSS needs a curve; committing the control points rather than a
  * hand-rolled approximation is what keeps a canvas tween and a CSS transition
- * on the same curve.
+ * on the same curve. `out` is the one the tweens use, through `animate.ts`'s
+ * `easeOut`, and it rides the same three-way pin `RADIUS` above is part of:
+ * the contract row, the stylesheet's `--ease-out` and this record must agree
+ * or `tokens.test.ts` fails.
  *
- * `out` is the one the tweens use, through `animate.ts`'s `easeOut`. `inOut` is
- * drawn by nothing on either side today: no rule in `chrome.css` uses
- * `--ease-in-out` and `ease()` is only ever reached through `easeOut`. It stays
- * because QUALITY-BAR section 15 names both curves and this record is what
- * `tokens.test.ts` holds the stylesheet's declaration to, the same three-way
- * pin `RADIUS` above is part of; a curve named in the contract and mirrored
- * nowhere would be a number with one home again.
+ * **There is no `inOut` here** (`AUDIT-2`, finding `Z3-05`): the
+ * `--ease-in-out`/`EASE.inOut` pair was drawn by nothing on either side and
+ * survived only because QUALITY-BAR section 15 named the curve. The section
+ * 15 row is deleted per the park's ruling, and the mirrors went with it, the
+ * `duration()` treatment below.
  */
 export const EASE = {
   out: [0.2, 0, 0, 1],
-  inOut: [0.4, 0, 0.2, 1],
 } as const satisfies Record<string, readonly [number, number, number, number]>;
 
 // **There is no `duration(name, reducedMotion)` here** (`AUDIT-2`, finding
