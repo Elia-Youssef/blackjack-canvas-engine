@@ -85,6 +85,21 @@ export async function lazyTemplate(): Promise<unknown> {
 
 const templatedFelt = require(`../render/felt`); // @expect core-boundary/no-forbidden-imports
 
+// 5f. A dynamic specifier the rule cannot read at all. `AUDIT-2` finding
+//     `Z9-04`: Vite resolves an interpolated template statically and emits the
+//     chunk, so this is a working cross-boundary import that the gate used to
+//     call clean. There is nothing to classify, so the shape is refused.
+export async function lazyInterpolated(): Promise<unknown> {
+  const layer = 'ui/';
+  return import(`../${layer}panel`); // @expect core-boundary/no-forbidden-imports
+}
+
+export async function lazyConcatenated(): Promise<unknown> {
+  return import('../' + 'ui/panel'); // @expect core-boundary/no-forbidden-imports
+}
+
+const computedFelt = require('../render/' + 'felt'); // @expect core-boundary/no-forbidden-imports
+
 // 5b. Bare BOM readouts. These reach the same values as `window.innerWidth`
 //     without ever naming `window`. devicePixelRatio is the sharp one: it is
 //     the value the single coordinate transform is required to exclude.
@@ -134,5 +149,5 @@ export function computedRoll(): number {
   return (Math as unknown as Record<string, () => number>)[key]!(); // @expect core-boundary/no-math-random
 }
 
-export { drawFelt, mountChrome, Surface, cardChrome, felt, random, templatedFelt };
+export { drawFelt, mountChrome, Surface, cardChrome, felt, random, templatedFelt, computedFelt };
 export type { LazySurface };

@@ -27,13 +27,29 @@
  * @vitest-environment node
  */
 
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { describe, expect, it } from 'vitest';
 
-import { GATE_RED, classifyGateRun } from '../../scripts/mutation-check.mjs';
+import {
+  ADDITIONS,
+  EDITS,
+  GATE_RED,
+  classifyGateRun,
+  staleLedgerEntries,
+} from '../../scripts/mutation-check.mjs';
 
 const PROJECT_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
 const HARNESS = readFileSync(join(PROJECT_ROOT, 'scripts', 'mutation-check.mjs'), 'utf8');
@@ -126,6 +142,150 @@ describe('Z9-01: each gate is read by the summary line that gate prints', () => 
   });
 });
 
+describe('Z9-06: a stale ledger stops the sweep before anything is built', () => {
+  /**
+   * The pass the harness did not have.
+   *
+   * `runEdit` threw at the entry's own turn, `main` caught nothing, and the
+   * process ended: the entries after it were never measured and the `N of M`
+   * summary was never printed, so a ledger that had gone stale at entry 50 cost
+   * a two-hour sweep and reported none of the 49 that had run. Nothing between
+   * sweeps noticed ledger rot at all.
+   *
+   * The pass is pure and takes its readers as parameters, so the arms below run
+   * it over constructed ledgers. The two failure shapes are the two ways an
+   * entry stops testing what it claims: a `find` that no longer appears exactly
+   * once, and an addition whose file is already there.
+   */
+  const io = (files: Record<string, string>) => ({
+    read: (file: string): string => {
+      const text = files[file];
+      if (text === undefined) {
+        throw new Error(`no such file: ${file}`);
+      }
+      return text;
+    },
+    exists: (file: string): boolean => files[file] !== undefined,
+  });
+
+  const edit = (over: Record<string, string>) => ({
+    item: 'B1',
+    name: 'a thing',
+    file: 'src/core/hand.ts',
+    find: 'const LIMIT = 21;',
+    replace: 'const LIMIT = 20;',
+    ...over,
+  });
+
+  it('reports nothing for a ledger whose every target is where it says', () => {
+    expect(
+      staleLedgerEntries(
+        [edit({}), edit({ file: 'src/core/shoe.ts', find: 'const CUT = 3;' })],
+        [{ item: 'M3', name: 'an addition', file: 'src/core/new.ts', content: 'x' }],
+        io({ 'src/core/hand.ts': 'const LIMIT = 21;', 'src/core/shoe.ts': 'const CUT = 3;' }),
+      ),
+    ).toEqual([]);
+  });
+
+  it('names an entry whose target has gone, and one that now matches twice', () => {
+    const stale = staleLedgerEntries(
+      [
+        edit({ name: 'gone' }),
+        edit({ name: 'twice', file: 'src/core/shoe.ts', find: 'const CUT = 3;' }),
+      ],
+      [],
+      io({
+        'src/core/hand.ts': 'const LIMIT = 22;',
+        'src/core/shoe.ts': 'const CUT = 3; const CUT = 3;',
+      }),
+    );
+    expect(stale).toHaveLength(2);
+    expect(stale[0]).toContain('appears 0 times, expected exactly 1');
+    expect(stale[0]).toContain('src/core/hand.ts');
+    expect(stale[0]).toContain('gone');
+    expect(stale[1]).toContain('appears 2 times, expected exactly 1');
+  });
+
+  it('names an entry whose file is missing rather than throwing over it', () => {
+    const stale = staleLedgerEntries([edit({})], [], io({}));
+    expect(stale).toHaveLength(1);
+    expect(stale[0]).toContain('the file it names is missing');
+  });
+
+  it('names an addition whose file already exists', () => {
+    const stale = staleLedgerEntries(
+      [],
+      [{ item: 'M3', name: 'an addition', file: 'src/core/new.ts', content: 'x' }],
+      io({ 'src/core/new.ts': 'already here' }),
+    );
+    expect(stale).toHaveLength(1);
+    expect(stale[0]).toContain('already exists');
+  });
+
+  it('reports every stale entry rather than stopping at the first', () => {
+    const stale = staleLedgerEntries(
+      [edit({ name: 'one' }), edit({ name: 'two' }), edit({ name: 'three' })],
+      [],
+      io({ 'src/core/hand.ts': 'nothing like it' }),
+    );
+    expect(stale).toHaveLength(3);
+  });
+
+  it('exports the ledger the pre-flight reads, without starting a sweep', () => {
+    // The import itself is the entry-point guard's demonstration, and the two
+    // arrays are what the sweep hands the pass. Their contents are deliberately
+    // not asserted here; see below.
+    expect(EDITS.length + ADDITIONS.length).toBeGreaterThan(800);
+    expect(EDITS.every((entry) => typeof entry.find === 'string')).toBe(true);
+    expect(ADDITIONS.every((entry) => typeof entry.content === 'string')).toBe(true);
+  });
+
+  // **The same pass over the REAL ledger is deliberately not asserted here, and
+  // that is a construction rather than a preference.** It was written, and it
+  // made every ledger entry detected for the wrong reason: a mutation applied by
+  // the sweep is, by definition, a find string that no longer matches its file,
+  // so the pass reports that entry stale and this suite goes red whatever the
+  // entry's own detector did. Measured while it was in: the F1 entry that blinds
+  // the scroller census in tests/browser/support/game.ts, whose detector is the
+  // breakpoints spec, reddened npm run test at 1 failed of 1360 with nothing
+  // else touched, and every entry carrying detectedBy UNIT would then have been
+  // recorded detected on the strength of this file alone. The pre-flight belongs
+  // where it runs once, on an unmutated tree, before the baseline; here it is
+  // asserted over constructed ledgers only.
+
+  it('runs the pass before the baseline, and stops without applying anything', () => {
+    // The ordering is the finding. Pinned as source, because a sweep is the one
+    // thing a unit test cannot start: the pre-flight call has to come before the
+    // baseline command set is built, and the refusal has to return rather than
+    // fall through into the mutation loop.
+    const preflight = HARNESS.indexOf('const stale = staleLedgerEntries(EDITS, ADDITIONS);');
+    const baseline = HARNESS.indexOf('const commands = [UNIT, LINT,');
+    const loop = HARNESS.indexOf('for (const mutation of EDITS) {');
+    expect(preflight, 'the sweep no longer runs the pre-flight').toBeGreaterThan(-1);
+    expect(preflight).toBeLessThan(baseline);
+    expect(preflight).toBeLessThan(loop);
+    expect(HARNESS).toContain(
+      "    console.error('The ledger has gone stale. No mutation was applied and nothing was built.');",
+    );
+    // The refusal returns rather than falling through, held with real newlines
+    // so the ledger entry that quotes these lines as an escaped string cannot
+    // satisfy the pin the mutation is supposed to break. The flag the discard
+    // reads is set on the line past it, which is what makes "nothing was built"
+    // and the bundle's survival the same fact rather than two.
+    expect(HARNESS).toContain(
+      [
+        '    process.exitCode = 1;',
+        '    return;',
+        '  }',
+        '  // Past the refusal, so a command may now be spawned and a command may build.',
+        '  mayHaveBuilt = true;',
+      ].join('\n'),
+    );
+    // And the belt behind it: `runEdit` still refuses its own entry.
+    expect(HARNESS).toContain('    if (occurrences !== 1) {');
+  });
+});
+
 describe('Z9-05: an interrupted sweep leaves neither a mutation nor a bundle', () => {
   // A `finally` does not run when a process is terminated by a signal, which is
   // the whole of the finding: measured by a signal probe kept with the audit's
@@ -151,6 +311,60 @@ describe('Z9-05: an interrupted sweep leaves neither a mutation nor a bundle', (
   it('discards the bundle a gate may have built under a mutation', () => {
     expect(HARNESS).toContain('function discardBuild() {\n  rmSync(DIST, { recursive: true, force: true });\n}');
     expect(HARNESS).toContain('  try {\n    sweep();\n  } finally {');
-    expect(HARNESS).toContain("    discardBuild();\n    console.log('dist/ was removed");
+    expect(HARNESS).toContain("      discardBuild();\n      console.log('dist/ was removed");
+  });
+});
+
+/**
+ * The run that reached no gate leaves the bundle alone, and says nothing else.
+ * The cure round's review, finding `MIN-1`.
+ *
+ * The pre-flight's own refusal states that nothing was applied and nothing was
+ * built, and the discard in `main`'s `finally` then removed the operator's
+ * bundle and printed a line claiming a gate here may have built it. Both cannot
+ * be true of one run, and the true one is the pre-flight's: no command is
+ * spawned on that path at all.
+ *
+ * Run rather than read, on `tests/unit/repository-policy.test.ts`'s technique:
+ * the shipped file is copied into a constructed repository whose `scripts/` is
+ * the only thing in it, so `PROJECT_ROOT` resolves there, every ledger entry's
+ * file is missing, and the pre-flight refuses on the first pass. A `dist/` is
+ * put there first, with a file in it, and it is the survival of that file the
+ * assertion is about. Nothing in this project's own tree is touched: the copy
+ * spawns nothing before it refuses.
+ */
+describe('MIN-1: a refused pre-flight builds nothing and destroys nothing', () => {
+  it('leaves a bundle it never built, and claims no removal', () => {
+    const root = mkdtempSync(join(tmpdir(), 'bj-preflight-'));
+    try {
+      mkdirSync(join(root, 'scripts'));
+      mkdirSync(join(root, 'dist'));
+      writeFileSync(join(root, 'dist', 'index.html'), '<!doctype html>\n');
+      const script = join(root, 'scripts', 'mutation-check.mjs');
+      copyFileSync(join(PROJECT_ROOT, 'scripts', 'mutation-check.mjs'), script);
+
+      const ran = spawnSync(process.execPath, [script], {
+        cwd: root,
+        encoding: 'utf8',
+        maxBuffer: 32 * 1024 * 1024,
+      });
+      const output = `${ran.stdout ?? ''}${ran.stderr ?? ''}`;
+
+      // The refusal itself, so this is measuring the path it says it is.
+      expect(ran.status, output.slice(-2_000)).toBe(1);
+      expect(output).toContain('The ledger has gone stale.');
+      expect(output).toContain('the file it names is missing');
+
+      // The bundle, which no command in this run could have built.
+      expect(
+        existsSync(join(root, 'dist', 'index.html')),
+        'the refusal removed a bundle it had no hand in',
+      ).toBe(true);
+      expect(output, 'the refusal claimed a removal it did not make').not.toContain(
+        'dist/ was removed',
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 });

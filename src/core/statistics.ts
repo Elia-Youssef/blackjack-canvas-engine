@@ -340,11 +340,6 @@ export function observeBankrollReset(stats: Statistics): Statistics {
   });
 }
 
-/** Whether SPEC 9 has already awarded this one. */
-export function isAwarded(stats: Statistics, id: MilestoneId): boolean {
-  return stats.milestones.includes(id);
-}
-
 // ---------------------------------------------------------------------------
 // The round boundary
 // ---------------------------------------------------------------------------

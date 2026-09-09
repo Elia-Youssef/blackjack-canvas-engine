@@ -287,6 +287,44 @@ describe('BJ-22: the felt bakes once per distinct size, not once per screen', ()
     expect(bakes(), 'an identical frame paid for a bake').toBe(1);
   });
 
+  /**
+   * The same attack one level down, which the top-level freeze does not reach.
+   *
+   * `AUDIT-2`, finding `Z3-06`: the key was `Object.freeze({ ...spec })`, a
+   * shallow copy and a shallow freeze, so `limits` was the caller's own object
+   * and was not frozen at all. `needsRebake` compares both of its numbers, so
+   * one write from outside made that entry unmatchable for the rest of the
+   * session, in a cache bounded at four, each slot holding a full-size backing
+   * store. The shipped page was safe only because `wallet.ts` freezes its table
+   * rows; the caller here is a plain object literal, which is what a capture
+   * harness or a hand-built scene hands over.
+   */
+  it('freezes the nested limits too, and keeps them separate from the caller', () => {
+    const { surface, bakes } = harness();
+    const limits = { minimum: 10, maximum: 100 };
+    surface.render(scene({ limits }), 1 / 60);
+    expect(bakes()).toBe(1);
+
+    const spec = surface.feltSpec();
+    expect(Object.isFrozen(spec.limits), 'the nested record is frozen').toBe(true);
+    expect(spec.limits, 'the key still holds the caller own object').not.toBe(limits);
+    expect(() => {
+      (spec.limits as { maximum: number }).maximum = 99_999;
+    }).toThrow(TypeError);
+    expect(surface.feltSpec().limits.maximum).toBe(100);
+
+    // The caller's own object is untouched, and an identical frame still hits.
+    expect(limits.maximum).toBe(100);
+    surface.render(scene({ limits }), 1 / 60);
+    expect(bakes(), 'an identical frame paid for a bake').toBe(1);
+
+    // The can-see control: a write to the caller's object between frames is a
+    // real change of limits, and that one does have to pay for a bake.
+    limits.maximum = 500;
+    surface.render(scene({ limits }), 1 / 60);
+    expect(bakes(), 'a genuinely different felt was served from the cache').toBe(2);
+  });
+
   it('reads the cache through `needsRebake` and not a second copy of the rule', () => {
     // `needsRebake` is documented as "the whole of the caching rule". A cache
     // keyed on a string would be a second encoding of it, free to drift out

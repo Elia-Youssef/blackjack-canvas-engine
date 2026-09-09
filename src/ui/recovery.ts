@@ -11,10 +11,12 @@
  * an uncaught error anywhere else on the page arrives through the `error`
  * listener; a rejected promise nobody handled arrives through
  * `unhandledrejection`. All three call `fail`, and `fail` runs once: the first
- * failure stops the game and mounts the panel, and every failure after it is
- * recorded and otherwise ignored, because a page that replaced its own recovery
- * panel each time a stopped game threw again would be a panel the player could
- * not press.
+ * failure stops the game and mounts the panel, and every failure after it
+ * returns without touching the page, because a page that replaced its own
+ * recovery panel each time a stopped game threw again would be a panel the
+ * player could not press. Since `AUDIT-2` the later ones are not counted
+ * either: the count was published and nothing read it, and the browser spec
+ * grades "one panel, whatever arrives after the first" from the DOM.
  *
  * **Stopping is the composition root's `dispose`, not a flag.** `stop` is
  * handed in, and what it does is dispose the running game: the frame loop's
@@ -84,10 +86,20 @@ export interface ErrorBoundaryOptions {
   readonly page?: PageTarget | null;
 }
 
-/** An installed boundary. Its listeners are attached at construction. */
+/**
+ * An installed boundary. Its listeners are attached at construction.
+ *
+ * **Two members, and the three routes are all inside** (`AUDIT-2`, finding
+ * `X3-02`). SPEC 18's three routes are `run`'s `catch`, the page's `error`
+ * listener and its `unhandledrejection` listener; all three call the module's
+ * own handler, so there is no external reporting hook and this interface does
+ * not publish one. It also published a count of the failures after the first,
+ * which nothing read: `tests/browser/error-boundary.spec.ts` grades that
+ * property through the DOM, which is the only place a player can see it.
+ */
 export interface ErrorBoundary {
   /**
-   * Run one piece of work, and hand anything it throws to `fail`.
+   * Run one piece of work, and hand anything it throws to the handler.
    *
    * The composition root wraps its frame callback in this, which is the "thrown
    * error from the loop" route. `src/ui/loop.ts` schedules the next frame
@@ -96,12 +108,8 @@ export interface ErrorBoundary {
    * actually about.
    */
   run(work: () => void): void;
-  /** Report a failure from anywhere. Runs its handling exactly once. */
-  fail(error: unknown): void;
   /** Whether the boundary has fired. */
   failed(): boolean;
-  /** How many failures have arrived, including the ones after the first. */
-  failures(): number;
 }
 
 /** Install a boundary. Nothing is mounted until something fails. */
@@ -119,7 +127,6 @@ export function createErrorBoundary(options: ErrorBoundaryOptions): ErrorBoundar
     });
 
   let stopped = false;
-  let count = 0;
 
   /** SPEC 18's panel, built once, from the sentence home and the factory. */
   function panel(): HTMLElement {
@@ -149,7 +156,6 @@ export function createErrorBoundary(options: ErrorBoundaryOptions): ErrorBoundar
   }
 
   function fail(error: unknown): void {
-    count += 1;
     if (stopped) {
       return;
     }
@@ -196,8 +202,6 @@ export function createErrorBoundary(options: ErrorBoundaryOptions): ErrorBoundar
         fail(error);
       }
     },
-    fail,
     failed: () => stopped,
-    failures: () => count,
   };
 }

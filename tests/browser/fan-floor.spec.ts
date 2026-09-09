@@ -700,7 +700,16 @@ test.describe('E8: past both floors the band overflows into the pannable stage',
   });
 });
 
-test.describe('E8: pressure moves the fan in the order the criterion states', () => {
+// **The order itself is not asserted here, and this title says so.** Item `E8`'s
+// appended clause makes the ordering load bearing, the fan compressing to its
+// pitch floor before any card shrinks, and what grades it is
+// `tests/unit/fan-floor.test.ts`'s 1-to-24-card walk, which requires the regime
+// rank never to go backwards and requires the sweep to reach the last regime.
+// Nothing below compares two regimes, two card counts or two pressure levels, so
+// a title claiming the order would be claiming that file's evidence for this
+// one. What is here is the half a unit test cannot reach: both floors holding on
+// a real composited page under the pressure a split produces.
+test.describe('E8: a split keeps both floors on the composited page', () => {
   test('splits the felt between two hands and keeps both floors', async ({ page }) => {
     // A split halves every hand's room, which is the pressure a real round can
     // actually produce. The floors are asserted at the widest and the narrowest

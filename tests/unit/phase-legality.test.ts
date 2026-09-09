@@ -86,11 +86,12 @@ import type {
   ChipDenomination,
   CommitResult,
   Refusal,
+  TableId,
   TableLimits,
   Wallet,
   WalletReadout,
 } from '../../src/core/wallet';
-import { createWallet, tableLimits } from '../../src/core/wallet';
+import { TABLES, createWallet, tableLimits } from '../../src/core/wallet';
 
 import { bounded } from './support/drive';
 import { scriptedShoe } from './support/stacked-shoe';
@@ -2243,5 +2244,78 @@ describe('C2: no action in any phase can reach a wallet throw', () => {
     expect(table.readout().wallet.previousWager).toBe(ROUND_WAGER);
     expect(accept(table.apply({ kind: 'repeat' })).ok).toBe(true);
     expect(table.readout().wallet.wager).toBe(ROUND_WAGER);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// A seat outside SPEC 6's three, which `TableOptions` seats without validating
+// ---------------------------------------------------------------------------
+
+/**
+ * `TableOptions.table` seats and does not validate, and `start` is the
+ * enforcement point it names. `AUDIT-2`, finding `X1-01`.
+ *
+ * The option's own paragraph says a seat named there "cannot reach play,
+ * because `start` refuses a table SPEC 6's `canEnter` does not open and the
+ * machine stays on the start screen". For a name outside the three that was
+ * false in the one way a refusal must never fail: `canEnter` reads
+ * `tableLimits`, which refuses an unknown id by throwing, so `apply` raised a
+ * `RangeError` out of the machine instead of answering. Item `C2`'s criterion
+ * is that every action is "accepted only where legal, and a rejected action
+ * changes no state and surfaces a reason", and a throw surfaces no reason and
+ * is not a rejection.
+ *
+ * The two directions are asserted together, because a guard that refuses
+ * everything satisfies the first half on its own: an off-list seat is refused
+ * and leaves the readout byte-identical, and each of SPEC 6's own three still
+ * starts from the same option.
+ */
+describe('C2: a seat outside SPEC 6 is refused at start, never thrown', () => {
+  const OFF_LIST = 'platinum' as TableId;
+
+  it('answers the start intent with a refusal and stays on the start screen', () => {
+    const table = createTable({ seed: 7, table: OFF_LIST });
+    const before = JSON.stringify(table.readout());
+    const result = table.apply({ kind: 'start' });
+    expect(result.ok).toBe(false);
+    if (result.ok) {
+      return;
+    }
+    expect(result.kind).toBe('start');
+    expect(result.layer).toBe('wallet');
+    expect(result.reason).toBe('table-locked');
+    expect(table.readout().phase.kind).toBe('start');
+    expect(JSON.stringify(table.readout())).toBe(before);
+  });
+
+  it('refuses the same seat named by an intent, and keeps the one in force', () => {
+    const table = createTable({ seed: 7 });
+    const seated = table.readout().table;
+    const result = table.apply({ kind: 'chooseTable', table: OFF_LIST });
+    expect(result.ok).toBe(false);
+    expect(table.readout().table).toBe(seated);
+    expect(table.readout().phase.kind).toBe('start');
+  });
+
+  it('still starts every one of SPEC 6 three seats from the same option', () => {
+    for (const seat of TABLES) {
+      const table = createTable({
+        seed: 7,
+        table: seat.id,
+        wallet: createWallet({ bestBalance: Math.max(SPEC_STARTING_CHIPS, seat.unlocksAt) }),
+      });
+      expect(accept(table.apply({ kind: 'start' })).ok).toBe(true);
+      expect(table.readout().phase.kind).toBe('betting');
+      expect(table.readout().table).toBe(seat.id);
+    }
+  });
+
+  it('drains a queued start on an off-list seat without raising', () => {
+    const table = createTable({ seed: 7, table: OFF_LIST });
+    table.queue({ kind: 'start' });
+    expect(() => {
+      table.drain();
+    }).not.toThrow();
+    expect(table.readout().phase.kind).toBe('start');
   });
 });

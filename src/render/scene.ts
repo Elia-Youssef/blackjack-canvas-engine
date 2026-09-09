@@ -70,7 +70,7 @@ import {
   type CardSpec,
 } from './card';
 import {
-  CHIP_GEOMETRY,
+  chipStackLayout,
   drawChipStackShapes,
   drawChipStackText,
   wagerToChips,
@@ -260,9 +260,13 @@ export interface FanReading {
    * never above `dealerTop` plus a card's height.
    */
   readonly handTop: number;
-  /** The widest overflow among the bands, in CSS pixels. Zero when all fit. */
-  readonly overflow: number;
 }
+
+// **No aggregate overflow here** (`AUDIT-2`, finding `X3-07`). This reading
+// carried "the widest overflow among the bands" and nothing read it: item
+// `E8`'s third regime is graded per band, off `FanBand.overflow`, both in
+// `fan-floor.test.ts` and on the shipped page, which is where an overflow is
+// attributable to the band it happened in.
 
 /**
  * The width every card in a frame is drawn at, given every band on the felt.
@@ -1373,7 +1377,6 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
         pitch: handFan.pitch,
         pitchRatio: handFan.pitchRatio,
         regimes: Object.freeze(resolved.map((fan) => fan.regime)),
-        overflow: resolved.reduce((worst, fan) => Math.max(worst, fan.overflow), 0),
         dealerTop: dealerRowTop,
         handTop: playerRowTop,
       });
@@ -1452,8 +1455,15 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
         }
         const chips = wagerToChips(wager);
         const full: ChipStackSpec = { x: spot.x, y: spot.y, radius: chipRadius, chips };
+        // Where the stack will draw each chip, asked of the one function that
+        // decides it (`AUDIT-2`, finding `Z3-04`). This loop used to re-derive
+        // the rest point and the dash turn from the geometry record itself, so a
+        // change to the layout would have moved the landed chip without moving
+        // the place the flying one was told to land, and the chip would jump on
+        // the frame it arrived: the defect `withTurn` below exists to prevent,
+        // one field over.
         const landed: ChipDenomination[] = [];
-        chips.forEach((denomination, index) => {
+        chipStackLayout(full).forEach((place, index) => {
           const progress = progressOf(
             memory.chips,
             `${key}:${String(index)}`,
@@ -1463,18 +1473,14 @@ export function createPlaySurface(options: PlaySurfaceOptions): PlaySurface {
             seenChips,
           );
           if (progress >= 1) {
-            landed.push(denomination);
+            landed.push(place.denomination);
             return;
           }
           moving += 1;
-          const rest: Point = {
-            x: full.x,
-            y: full.y - index * CHIP_GEOMETRY.stackOffset * chipRadius,
-          };
-          const at = slide(origin, rest, progress);
+          const at = slide(origin, { x: place.x, y: place.y }, progress);
           flying.push({
-            spec: { x: at.x, y: at.y, radius: chipRadius, chips: [denomination] },
-            angle: index * CHIP_GEOMETRY.dashTurn,
+            spec: { x: at.x, y: at.y, radius: chipRadius, chips: [place.denomination] },
+            angle: place.angle,
           });
         });
         if (landed.length > 0) {

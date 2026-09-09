@@ -769,6 +769,11 @@ export const DEFAULT_COACH_MODE: CoachMode = 'off';
  * lookup never happens rather than that its answer is not drawn. A coach that
  * computed a hint and hid it would still be a coach that had run, and item `J4`
  * at `BJ-20` grades the modes by what the player can see.
+ *
+ * The composition root's `currentHint` is the caller, and since `AUDIT-2`'s
+ * finding `Z4-06` it is the only one: it used to test the mode itself and go
+ * straight to `recommend`, so the sentence above described a gate that stood
+ * beside the shipped one rather than being it.
  */
 export function hint(
   mode: CoachMode,

@@ -357,6 +357,34 @@ body {
   height: var(--surface-min-height);
 }
 
+/* The two screens with nothing on the felt keep no floor, in both modes.
+ * `AUDIT-2`, finding `J7-01`: the row took its minimum on SPEC 10's start
+ * screen as readily as mid-round, so at 360 x 640 the sticky layout did not fit,
+ * the page scrolled, and the **Start** button and the three table buttons a
+ * first-time player has to press ended below the fold behind 192 px of
+ * decorative felt. `src/ui/breakpoints.ts`'s `surfaceFloorFor` is the same rule
+ * on the arithmetic side and names the same two phases; the machine sweeps the
+ * felt before it chooses between them, so neither has a hand, a dealer card or a
+ * chip to show. Where there is room the row still takes what the two bars leave,
+ * so the felt shrinks rather than disappears; where there is not, an empty felt
+ * is not what the viewport is for.
+ *
+ * **An open overlay keeps the floor, which is what `:not([data-overlay])`
+ * is.** SPEC 10's panels are absolutely positioned inside this row, so its
+ * height is theirs, and the first-run How to Play panel opens on the start
+ * screen: without this the panel a first-time player has to dismiss would have
+ * no height to be dismissed from. `surfaceFloorFor` takes the same condition on
+ * the arithmetic side. */
+.bj-shell[data-phase='start']:not([data-overlay]),
+.bj-shell[data-phase='bustOut']:not([data-overlay]) {
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.bj-shell[data-sticky-bars='off'][data-phase='start']:not([data-overlay]) .bj-body,
+.bj-shell[data-sticky-bars='off'][data-phase='bustOut']:not([data-overlay]) .bj-body {
+  height: 0;
+}
+
 /* ---------------------------------------------------------------------------
  * SPEC 11's continuous readouts, and `BJ-16`'s disclosure.
  * ------------------------------------------------------------------------- */
@@ -757,11 +785,67 @@ body {
   background: var(--bj-ground);
 }
 
+/* The header carries the panel's own background and its own layer, and both are
+ * for the rule under it. The background is the one `.bj-overlay` already paints,
+ * so this changes no pixel by itself; what it does is give the header something
+ * opaque to cover the panel with once it stops scrolling with it.
+ *
+ * **The `z-index` is load bearing and is the project's only one.** Flex items
+ * paint as inline blocks in order-modified document order, so this header,
+ * being the first child, is painted **under** the body beside it even when it is
+ * the positioned one: measured on the shipped page with the rule below in force,
+ * `elementsFromPoint` at the middle of the stuck Close button answered with the
+ * settings row scrolling behind it, so the control was on screen and not
+ * pressable. One layer up puts the header above its one sibling and above
+ * nothing else, because `.bj-overlay` is itself a positioned box inside the
+ * play-surface row and the layer is spent inside it. */
 .bj-overlay__header {
+  position: relative;
+  z-index: 1;
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: var(--space-3);
+  background: var(--bj-ground);
+}
+
+/* The header holds the panel's only way out, so below 1024 px it stays on screen
+ * wherever the panel is scrolled. `AUDIT-2`, finding `J5-04`: the Settings panel
+ * is 1,464 px of content in a 351 px window on a 390 x 844 phone, and with the
+ * header in normal flow the Close button scrolled away with it and sat 814 px
+ * above the viewport at the bottom of the panel. `Escape` closes the panel and
+ * satisfies QUALITY-BAR section 9's keyboard clause, and a phone has no
+ * `Escape`: the eight controls a player could see at that point were two
+ * split-comparison buttons, three theme buttons, two reduced-motion buttons and
+ * Reset all data, and the one whose label read closest to an exit was the one
+ * that erases their progress. Sticky rather than a second control or a
+ * dismiss-on-outside-tap: it costs one rule, adds no control to the panel's
+ * focus order and changes no layout, since a sticky element stays in flow at its
+ * natural position until the scroll would take it out of the scrollport.
+ *
+ * **Every breakpoint but `wide`, and the one that is scoped out is scoped out
+ * for a keyboard rather than for a width.** The cure was written for DESIGN
+ * section 4's two narrow layouts on the reading that everything above them is a
+ * desktop with an `Escape` key; the cure round's review measured that reading
+ * and it is false at `medium`, which is 768 to 1023 px and is where every tablet
+ * in portrait sits. Those are touch devices with no `Escape` at all, and the
+ * panel is no shorter there: at 768 x 1024 it still hid 542 px and Close sat 306
+ * px above the fold with nothing at its coordinates, and at 820 x 1180, which is
+ * not a short window by any reading, 366 px and 130 px. So the rule covers them
+ * too.
+ *
+ * `wide` keeps the header in flow, and the reason is `Escape` plus a measured
+ * cost: a sticky box is composited, and Chromium renders the header's own text
+ * differently once it is, which moves the two committed panel baselines by 185
+ * antialiased pixels with nothing laid out differently. Every visual baseline
+ * this project has agreed on is taken at 1280 x 800, which is `wide` and is the
+ * only breakpoint that cost is charged at, so extending the rule to `medium`
+ * moves no baseline. */
+.bj-shell[data-breakpoint='medium'] .bj-overlay__header,
+.bj-shell[data-breakpoint='compact'] .bj-overlay__header,
+.bj-shell[data-breakpoint='portrait'] .bj-overlay__header {
+  position: sticky;
+  top: 0;
 }
 
 /* At 200 percent text the platform font can make the two header labels wider

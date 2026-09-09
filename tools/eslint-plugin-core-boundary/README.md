@@ -12,7 +12,7 @@ Nothing under a `core/` directory may:
 
 | Rule | Rejects |
 |---|---|
-| `no-forbidden-imports` | Any specifier with a `render` or `ui` path segment, and anything under `@js-games/engine/render`. Covers `import`, `export ... from`, dynamic `import()`, `require()`, `import x = require()` and `import('...')` in a type position. Specifiers written as **template literals with no expression** count, because every bundler resolves them statically; one carrying an expression, or a concatenation, is not read and is passed |
+| `no-forbidden-imports` | Any specifier with a `render` or `ui` path segment, and anything under `@js-games/engine/render`. Covers `import`, `export ... from`, dynamic `import()`, `require()`, `import x = require()` and `import('...')` in a type position. Specifiers written as **template literals with no expression** count, because every bundler resolves them statically. A **dynamic** specifier the rule cannot read, an interpolated template or a concatenation inside `import()` or `require()`, is refused outright rather than passed: there is no layer to classify, and Vite resolves the interpolated form and emits the chunk |
 | `no-dom` | Any DOM, BOM or canvas global, by scope analysis. Covers value positions, type positions, `globalThis.x`, `self.x`, and a `/// <reference lib="dom" />` comment. **`globalThis` and `self` are refused outright**, whatever the property |
 | `no-math-random` | `Math.random()`, `Math['random']()`, `const { random } = Math`, and **any capture of `Math` itself**: `const m = Math`, `f(Math)`, `Math[key]` |
 
@@ -23,6 +23,12 @@ held by the module-graph walk in `tests/unit/core-boundary.test.ts`: a graph que
 one.
 
 Two of those refusals are broader than they first look, and both are deliberate.
+
+**A dynamic specifier the rule cannot read is refused, not passed.** It is the same argument as the two
+below: a gate that cannot classify what an import reaches has not checked it, and `import(`../${x}audio`)`
+is a form a bundler really does resolve. Only the dynamic forms are refused this way. Every static form
+carries a string literal by grammar, so an unreadable one there means the parser put the specifier
+somewhere the rule did not look, which is a reason to keep reading rather than to report the file.
 
 **`globalThis` and `self` are banned outright inside `core/`, not filtered by property.** A property-level
 check cannot read `globalThis['doc' + 'ument']` or `Reflect.get(globalThis, 'document')`, so no list of

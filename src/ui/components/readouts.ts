@@ -257,7 +257,8 @@ export function createReadouts(): Component {
   });
 
   /**
-   * The breakpoint the disclosure was last set from.
+   * The disclosure policy the open state was last written from, or `null`
+   * before the first frame has resolved one.
    *
    * The open state is written **on a change of what the breakpoint decides, and
    * never otherwise**, so a player who opens the disclosure at `portrait` keeps
@@ -273,7 +274,32 @@ export function createReadouts(): Component {
    * reads off the breakpoint, so a change it does not answer differently is not
    * a change this writer has anything to say about.
    */
-  let appliedBreakpoint: BreakpointName | null = null;
+  let appliedPolicy: boolean | null = null;
+
+  /** The open state this component last wrote, so a player's press is visible. */
+  let appliedOpen = false;
+
+  /**
+   * The answer the player themselves gave under each policy. `AUDIT-2`,
+   * finding `J5-03`.
+   *
+   * A phone turn from 390 x 844 to 844 x 390 crosses 768, so the policy really
+   * does change and the write above is right to run; what was missing is that
+   * the component remembered the policy it had applied and not the state the
+   * player had chosen under it. Turning the phone and turning it back therefore
+   * put eleven readouts a press away again, on the one layout where they are
+   * behind a press at all.
+   *
+   * **The press is read rather than listened for**, on the volume slider's
+   * precedent in `overlays.ts`: a `<details>` is a control the platform
+   * operates, its `toggle` event fires for this component's own writes as
+   * readily as for a finger, and the sync step already runs on every frame. Any
+   * difference between the DOM and the last value written here is the player's
+   * doing, and it is recorded against the policy they did it under, so a return
+   * to that policy restores their answer instead of the default. Keyed by the
+   * policy rather than by the breakpoint name for the same reason the write is.
+   */
+  const chosen = new Map<boolean, boolean>();
 
   /** The balance to print this frame: the count's value, or the machine's. */
   function balanceText(state: ChromeState, dt: number): string {
@@ -320,12 +346,22 @@ export function createReadouts(): Component {
   return {
     root,
     update(state: ChromeState, dt: number): void {
-      const { breakpoint } = state.layout;
-      const wanted = showsEveryReadout(breakpoint);
-      if (appliedBreakpoint === null || wanted !== showsEveryReadout(appliedBreakpoint)) {
-        more.open = wanted;
+      const wanted = showsEveryReadout(state.layout.breakpoint);
+      // The player's own press, taken before anything is written: the DOM
+      // disagreeing with the last value written here is the only way this
+      // component learns that the summary was pressed.
+      if (appliedPolicy !== null && more.open !== appliedOpen) {
+        chosen.set(appliedPolicy, more.open);
+        appliedOpen = more.open;
       }
-      appliedBreakpoint = breakpoint;
+      if (appliedPolicy !== wanted) {
+        // Their answer under the policy being arrived at, and the policy's own
+        // default where they have not given one.
+        const answer = chosen.get(wanted) ?? wanted;
+        more.open = answer;
+        appliedOpen = answer;
+        appliedPolicy = wanted;
+      }
       for (const row of ROWS) {
         const node = values.get(row.key);
         if (node !== undefined) {

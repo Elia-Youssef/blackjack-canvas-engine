@@ -36,7 +36,6 @@
     "@eslint/js": "10.0.1",
     "@playwright/test": "1.62.1",
     "@types/node": "26.2.0",
-    "@vitest/coverage-v8": "4.1.11",
     "axe-core": "4.13.0",
     "eslint": "10.9.0",
     "globals": "17.11.0",

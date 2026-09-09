@@ -493,7 +493,7 @@ describe('I1: one namespaced versioned document, migrated on bump', () => {
     });
 
     it('passes this build version and step map when the caller passes nothing', () => {
-      // The composition root at `BJ-19` calls it with no options, so the
+      // The composition root at `BJ-20` calls it with no options, so the
       // defaults have to be the shipped ones rather than a test's.
       const store = storeHolding(envelopeText(DOCUMENT_VERSION, { bestBalance: 4000 }));
       const loaded = loadDocument(store);

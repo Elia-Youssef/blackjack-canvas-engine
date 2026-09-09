@@ -70,7 +70,6 @@ import {
   SHORT_WIN_STREAK,
   TABLE_MILESTONES,
   THOUSAND_HANDS,
-  isAwarded,
   observeBankrollReset,
   observeRound,
   openSession,
@@ -123,6 +122,21 @@ const SPEC_9_TABLE: readonly { readonly row: number; readonly text: string; read
 
 /** SPEC 9: "**Eleven** permanent, non-monetised achievements." */
 const SPEC_MILESTONE_COUNT = 11;
+
+/**
+ * Whether SPEC 9 has already awarded this one, read here rather than asked.
+ *
+ * `statistics.ts` exported a predicate of exactly this shape until `AUDIT-2`'s
+ * `Z2-05`, and nothing in the game called it: `observeRound`'s award filter
+ * spells the membership test inline, which is the module's one reading of the
+ * "awarded exactly once" rule. Deleting the export left this suite needing the
+ * question answered, and answering it here is the better half of the trade: a
+ * test that asked the module's own helper would agree with a broken filter
+ * forever, where this reading is independent of it.
+ */
+function isAwarded(stats: Statistics, id: MilestoneId): boolean {
+  return stats.milestones.includes(id);
+}
 
 /** SPEC 6's unlock thresholds, written out from that section's table. */
 const SPEC_SILVER_UNLOCK = 2500;

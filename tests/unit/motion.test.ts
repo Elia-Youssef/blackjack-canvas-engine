@@ -82,7 +82,7 @@ import {
   winPulse,
   type PacingName,
 } from '../../src/render/animate';
-import { CHIP_GEOMETRY } from '../../src/render/chips';
+import { CHIP_GEOMETRY, chipStackLayout, wagerToChips } from '../../src/render/chips';
 import {
   SCENE_GEOMETRY,
   createPlaySurface,
@@ -1245,6 +1245,99 @@ describe('E6 armour: no numeral is drawn under a rotated transform', () => {
     expect(turns.filter((angle) => angle === HALF_TURN).length, 'a card turns').toBeGreaterThan(0);
     expect(turns.filter((angle) => angle !== HALF_TURN).length, 'a chip turns').toBeGreaterThan(0);
     expect(textUnderRotation(recording.entries)).toEqual([]);
+  });
+});
+
+describe('AUDIT-2 Z3-04: a chip flies to the place the stack will draw it', () => {
+  /**
+   * Each flying chip's own turn and the position it was turned about, in the
+   * order the layer drew them.
+   *
+   * `withTurn` is the only rotation a chip gets: `translate(x, y)`,
+   * `rotate(angle)`, `translate(-x, -y)`, and the point it translates by is the
+   * chip's position on this frame. So the translate immediately before each
+   * rotate is the reading, which is a structural read of the stream rather than
+   * a count of calls that would drift with anything else the frame drew.
+   */
+  function flyingChips(
+    entries: readonly RecordedEntry[],
+  ): { readonly x: number; readonly y: number; readonly angle: number }[] {
+    const found: { x: number; y: number; angle: number }[] = [];
+    let last: { x: number; y: number } | null = null;
+    for (const entry of entries) {
+      if (entry.kind !== 'call') {
+        continue;
+      }
+      if (entry.op === 'translate') {
+        last = { x: Number(entry.args[0]), y: Number(entry.args[1]) };
+      } else if (entry.op === 'rotate' && last !== null) {
+        found.push({ ...last, angle: Number(entry.args[0]) });
+      }
+    }
+    return found;
+  }
+
+  it('lands each chip exactly where chipStackLayout puts it, angle and all', () => {
+    // The scene's own arithmetic, derived here from the geometry record and the
+    // surface size rather than read out of the renderer: the pending stack sits
+    // at the middle of the felt, and a chip's radius is a fraction of the width.
+    const width = 800;
+    const height = 450;
+    const spot = { x: width / 2, y: height * SCENE_GEOMETRY.pendingChipY };
+    const radius = width * SCENE_GEOMETRY.chipX;
+    const expected = chipStackLayout({
+      x: spot.x,
+      y: spot.y,
+      radius,
+      chips: wagerToChips(FLIGHT_WAGER),
+    });
+    expect(expected).toHaveLength(3);
+
+    const { surface, recording } = recordingSurface();
+    const state = scene({ pendingWager: FLIGHT_WAGER });
+
+    // Frame one at no elapsed time: every chip is new, so all three are at the
+    // rack together and that shared point is the flight's origin.
+    surface.render(state, 0);
+    const start = flyingChips(recording.entries);
+    expect(start, 'three chips left the rack').toHaveLength(3);
+    const origin = start[0];
+    if (origin === undefined) {
+      throw new Error('no chip in flight on the opening frame');
+    }
+    for (const chip of start) {
+      expect(chip.x).toBeCloseTo(origin.x, 9);
+      expect(chip.y).toBeCloseTo(origin.y, 9);
+    }
+
+    // Frame two at exactly half the slide. `slide` is one eased interpolation
+    // between two points, so the fraction covered is `easeOut(0.5)` and
+    // dividing the distance travelled from the origin by it recovers the
+    // destination each chip was told to fly to, with no reading of the
+    // renderer's internals. The ease is asked of `animate.ts` rather than
+    // written out, so this cannot drift from the curve the chip really flew.
+    recording.entries.length = 0;
+    surface.render(state, PACING.chipSlide / 2);
+    const covered = easeOut(0.5);
+    expect(covered, 'a half-elapsed slide has moved somewhere').toBeGreaterThan(0);
+    const midway = flyingChips(recording.entries);
+    expect(midway, 'the three chips are still in the air').toHaveLength(3);
+
+    midway.forEach((chip, index) => {
+      const place = expected[index];
+      if (place === undefined) {
+        throw new Error(`no layout for chip ${String(index)}`);
+      }
+      const where = `chip ${String(index)}`;
+      expect(origin.x + (chip.x - origin.x) / covered, where).toBeCloseTo(place.x, 6);
+      expect(origin.y + (chip.y - origin.y) / covered, where).toBeCloseTo(place.y, 6);
+      // The dash turn travels with the chip, so it does not snap on landing.
+      expect(chip.angle, where).toBeCloseTo(place.angle, 9);
+    });
+
+    // The rise is real rather than three chips at one point, which is what
+    // makes the agreement above worth asserting.
+    expect(expected[2]?.y ?? 0).toBeLessThan(expected[0]?.y ?? 0);
   });
 });
 

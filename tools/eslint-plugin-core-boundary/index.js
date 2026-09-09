@@ -70,11 +70,19 @@ function insideBoundary(filename, boundaryDir) {
  * import through while looking like it checked.
  *
  * **A template literal carrying an expression is not read, and neither is a
- * concatenation.** `AUDIT-2` finding `Z9-04` measured both: `import(`../${x}
- * audio`)` from inside `core/` draws no report, and a bundler that resolves it
- * would ship the chunk. Widening this function to refuse an unreadable dynamic
- * specifier inside `core/` is the open half of that finding; until it lands,
- * this returning `null` means "not statically known" and the import is passed.
+ * concatenation**, so this answers `null` for both. `AUDIT-2` finding `Z9-04`
+ * measured what that used to cost: `import(`../${x}audio`)` from inside `core/`
+ * drew no report at all, and a bundler resolves exactly that form and ships the
+ * chunk. It is not silence any more. A **dynamic** specifier this cannot read is
+ * now refused outright by `no-forbidden-imports`, on the same argument
+ * `globalThis` and `self` are refused on below: a layer the gate cannot
+ * classify is not a layer the gate has checked.
+ *
+ * The refusal is scoped to the dynamic forms, `import()` and `require()`, and
+ * that is deliberate. Every static form carries a string literal by grammar, so
+ * a `null` from one of those means the parser put the specifier somewhere this
+ * function did not look, which is a reason to keep reading the node rather than
+ * to report the file.
  */
 function specifierOf(node) {
   if (!node) {
@@ -162,6 +170,8 @@ const noForbiddenImports = {
         'core/ may not import the ui layer: {{source}}. Chrome is DOM and it depends on core, never the reverse.',
       engineRenderer:
         'core/ may not import the shared engine renderer: {{source}}.',
+      unreadableSpecifier:
+        'core/ may not import from a specifier this rule cannot read: the layer it reaches cannot be classified, so it is refused outright rather than passed. Write the specifier as a string literal.',
     },
   },
 
@@ -188,11 +198,32 @@ const noForbiddenImports = {
       }
     }
 
+    /**
+     * A dynamic specifier this rule cannot read is a report, not a silence.
+     *
+     * `AUDIT-2` finding `Z9-04`: an interpolated template and a concatenation
+     * both reach `specifierOf` as `null`, and Vite resolves the first of them
+     * statically and emits the chunk, so the gate was calling a working
+     * cross-boundary import clean. There is nothing to classify and therefore
+     * nothing to allow-list, so the shape itself is what is refused.
+     */
+    function checkUnreadable(node) {
+      if (!node) {
+        return;
+      }
+      if (specifierOf(node) === null) {
+        context.report({ node, messageId: 'unreadableSpecifier' });
+      }
+    }
+
     return {
       ImportDeclaration: fromSource,
       ExportNamedDeclaration: fromSource,
       ExportAllDeclaration: fromSource,
-      ImportExpression: fromSource,
+      ImportExpression(node) {
+        fromSource(node);
+        checkUnreadable(node.source);
+      },
 
       // `type X = import('../render/felt').Felt`. The property holding the
       // specifier has been called `source`, `argument` and `parameter` across
@@ -212,6 +243,7 @@ const noForbiddenImports = {
           callee.type === 'Identifier' && callee.name === 'require';
         if (isRequire) {
           check(node.arguments[0]);
+          checkUnreadable(node.arguments[0]);
         }
       },
     };

@@ -80,9 +80,9 @@ import {
 } from './core/statistics';
 import {
   actionOf,
+  hint,
   observe,
   openSession as openCoachSession,
-  recommend,
   situationAt,
   strategyTable,
   type CoachAction,
@@ -96,7 +96,7 @@ import {
   type TableOptions,
   type TableReadout,
 } from './core/table';
-import type { Intent, IntentKind, SettledHand } from './core/types';
+import type { Intent, IntentKind, PhaseKind, SettledHand } from './core/types';
 import { createWallet, tableLimits, type TableId } from './core/wallet';
 import { PACING_NAMES, resolveMotion, type Motion } from './render/animate';
 import {
@@ -117,6 +117,7 @@ import { cuesFor, type CueFrame } from './ui/cues';
 import {
   barsStick,
   planSurface,
+  surfaceFloorFor,
   resolveBreakpoint,
   sameSizing,
   type BreakpointName,
@@ -149,7 +150,7 @@ import type {
   OverlayId,
 } from './ui/state';
 import { STORAGE_KEY, mergeDocuments, type GameDocument, type Settings } from './storage/document';
-import { openPersistence, type Persistence } from './storage/persistence';
+import { openPersistence, walletOptionsFor, type Persistence } from './storage/persistence';
 
 import './ui/tokens.css';
 import './ui/chrome.css';
@@ -252,7 +253,6 @@ export interface MotionProbe {
  */
 export interface LayoutProbe {
   readonly breakpoint: BreakpointName;
-  readonly stickyBars: boolean;
   readonly surfaceSize: SurfaceSize;
   /** The logical space this frame drew in. DESIGN section 4's two framings. */
   readonly framing: { readonly width: number; readonly height: number };
@@ -260,11 +260,17 @@ export interface LayoutProbe {
   readonly scale: number;
   /** The same, at 100 percent: what the layout would choose on its own. */
   readonly baseScale: number;
-  /** The surface's CSS box and its backing store, in their own units. */
+  /**
+   * The surface's CSS width and the backing-store scale it was planned at.
+   *
+   * The height and the backing store's own two numbers were here until
+   * `AUDIT-2`'s finding `X3-07` and nothing read them: `surface-scale.spec.ts`
+   * measures the canvas box and its `width` attribute from the DOM and
+   * cross-checks them against these two, so the probe's own copies of the other
+   * three were a second answer nobody asked. The rule above is what removed
+   * them, rather than an exception to it.
+   */
   readonly cssWidth: number;
-  readonly cssHeight: number;
-  readonly storeWidth: number;
-  readonly storeHeight: number;
   readonly dpr: number;
   /**
    * What the last frame resolved for item `E8`'s card-legibility fan floor.
@@ -328,8 +334,6 @@ export interface AudioProbe {
   readonly muted: boolean;
   /** SPEC 14's volume, after the engine's clamping. */
   readonly volume: number;
-  /** Whether the first gesture has been answered, however it answered. */
-  readonly started: boolean;
   /** How many times each of SPEC 15's thirteen cues has been offered. */
   readonly cues: Readonly<Record<CueId, number>>;
   /** The same counts, keyed `cue@phase`. */
@@ -691,16 +695,20 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
   const restored = persistence.restored();
   const persisted: GameDocument = restored.document;
   // QUALITY-BAR section 8's last clause needs an answer, not only a sentence:
-  // the store's probe has already run by here, and on a browser that refuses
-  // site data the session plays out of the memory fallback and carries nothing.
-  // Read once, because that is when the probe ran.
-  const durable = persistence.readout().durable;
+  // on a browser that refuses site data the session plays out of the memory
+  // fallback and carries nothing, and on a full one every write throws and it
+  // carries nothing either. `carryDegraded` is both, so it is what the chrome
+  // is given; it is read in `chromeState` below rather than here, because
+  // unlike the boot probe's own answer it moves during a session (`AUDIT-2`,
+  // finding `J3-02`).
 
-  const wallet = createWallet(
-    options.bestBalance === undefined
-      ? { bestBalance: persisted.bestBalance }
-      : { bestBalance: options.bestBalance },
-  );
+  // The one `createWallet` call in the game that carries a persisted mark, and
+  // it goes through `walletOptionsFor` because that helper is where the
+  // `exactOptionalPropertyTypes` seam is written down (`AUDIT-2`, `Z6-01`: this
+  // root used to spell the seam again and the loader built a second wallet
+  // nobody played on). `document.ts`'s `markOf` sanitised the figure ahead of
+  // the constructor, which throws on a bad one by contract.
+  const wallet = createWallet(walletOptionsFor(options.bestBalance ?? persisted.bestBalance));
   // SPEC 14's house rules, as the session opens with them: what was persisted,
   // with anything the boot options name on top. The table is built from this
   // record and owns it from there on, which is the whole of `AUDIT-2`'s finding
@@ -1019,16 +1027,26 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
    * handed to the plan and to the chrome, is the same discipline `resolveMotion`
    * already has for the motion policy.
    */
-  function layoutNow(): LayoutState {
+  function layoutNow(phase: PhaseKind): LayoutState {
     const viewport = viewportNow();
     return {
       breakpoint: resolveBreakpoint(viewport),
-      stickyBars: barsStick(viewport, chromeHeights(chrome.shell)),
+      // The floor the sticky decision is made against is the current screen's,
+      // because a screen with no hand in play has no picture to keep room for
+      // and paying for one puts its own controls below the fold (`AUDIT-2`,
+      // finding `J7-01`). The stylesheet selects the same two screens off
+      // `data-phase`, so the arithmetic here and the grid track there are one
+      // decision written twice rather than two rules that can disagree.
+      stickyBars: barsStick(
+        viewport,
+        chromeHeights(chrome.shell),
+        surfaceFloorFor(phase, overlay !== null),
+      ),
       surfaceSize,
     };
   }
 
-  let layout: LayoutState = layoutNow();
+  let layout: LayoutState = layoutNow(table.readout().phase.kind);
   let plan: SurfacePlan = planSurface(
     stageBox(chrome.shell.body),
     layout.breakpoint,
@@ -1080,7 +1098,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       reducedMotion,
       stagedRules: table.stagedRules(),
       hint: currentHint(readout),
-      durable,
+      carryDegraded: persistence.readout().carryDegraded,
     };
   }
 
@@ -1092,16 +1110,18 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
    * and the recorded verdict cannot disagree about what was recommended. The
    * lookup only happens in hint mode: `strategy.ts` gates the mode itself,
    * and an off coach is one that never ran rather than one that ran quietly.
+   *
+   * **The gate is asked, not repeated** (`AUDIT-2`, finding `Z4-06`). This
+   * function used to test the mode here and call `recommend` directly, which
+   * made `strategy.hint`'s own sentence about owning the gate false and left
+   * SPEC 7's rule with two readings that agreed only by inspection.
    */
   function currentHint(readout: TableReadout): CoachAction | null {
-    if (coachMode !== 'hint') {
-      return null;
-    }
     const situation = situationAt(readout);
     if (situation === null) {
       return null;
     }
-    return recommend(chart, situation)?.action ?? null;
+    return hint(coachMode, chart, situation)?.action ?? null;
   }
 
   /**
@@ -1163,7 +1183,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     // the reason carries an age, and both clears wait for it.
     const refused = report.rejected.at(-1);
     if (refused !== undefined && !refused.ok) {
-      notice = { intent: refused.kind, layer: refused.layer, reason: refused.reason };
+      notice = { layer: refused.layer, reason: refused.reason };
       noticeAge = 0;
     } else if (applied !== null && noticeAge >= NOTICE_FLOOR_SECONDS) {
       notice = null;
@@ -1284,7 +1304,7 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     // the new layout is written in the chrome sync at the end of this frame and
     // the box is measured at the top of the next one; the machine's state is
     // untouched by either, which is what item `F5` is about.
-    layout = layoutNow();
+    layout = layoutNow(readout.phase.kind);
     const wanted = planSurface(
       stageBox(chrome.shell.body),
       layout.breakpoint,
@@ -1381,15 +1401,11 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
     }),
     layout: (): LayoutProbe => ({
       breakpoint: layout.breakpoint,
-      stickyBars: layout.stickyBars,
       surfaceSize: layout.surfaceSize,
       framing: { width: plan.framing.width, height: plan.framing.height },
       scale: plan.scale,
       baseScale: plan.baseScale,
       cssWidth: plan.sizing.width,
-      cssHeight: plan.sizing.height,
-      storeWidth: surface.surface.canvas.width,
-      storeHeight: surface.surface.canvas.height,
       dpr: plan.sizing.dpr,
       fan: surface.fan(),
     }),
@@ -1419,7 +1435,6 @@ function bootSession(options: BootOptions, carriedPersistence?: Persistence): Ga
       return {
         muted: audio.muted(),
         volume: audio.volume(),
-        started: audio.started(),
         cues: audio.offered(),
         cuePhases: audio.offeredInPhase(),
       };

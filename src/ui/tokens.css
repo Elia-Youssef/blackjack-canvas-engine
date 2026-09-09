@@ -283,15 +283,21 @@
  * theme uses one block up, applied to a third palette that is the platform's
  * rather than ours.
  *
- * **The `--chip-*` and `--felt-*` tokens are the second clause of that sentence
- * and are re-pointed too.** They are the play surface's colours, and the chip
- * controls in the betting bar are the one place a chrome element spends one:
- * SPEC 16 gives the chips their denominational colours and the chrome repeats
- * them so a tapped chip looks like the chip that lands on the felt. Under forced
- * colors that dependency has to end, and it ends here. **Nothing on the canvas
- * is affected by this block**: the play surface reads `src/render/tokens.ts`,
- * never `var()`, which is the whole reason that file exists and is why
- * QUALITY-BAR section 5 asks for a separate high-contrast set for it.
+ * **The `--chip-*` set is the second clause of that sentence, and it is the only
+ * play-surface set this block re-points.** The chip controls in the betting bar
+ * are the one place a chrome element spends a play-surface colour: SPEC 16 gives
+ * the chips their denominational colours and the chrome repeats them so a tapped
+ * chip looks like the chip that lands on the felt. Under forced colors that
+ * dependency has to end, and it ends here. The `--felt-*`, `--card-*` and
+ * `--rank-*` sets are declared in this file for the four-way agreement alone,
+ * QUALITY-BAR section 15 and SPEC 16 against this file and `src/render/tokens.ts`,
+ * which `tests/unit/tokens.test.ts` holds; no rule in `src/ui/chrome.css` spends
+ * one, so there is nothing here for the query to re-point, and the reason item
+ * `G9`'s clause holds is that absence rather than a re-pointing. **Nothing on the
+ * canvas is affected by this block**: the play surface reads
+ * `src/render/tokens.ts`, never `var()`, and forced colors reaches it through
+ * that file's `HIGH_CONTRAST_PALETTE`, which is the whole reason the file exists
+ * and is why QUALITY-BAR section 5 asks for a separate high-contrast set for it.
  *
  * The browser also forces most of these properties on its own. Declaring
  * them anyway is what makes the intent explicit and testable, and what covers

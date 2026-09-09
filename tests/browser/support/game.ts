@@ -596,6 +596,23 @@ export interface PageMetrics {
 /** The containers that may scroll horizontally by design. DESIGN section 4. */
 export const DESIGNED_SCROLLERS = ['.bj-chips', '.bj-stage'];
 
+/**
+ * Everything that may scroll at all, on either axis. `AUDIT-2`, finding `J7-02`.
+ *
+ * The two above plus `.bj-overlay`, which is the one element in the whole chrome
+ * with `overflow: auto` and hides 299 to 447 CSS pixels of its own content at
+ * portrait sizes. Its scrolling is deliberate, `tests/browser/text-scale.spec.ts`
+ * already calls it a scroller by design, but the exemption was written in a
+ * different file from the rule that would otherwise refuse it, and the rule was
+ * a horizontal one over five literal selectors that did not include it.
+ *
+ * Derived from the horizontal list rather than written out beside it, so the two
+ * cannot drift into being two lists. The horizontal one stays narrower on
+ * purpose: the overlay does not overflow horizontally, and exempting it there
+ * would give away a check it passes.
+ */
+export const DESIGNED_SCROLLERS_ANY_AXIS = [...DESIGNED_SCROLLERS, '.bj-overlay'];
+
 export async function pageMetrics(page: Page): Promise<PageMetrics> {
   return page.evaluate(() => {
     const root = document.documentElement;
@@ -776,6 +793,12 @@ export interface LayoutReport {
   readonly stickyBars: string;
   readonly surfaceSize: string;
   readonly phase: string;
+  /**
+   * Which overlay is open, or `null` when none is. `AUDIT-2`, finding `J7-01`:
+   * the play-surface row's floor depends on it, because SPEC 10's panels are
+   * positioned inside that row and its height is theirs.
+   */
+  readonly overlay: string | null;
   readonly inner: { readonly width: number; readonly height: number };
   readonly doc: {
     readonly scrollWidth: number;
@@ -794,6 +817,29 @@ export interface LayoutReport {
       readonly clientHeight: number;
     }
   >;
+  /**
+   * Every rendered element under the shell that scrolls its own content, on
+   * either axis, found by walking the DOM. `AUDIT-2`, finding `J7-02`.
+   *
+   * The record above is five literal selectors, so "everything else must not
+   * scroll" was in fact three elements once the two designated ones were
+   * skipped, and the assertion applied to them compared `scrollWidth` alone. An
+   * element outside the five, or one that scrolled vertically inside itself,
+   * passed unseen.
+   *
+   * `designated` is the selector from `DESIGNED_SCROLLERS_ANY_AXIS` the element
+   * matches, or `null`, so the caller asserts a set rather than a list of names.
+   *
+   * An axis counts only where its computed overflow is `auto` or `scroll`: the
+   * reasoning is at the walk itself, and it is what makes "scrolls its own
+   * content" the question rather than "is any content outside the box".
+   */
+  readonly overflowing: readonly {
+    readonly key: string;
+    readonly designated: string | null;
+    readonly overflowX: number;
+    readonly overflowY: number;
+  }[];
   readonly styles: LayoutStyles;
   readonly readouts: readonly {
     readonly key: string;
@@ -844,7 +890,7 @@ export interface LayoutStyles {
  * each assert a different subset; nothing here decides anything.
  */
 export async function layoutReport(page: Page): Promise<LayoutReport> {
-  return page.evaluate(() => {
+  return page.evaluate((designated: readonly string[]) => {
     const root = document.documentElement;
     const shell = document.querySelector('.bj-shell');
     const rect = (selector: string): Box | null => {
@@ -942,6 +988,60 @@ export async function layoutReport(page: Page): Promise<LayoutReport> {
       }
     }
 
+    // Every rendered element under the shell that **scrolls its own content**,
+    // on either axis, with the designated selector it matches or `null`.
+    // Walked rather than listed: `scrollers` above is five selectors, and the
+    // clause the caller asserts is about everything.
+    //
+    // **A scroller is an axis whose computed overflow is `auto` or `scroll`,
+    // and that is the clause rather than a convenience.** What
+    // `DESIGNED_SCROLLERS` is about is content that exists, is out of sight, and
+    // can only be reached by a gesture inside the container: an element that
+    // absorbs its own overflow. An axis at `visible` hides nothing, and one at
+    // `hidden` hides content nothing can scroll to, which is a clipping question
+    // the surface and control clauses answer directly. Measured while this was
+    // built: a census over every axis regardless of its overflow value reports
+    // `.bj-visually-hidden` and everything drawn inside its one-pixel box, and
+    // reports two to four transient pixels on `.bj-body`, which clips, for the
+    // frames an overlay is sliding in or a canvas has not been resized yet.
+    // None of those is a scroller and none is reachable by a gesture.
+    const scrolls = (value: string): boolean => value === 'auto' || value === 'scroll';
+    const overflowing: {
+      key: string;
+      designated: string | null;
+      overflowX: number;
+      overflowY: number;
+    }[] = [];
+    if (shell !== null) {
+      for (const node of [shell, ...shell.querySelectorAll('*')]) {
+        const box = node.getBoundingClientRect();
+        if (box.width <= 0 || box.height <= 0) {
+          continue;
+        }
+        const style = getComputedStyle(node);
+        if (style.display === 'none' || style.visibility === 'hidden') {
+          continue;
+        }
+        // One pixel of tolerance on each axis, the same rounding allowance the
+        // horizontal clause has always carried.
+        const overflowX = scrolls(style.overflowX) ? node.scrollWidth - node.clientWidth : 0;
+        const overflowY = scrolls(style.overflowY) ? node.scrollHeight - node.clientHeight : 0;
+        if (overflowX <= 1 && overflowY <= 1) {
+          continue;
+        }
+        const classes =
+          typeof node.className === 'string' && node.className.trim() !== ''
+            ? `.${node.className.trim().split(/\s+/).join('.')}`
+            : '';
+        overflowing.push({
+          key: `${node.tagName.toLowerCase()}${classes}`,
+          designated: designated.find((selector) => node.matches(selector)) ?? null,
+          overflowX,
+          overflowY,
+        });
+      }
+    }
+
     const styleOf = (selector: string, property: string): string => {
       const node = document.querySelector(selector);
       return node === null ? '' : getComputedStyle(node).getPropertyValue(property);
@@ -962,6 +1062,7 @@ export async function layoutReport(page: Page): Promise<LayoutReport> {
       stickyBars: shell?.getAttribute('data-sticky-bars') ?? '',
       surfaceSize: shell?.getAttribute('data-layout-size') ?? '',
       phase: shell?.getAttribute('data-phase') ?? '',
+      overlay: shell?.getAttribute('data-overlay') ?? null,
       inner: { width: window.innerWidth, height: window.innerHeight },
       doc: {
         scrollWidth: root.scrollWidth,
@@ -979,6 +1080,7 @@ export async function layoutReport(page: Page): Promise<LayoutReport> {
       },
       controls,
       scrollers,
+      overflowing,
       styles: {
         topPosition: styleOf('.bj-top', 'position'),
         controlsPosition: styleOf('.bj-controls', 'position'),
@@ -993,7 +1095,7 @@ export async function layoutReport(page: Page): Promise<LayoutReport> {
       },
       readouts,
     };
-  });
+  }, DESIGNED_SCROLLERS_ANY_AXIS);
 }
 
 /** Every control the report found, by the key `layoutReport` names it with. */

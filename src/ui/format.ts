@@ -123,7 +123,13 @@ const PERCENT_SCALE = 100;
  *
  * Every quantity in this game is an integer number of chips (SPEC 4.11: there
  * is no rounding rule, because no case requires one), so a fraction reaching
- * `chips` would be a defect upstream and is not formatted away.
+ * `chips` would be a defect upstream. **It would not show as one here**
+ * (`AUDIT-2`, finding `Z4-07`): `maximumFractionDigits: 0` rounds to the
+ * nearest integer and renders an exact-looking one, so 0.5 prints as "1" with
+ * no trace. That is why the invariant is kept upstream, where the wager grid
+ * and the payout table make it true, rather than looked for at the formatter.
+ * `percentOfHundred` below is the one figure that is deliberately truncated
+ * instead, and it says why.
  */
 export function createFormatters(locales: readonly string[]): Formatters {
   const whole = new Intl.NumberFormat(locales, { maximumFractionDigits: 0 });

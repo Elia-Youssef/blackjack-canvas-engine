@@ -49,7 +49,7 @@ import { describe, expect, it } from 'vitest';
 import type { Rank } from '../../src/core/cards';
 import { handValue } from '../../src/core/hand';
 import type { History, HistoryEntry } from '../../src/core/history';
-import { HISTORY_LIMIT, NO_HISTORY, clear, record } from '../../src/core/history';
+import { HISTORY_LIMIT, NO_HISTORY, record } from '../../src/core/history';
 import { houseRules } from '../../src/core/rules';
 import type { CoachVerdict } from '../../src/core/strategy';
 import { actionOf, compare, situationAt, strategyTable } from '../../src/core/strategy';
@@ -799,13 +799,34 @@ describe('J5: SPEC 8 hand history', () => {
   });
 
   describe('cleared only by a full data reset', () => {
-    it('clears to empty, which is item I5 control at BJ-20', () => {
+    it('clears through the reset item I5 actually calls, not a core helper', () => {
+      // `AUDIT-2`, finding `X3-09`: `history.ts` used to export a `clear()`
+      // whose doc named the Settings control as its caller and which nothing
+      // called. The control removes the stored document and the game re-boots,
+      // so this is the route the entries really go by, driven end to end.
       const history = record(NO_HISTORY, playRound(dealing(PLAIN)).readout, null);
       expect(history).toHaveLength(1);
-      expect(clear()).toHaveLength(0);
-      expect(clear()).toEqual(NO_HISTORY);
-      // The value handed to the caller is untouched by the clear, because the
-      // module replaces rather than mutates.
+
+      const store = createMemoryStore();
+      expect(
+        createPersistence({ store, durable: true, failure: null }).update({ history }).ok,
+      ).toBe(true);
+      // A launch over the seeded store, which is the session a player would be
+      // holding when they open Settings.
+      const persistence = createPersistence({ store, durable: true, failure: null });
+      expect(persistence.restored().history).toHaveLength(1);
+
+      expect(persistence.resetAll().ok).toBe(true);
+      expect(persistence.document().history).toEqual(NO_HISTORY);
+      expect(persistence.restored().history).toEqual(NO_HISTORY);
+      // A re-boot over the emptied store finds nothing to restore, which is the
+      // half a caller of the deleted helper would never have exercised.
+      expect(createPersistence({ store, durable: true, failure: null }).restored().history).toEqual(
+        NO_HISTORY,
+      );
+
+      // The value the caller was holding is untouched: the module replaces
+      // rather than mutates, and a reset is a new document rather than an edit.
       expect(history).toHaveLength(1);
     });
 

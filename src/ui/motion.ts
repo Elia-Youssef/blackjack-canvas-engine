@@ -123,7 +123,12 @@ export function createMotionPreference(options: MotionPreferenceOptions = {}): M
   // a host that has not been asked, and defaulting to reduced there would
   // remove the animation from every environment the game is unit tested in and
   // hide the difference `E7` exists to measure. All three engines the browser
-  // gate runs carry it; `src/ui/platform.ts`'s guard is for the headless runner.
+  // gate runs carry it; `src/ui/platform.ts`'s guard is for the headless runner,
+  // and `tests/unit/platform.test.ts` is where the runner reaches it, by
+  // building this preference with no query at all under `environment: 'node'`.
+  // Every other unit construction passes `query`, which is the branch that
+  // skips the guard, so until that file existed the sentence above named a
+  // reader that did not read (`AUDIT-2`, finding `Z5-03`).
   const query = options.query === undefined ? mediaQuery(REDUCED_MOTION_QUERY) : options.query;
   let alwaysReduce = options.alwaysReduce ?? false;
   let system = query?.matches ?? false;

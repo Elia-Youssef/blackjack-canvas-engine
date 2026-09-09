@@ -20,9 +20,11 @@
 import type { HouseRules } from '../../../src/core/rules';
 import type { Table } from '../../../src/core/table';
 import { createTable } from '../../../src/core/table';
+import { createWallet } from '../../../src/core/wallet';
 import type { GameDocument } from '../../../src/storage/document';
 import { DOCUMENT_VERSION, STORAGE_KEY } from '../../../src/storage/document';
 import type { RestoredSession } from '../../../src/storage/persistence';
+import { walletOptionsFor } from '../../../src/storage/persistence';
 import type { KeyValueStore, StorageLike } from '../../../src/storage/store';
 import { createMemoryStore } from '../../../src/storage/store';
 
@@ -182,16 +184,22 @@ export function documentText(document: GameDocument): string {
  * Did the game start? SPEC 10's opening screen through to SPEC 10's betting
  * screen, on the seat and the rules the restored session produced.
  *
- * This is the boot-shaped path in one call: the wallet the loader built, the
- * table `launchTable` chose and the house rules the settings carried, all
- * handed to the real phase machine, with the real `start` intent applied. SPEC
- * 10's `start` refuses a table SPEC 6 does not open, so a seat the loader
- * salvaged badly fails here rather than passing quietly.
+ * This is the boot-shaped path in one call: a wallet built from the salvaged
+ * mark the way `src/main.ts` builds it, the table `launchTable` chose and the
+ * house rules the settings carried, all handed to the real phase machine, with
+ * the real `start` intent applied. SPEC 10's `start` refuses a table SPEC 6
+ * does not open, so a seat the loader salvaged badly fails here rather than
+ * passing quietly.
+ *
+ * The wallet is constructed here rather than taken off the session because
+ * `AUDIT-2`'s `Z6-01` deleted the loader's own: the composition root is the one
+ * caller, and `createWallet(walletOptionsFor(document.bestBalance))` is the
+ * call it makes, so this is the path the corrupt matrix has to run over.
  */
 export function reachesBetting(session: RestoredSession): boolean {
   const rules: HouseRules = session.settings.rules;
   const table: Table = createTable({
-    wallet: session.wallet,
+    wallet: createWallet(walletOptionsFor(session.document.bestBalance)),
     table: session.launch.table,
     rules,
   });

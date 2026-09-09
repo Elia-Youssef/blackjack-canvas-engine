@@ -33,7 +33,7 @@ fail.
 | `cards.ts` | `Rank`, `Suit`, `Card`, the card factory, and what a rank is worth | `BJ-2` | `B1` |
 | `hand.ts` | Value, soft or hard, bust, natural | `BJ-2` | `B1` |
 | `hand.ts` | `canSplit`, the pair test of SPEC 4.6. Built here, **graded by `B10`** at `BJ-8` | `BJ-2` | `B10` |
-| `rng.ts` | The seeded stream: `nextUint32`, `nextFloat`, `nextInt` and the uniform `shuffle` | `BJ-3` | `B2` |
+| `rng.ts` | The seeded stream: `nextUint32`, `nextInt` and the uniform `shuffle` | `BJ-3` | `B2` |
 | `rng.ts` | `split()` and determinism. Built here, **graded by `B16`** at `BJ-12` | `BJ-3` | `B16` |
 | `shoe.ts` | Composition, shuffle, draw, the cut card, penetration, the defensive rebuild | `BJ-3` | `B2` `B3` |
 | `dealer.ts` | `shouldHit`: the S17 policy of SPEC 4.9, as one comparison | `BJ-4` | `B8` |

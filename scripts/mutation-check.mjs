@@ -514,10 +514,17 @@ const HISTORY_PANEL = browserGate('history-panel.spec.ts');
  */
 function reportGate(name) {
   // `report:lighthouse` needs its tool present. The npm script installs it
-  // pinned and unrecorded, for the reason `scripts/report/lighthouse.mjs`
-  // gives; this harness runs the report directly, so a sweep on a checkout that
-  // has never run that script will report its two entries undetected rather
-  // than red. Run `npm run report:lighthouse` once before a sweep.
+  // pinned and unrecorded, for the reason `scripts/report/lighthouse.mjs` gives;
+  // this harness runs the report directly, so on a checkout where the tool has
+  // never been installed the gate exits non-zero from a failed import after
+  // paying for one vite build, without printing a report verdict. `LIGHTHOUSE`
+  // is the `detectedBy` of two entries and is therefore in the baseline command
+  // set, so that happens during the baseline: `classifyGateRun` refuses a gate
+  // that exited without its own verdict, and the sweep stops there having
+  // measured nothing. It does not silently record two entries either way, which
+  // is the outcome that would matter: a `passes`-style reading with no baseline
+  // would have made a missing tool look like two gates working. Run
+  // `npm run report:lighthouse` once before a sweep.
   return {
     label: `npm run report:${name}`,
     bin: join(PROJECT_ROOT, 'scripts', 'report', 'gate.mjs'),
@@ -537,7 +544,7 @@ const LIGHTHOUSE = reportGate('lighthouse');
  * `find` must appear exactly once, so a mutation cannot silently stop applying
  * after a refactor: this script fails loudly instead.
  */
-const EDITS = [
+const EDITS = Object.freeze([
   {
     item: 'M3',
     name: 'the DOM rule is switched off in the lint config',
@@ -790,14 +797,6 @@ const EDITS = [
     file: 'src/core/rng.ts',
     find: '      const draw = nextUint32() >>> shift;',
     replace: '      const draw = nextUint32() % bound;',
-    detectedBy: UNIT,
-  },
-  {
-    item: 'B2',
-    name: 'nextFloat divides by 2^32 - 1, so 1 becomes reachable',
-    file: 'src/core/rng.ts',
-    find: '    return nextUint32() / UINT32_SPAN;',
-    replace: '    return nextUint32() / (UINT32_SPAN - 1);',
     detectedBy: UNIT,
   },
   {
@@ -2298,11 +2297,11 @@ const EDITS = [
     item: 'C2',
     name: "choosing a table stops checking SPEC 6's entry rule",
     file: 'src/core/table.ts',
-    find:
-      '        if (!canEnter(intent.table, state.bestBalance, state.chips)) {\n' +
-      "          return refused('chooseTable', 'wallet', 'table-locked');\n" +
-      '        }',
-    replace: '        void state;',
+    // AUDIT-2 re-pointed this: the arm asks `seatOpen`, which folds membership
+    // in front of the lock, so the anchor moved. The mutant is unchanged in
+    // meaning: the guard stops guarding.
+    find: '        if (!seatOpen(intent.table, wallet.readout())) {',
+    replace: '        if (false) {',
     detectedBy: UNIT,
   },
   {
@@ -2312,11 +2311,9 @@ const EDITS = [
     item: 'C2',
     name: "Start stops checking SPEC 6's entry rule for the table it is seated at",
     file: 'src/core/table.ts',
-    find:
-      '        if (!canEnter(selected, state.bestBalance, state.chips)) {\n' +
-      "          return refused('start', 'wallet', 'table-locked');\n" +
-      '        }',
-    replace: '        void state;',
+    // AUDIT-2 re-pointed this alongside its sibling above, same reason.
+    find: '        if (!seatOpen(selected, wallet.readout())) {',
+    replace: '        if (false) {',
     detectedBy: UNIT,
   },
   {
@@ -2824,7 +2821,8 @@ const EDITS = [
     item: 'B11',
     name: 'the ordinary offer stops checking that the balance covers the stake',
     file: 'src/core/table.ts',
-    find: '        if (!offer.evenMoney && wallet.readout().chips < offer.stake) {',
+    // AUDIT-2 re-pointed: the funding half moved onto `canFund` at Z1-02.
+    find: '        if (!offer.evenMoney && !canFund(offer.stake, wallet.readout().chips)) {',
     replace: '        if (offer.stake < 0) {',
     detectedBy: UNIT,
   },
@@ -2832,8 +2830,9 @@ const EDITS = [
     item: 'B11',
     name: 'even money is refused when the balance cannot cover it',
     file: 'src/core/table.ts',
-    find: '        if (!offer.evenMoney && wallet.readout().chips < offer.stake) {',
-    replace: '        if (wallet.readout().chips < offer.stake) {',
+    // AUDIT-2 re-pointed: same line, same reason.
+    find: '        if (!offer.evenMoney && !canFund(offer.stake, wallet.readout().chips)) {',
+    replace: '        if (!canFund(offer.stake, wallet.readout().chips)) {',
     detectedBy: UNIT,
   },
   {
@@ -4308,9 +4307,26 @@ const EDITS = [
     item: 'I3',
     name: 'the session scope stops being projected out at the write',
     file: 'src/storage/persistence.ts',
+    // AUDIT-2 re-pointed: X4-04 moved the encode above the handler's `try`.
+    find: '  const encoded = JSON.stringify(sealEnvelope(openDocumentSession(document)));',
+    replace: '  const encoded = JSON.stringify(sealEnvelope(document));',
+    detectedBy: UNIT,
+  },
+  {
+    // AUDIT-2 X4-04: the encoder used to sit inside the handler, so a throw out
+    // of this project's own document layer was labelled a storage write
+    // failure, counted and flipped into `carryDegraded` over a store that was
+    // working. Putting it back inside is the mutation.
+    item: 'I3',
+    name: 'the document encoder goes back inside the storage handler',
+    file: 'src/storage/persistence.ts',
     find:
+      '  const encoded = JSON.stringify(sealEnvelope(openDocumentSession(document)));\n' +
+      '  try {\n' +
+      '    store.write(STORAGE_KEY, encoded);',
+    replace:
+      '  try {\n' +
       '    store.write(STORAGE_KEY, JSON.stringify(sealEnvelope(openDocumentSession(document))));',
-    replace: '    store.write(STORAGE_KEY, JSON.stringify(sealEnvelope(document)));',
     detectedBy: UNIT,
   },
   {
@@ -4334,7 +4350,9 @@ const EDITS = [
   },
   {
     item: 'I3',
-    name: 'a reset stops rebuilding the session, so the old wallet survives it',
+    // AUDIT-2 Z6-01 renamed this: the session carries no wallet any more, and
+    // what survives a reset that skips the rebuild is the old launch itself.
+    name: 'a reset stops rebuilding the session, so the old launch survives it',
     file: 'src/storage/persistence.ts',
     find: '    restored = restoreFrom(current);',
     replace: '    void current;',
@@ -4561,6 +4579,27 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // AUDIT-2 Z3-04: the scene re-derived the rest point beside the function
+    // that decides it, so a change to the layout would have moved the landed
+    // chip and not the place the flying one was told to land, and the chip
+    // would jump on the frame it arrived. Both halves of the coupling are
+    // pinned, because the position and the turn are separate fields.
+    item: 'E6',
+    name: 'a chip flies to the base of the stack instead of its own place in it',
+    file: 'src/render/scene.ts',
+    find: '          const at = slide(origin, { x: place.x, y: place.y }, progress);',
+    replace: '          const at = slide(origin, { x: full.x, y: full.y }, progress);',
+    detectedBy: UNIT,
+  },
+  {
+    item: 'E6',
+    name: 'a flying chip carries no dash turn, so it snaps on landing',
+    file: 'src/render/scene.ts',
+    find: '            angle: place.angle,',
+    replace: '            angle: 0,',
+    detectedBy: UNIT,
+  },
+  {
     item: 'E4',
     name: 'every chip fills in the 10 colour regardless of denomination',
     file: 'src/render/chips.ts',
@@ -4589,6 +4628,18 @@ const EDITS = [
       '    `BLACKJACK PAYS ${String(NATURAL_PAYS.numerator)} TO ${String(NATURAL_PAYS.denominator)}`,',
     replace:
       '    `BLACKJACK PAYS ${String(NATURAL_PAYS.numerator)} TO ${String(NATURAL_PAYS.denominator)}`,',
+    detectedBy: UNIT,
+  },
+  {
+    // AUDIT-2 Z3-06: the cache key's freeze was one level deep, so the nested
+    // limits record was the caller's own object and unfrozen, and one write to
+    // it from outside left an entry no spec could match again in a cache of
+    // four. The mutant is the shallow form the finding measured.
+    item: 'H5',
+    name: 'the felt cache key freezes only its outer shell',
+    file: 'src/render/felt.ts',
+    find: '    spec: Object.freeze({ ...spec, limits: Object.freeze({ ...spec.limits }) }),',
+    replace: '    spec: Object.freeze({ ...spec }),',
     detectedBy: UNIT,
   },
   {
@@ -4739,8 +4790,8 @@ const EDITS = [
     item: 'B15',
     name: 'the chip rack disables the 500 by name instead of by the ceiling',
     file: 'src/ui/components/betting.ts',
-    find: '        const enabled = chipEnabled(denomination, limits, balance);',
-    replace: '        const enabled = denomination !== 500;',
+    find: '        const refusal = chipRefusal(denomination, limits, balance);',
+    replace: "        const refusal = denomination === 500 ? 'chip-over-ceiling' : null;",
     detectedBy: BETTING,
   },
   {
@@ -5319,8 +5370,9 @@ const EDITS = [
     item: 'F1',
     name: 'the bars stick wherever the threshold allows, with or without room',
     file: 'src/ui/breakpoints.ts',
-    find:
-      '  return chrome.top + chrome.controls + chrome.overhead + MIN_SURFACE_HEIGHT <= viewport.height;',
+    // AUDIT-2 re-pointed this: the sum takes the screen's own floor rather
+    // than the flat constant, so the anchor moved. Same mutant.
+    find: '  return chrome.top + chrome.controls + chrome.overhead + floor <= viewport.height;',
     replace: '  return true;',
     detectedBy: BREAKPOINTS,
   },
@@ -5330,7 +5382,7 @@ const EDITS = [
     item: 'F1',
     name: 'the sticky decision forgets the play surface needs room too',
     file: 'src/ui/breakpoints.ts',
-    find: '  return chrome.top + chrome.controls + chrome.overhead + MIN_SURFACE_HEIGHT <= viewport.height;',
+    find: '  return chrome.top + chrome.controls + chrome.overhead + floor <= viewport.height;',
     replace: '  return chrome.top + chrome.controls + chrome.overhead <= viewport.height;',
     detectedBy: BREAKPOINTS,
   },
@@ -5415,27 +5467,29 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
-    // AUDIT-1 re-pointed this: the write is keyed on the disclosure policy
-    // rather than on the breakpoint's name, so the line it lands on now reads
-    // the resolved answer. The mutant is unchanged in meaning.
+    // AUDIT-1 re-pointed this once and AUDIT-2 again: the component now
+    // remembers the player's answer per policy, so the default is the `??`
+    // arm. The mutant is unchanged in meaning: the policy stops deciding and
+    // everything is open from the first frame.
     item: 'F3',
     name: 'the disclosure stays open at every width, so nothing is re-arranged',
     file: 'src/ui/components/readouts.ts',
-    find: '        more.open = wanted;',
-    replace: '        more.open = true;',
+    find: '        const answer = chosen.get(wanted) ?? wanted;',
+    replace: '        const answer = chosen.get(wanted) ?? true;',
     detectedBy: PORTRAIT,
   },
   {
-    // The rotation. `compact` and `portrait` are one policy, and the guard has
-    // to compare what the breakpoint decides rather than which of the two
-    // names it is, or a device turning on its side shuts a disclosure the
-    // player opened.
+    // The rotation, re-pointed at AUDIT-2: the name-comparison defect is no
+    // longer expressible (no breakpoint name is stored), so the entry moved to
+    // the recording itself. A press recorded as the value it replaced answers
+    // every later return to that policy with the state from before the press,
+    // which is the same player-visible loss the old guard defect caused.
     item: 'F3',
-    name: 'the disclosure is re-armed on a name change, so a rotation closes it',
+    name: 'a press is recorded as the value it replaced, so a rotation undoes it',
     file: 'src/ui/components/readouts.ts',
-    find: '      if (appliedBreakpoint === null || wanted !== showsEveryReadout(appliedBreakpoint)) {',
-    replace: '      if (breakpoint !== appliedBreakpoint) {',
-    detectedBy: BREAKPOINTS,
+    find: '        chosen.set(appliedPolicy, more.open);',
+    replace: '        chosen.set(appliedPolicy, appliedOpen);',
+    detectedBy: ORIENTATION,
   },
   {
     item: 'F3',
@@ -5455,7 +5509,9 @@ const EDITS = [
     item: 'F5',
     name: 'the layout is resolved once at boot and never again',
     file: 'src/main.ts',
-    find: '    layout = layoutNow();\n    const wanted = planSurface(',
+    // AUDIT-2 re-pointed the anchor: `layoutNow` takes the phase now, so the
+    // sticky floor can be the screen's own. Same mutant, same meaning.
+    find: '    layout = layoutNow(readout.phase.kind);\n    const wanted = planSurface(',
     replace: '    const wanted = planSurface(',
     detectedBy: ORIENTATION,
   },
@@ -5727,18 +5783,13 @@ const EDITS = [
     replace: '    held = null;',
     detectedBy: KEYBOARD,
   },
-  {
-    // The same custodian, reading the authored attribute instead of the rendered
-    // box. It answers correctly for all five of SPEC 10's screens, which are
-    // toggled with `hidden`, and wrongly for the one control `BJ-16` hides with
-    // a stylesheet: the readout disclosure, which a rotation takes away.
-    item: 'D4',
-    name: 'the focus custodian asks for the hidden attribute rather than a rendered box',
-    file: 'src/ui/input.ts',
-    find: '  return node.getClientRects().length > 0;',
-    replace: "  return node.closest('[hidden]') === null;",
-    detectedBy: KEYBOARD,
-  },
+  // An entry that mutated the rect fallback alone was REMOVED here after the
+  // only full sweep it survived (840 of 841): finding `J4-03`'s cure put
+  // `checkVisibility` in front of that line, every graded engine offers the
+  // method, and a mutation below an always-taken branch is unreachable, which
+  // the `'dealing'` precedent above says carries no entry. The property itself
+  // is pinned by the block-level entry below, which removes the whole branch
+  // and was detected in the same sweep.
   {
     item: 'D4',
     name: 'the focus indicator is removed from every button and chip',
@@ -5956,13 +6007,33 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // And the other half of that cure, which is when the first observed frame
+    // is. `boot` runs one frame synchronously, in the turn that mounts the two
+    // regions, so a sentence written there arrives in the accessibility tree
+    // with the region and is announced by nothing. Observing that frame again
+    // puts the carry's disclosure back in the mounting turn, where the
+    // blocked-origin spec measures the batch it was written in.
+    item: 'G4',
+    name: 'the boot frame is observed, so the first sentence arrives with the region',
+    file: 'src/ui/components/announcer.ts',
+    find: '      if (bootFrameSeen) {',
+    replace: '      if (true) {',
+    detectedBy: PERSISTENCE,
+  },
+  {
+    // Re-pointed at the cure round, which moved the line this breaks: the
+    // first frame now returns the carry's own sentence rather than an empty
+    // list, because the origin that refuses site data is degraded before the
+    // session has a previous frame. The break is unchanged, a first frame that
+    // recites the felt into a region nothing has ever read.
     item: 'G4',
     name: 'the first frame writes a region that has never been empty',
     file: 'src/ui/announce.ts',
-    find: '  if (prior === null) {\n    return said;\n  }',
+    find: '  if (prior === null) {\n    return carryAnnouncements(null, next);\n  }',
     replace:
       '  if (prior === null) {\n' +
-      "    said.push({ priority: 'polite', text: phaseText(readout.phase, readout.hands.length) });\n" +
+      "    said.push({ priority: 'polite', kind: 'phase', " +
+      'text: phaseText(readout.phase, readout.hands.length) });\n' +
       '    return said;\n' +
       '  }',
     detectedBy: SCREEN_READER,
@@ -6337,6 +6408,18 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // AUDIT-2 Z6-01: the root's one `createWallet` call with a persisted mark
+    // was pinned by nothing. The loader used to build a second wallet nobody
+    // played on and the corrupt matrix bound that one; this is the line the
+    // shipped page actually restores an unlock through.
+    item: 'I4',
+    name: 'the launch wallet drops the persisted high-water mark',
+    file: 'src/main.ts',
+    find: '  const wallet = createWallet(walletOptionsFor(options.bestBalance ?? persisted.bestBalance));',
+    replace: '  const wallet = createWallet(walletOptionsFor(options.bestBalance));',
+    detectedBy: PERSISTENCE,
+  },
+  {
     item: 'I4',
     name: 'the boot seats itself at Bronze whatever the document says',
     file: 'src/main.ts',
@@ -6399,8 +6482,11 @@ const EDITS = [
     item: 'I5',
     name: 'the blocked-storage note is shown unconditionally, in every session',
     file: 'src/ui/components/overlays.ts',
-    find: '      setHidden(notDurableNote, state.durable);',
-    replace: '      setHidden(notDurableNote, true);',
+    // AUDIT-2 re-pointed this: the note keys on the carry rather than the
+    // boot probe, and the mutant now matches the name it always had: hidden
+    // never, shown to every ordinary session.
+    find: '      setHidden(notDurableNote, !state.carryDegraded);',
+    replace: '      setHidden(notDurableNote, false);',
     detectedBy: UNIT,
   },
   {
@@ -6511,11 +6597,15 @@ const EDITS = [
     detectedBy: THEME,
   },
   {
+    // AUDIT-2 re-pointed and renamed: Z4-06 collapsed the mode gate onto
+    // `strategy.hint`, so this root no longer tests the mode itself. The
+    // mutant is the same defect one call along, the feed asking for a mode the
+    // player did not choose, and the hint then never reaches a control.
     item: 'J4',
-    name: 'the hint is computed for a mode nobody can select',
+    name: 'the hint feed asks for a mode the player never chose',
     file: 'src/main.ts',
-    find: "  function currentHint(readout: TableReadout): CoachAction | null {\n    if (coachMode !== 'hint') {",
-    replace: "  function currentHint(readout: TableReadout): CoachAction | null {\n    if (coachMode !== 'never') {",
+    find: '    return hint(coachMode, chart, situation)?.action ?? null;',
+    replace: "    return hint('review', chart, situation)?.action ?? null;",
     detectedBy: COACH,
   },
   {
@@ -6939,6 +7029,27 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // AUDIT-2 Z1-02: the chrome's insurance funding gate went through an
+    // inline `<` beside `canFund`, which is the drift the wallet's own header
+    // warns about. Collapsed onto the predicate and pinned here.
+    item: 'B15',
+    name: 'the insurance control stops asking whether the balance covers the stake',
+    file: 'src/ui/availability.ts',
+    find: "  return !offer.evenMoney && !canFund(offer.stake, chips) ? 'insufficient-chips' : null;",
+    replace: '  return null;',
+    detectedBy: UNIT,
+  },
+  {
+    // The other direction: even money is offered regardless of balance, and a
+    // gate applied to both arms takes SPEC 4.7's deferred stake away.
+    item: 'B15',
+    name: 'the funding gate is applied to even money as well',
+    file: 'src/ui/availability.ts',
+    find: "  return !offer.evenMoney && !canFund(offer.stake, chips) ? 'insufficient-chips' : null;",
+    replace: "  return !canFund(offer.stake, chips) ? 'insufficient-chips' : null;",
+    detectedBy: UNIT,
+  },
+  {
     item: 'B15',
     name: 'the chooser stops splitting its refusal by cause',
     file: 'src/ui/availability.ts',
@@ -6956,10 +7067,8 @@ const EDITS = [
     item: 'B15',
     name: 'the greyed chip goes back to the sentence for a refused tap',
     file: 'src/ui/availability.ts',
-    find:
-      "        refusal: chipEnabled(denomination, limits, wallet.chips) ? null : 'chip-over-ceiling',",
-    replace:
-      "        refusal: chipEnabled(denomination, limits, wallet.chips) ? null : 'above-ceiling',",
+    find: "  return chipEnabled(denomination, limits, chips) ? null : 'chip-over-ceiling';",
+    replace: "  return chipEnabled(denomination, limits, chips) ? null : 'above-ceiling';",
     detectedBy: UNIT,
   },
   {
@@ -6968,8 +7077,8 @@ const EDITS = [
     item: 'B15',
     name: 'the betting bar writes its own refusal sentence instead of the one home',
     file: 'src/ui/components/betting.ts',
-    find: "          reasonText('chip-over-ceiling'),",
-    replace: "          reasonText('above-ceiling'),",
+    find: '          refusal === null ? null : reasonText(refusal),',
+    replace: "          refusal === null ? null : reasonText('above-ceiling'),",
     detectedBy: BETTING,
   },
   {
@@ -7877,10 +7986,27 @@ const EDITS = [
     name: 'the bundle a gate built under a mutation is left where reports read it',
     file: 'scripts/mutation-check.mjs',
     find:
-      '    discardBuild();\n' +
-      "    console.log('dist/ was removed: a gate here may have built it under a mutation.');",
+      '      discardBuild();\n' +
+      "      console.log('dist/ was removed: a gate here may have built it under a mutation.');",
     replace:
-      "    console.log('dist/ was removed: a gate here may have built it under a mutation.');",
+      "      console.log('dist/ was removed: a gate here may have built it under a mutation.');",
+    detectedBy: UNIT,
+  },
+  {
+    // The cure round's review, finding `MIN-1`, and the other direction of the
+    // same discard: a run that refused at the ledger pre-flight spawned no
+    // command, built nothing, said so, and then removed the operator's bundle
+    // and announced that too. Unconditional again is that state, and the arm
+    // in `tests/unit/mutation-harness.test.ts` runs the shipped file over a
+    // constructed repository with a bundle in it to catch it.
+    // Held across two lines with a real newline, like the entries above it,
+    // so that this entry's own quotation of the guard cannot be what the
+    // exactly-once check finds.
+    item: 'M4',
+    name: 'a run that refused before any gate ran still destroys the bundle',
+    file: 'scripts/mutation-check.mjs',
+    find: '    if (mayHaveBuilt) {\n' + '      discardBuild();',
+    replace: '    if (true) {\n' + '      discardBuild();',
     detectedBy: UNIT,
   },
   {
@@ -8557,6 +8683,21 @@ const EDITS = [
     detectedBy: UNIT,
   },
   {
+    // The cure round's review, finding `NIT-3`. The reference-independence scan
+    // passes every bare specifier that is not the shared engine, which is
+    // complete only while no second mapping resolves one into the tree: an
+    // alias added here or to either bundler config reopens the exact route that
+    // scan exists to close, and nothing read the absence.
+    item: 'B1',
+    name: 'a second path mapping resolves a bare specifier the scan waves through',
+    file: 'tsconfig.json',
+    find: '      "@js-games/engine/*": ["./packages/engine/src/*"]\n',
+    replace:
+      '      "@js-games/engine/*": ["./packages/engine/src/*"],\n' +
+      '      "@game/*": ["./src/*"]\n',
+    detectedBy: UNIT,
+  },
+  {
     // `Z10-04`. The one place the syntax level of the shipped bundle is
     // decided, and nothing read it: the emitted language could be moved off
     // QUALITY-BAR section 2's floor in either direction with every gate green.
@@ -8570,14 +8711,461 @@ const EDITS = [
     replace: "    target: 'es2020',",
     detectedBy: UNIT,
   },
-];
+
+  // ------------------------------------------------------------------
+  // AUDIT-2 minors, wave A: what a player meets. Findings `X1-01`,
+  // `Z4-01`, `Z5-05`, `J5-03`, `J5-04`, `J3-02` and `J7-01`.
+  //
+  // Six of the seven are behaviour on the shipped page rather than
+  // arithmetic, so most of these entries are required red by a browser
+  // gate: a stale copy read by a second press in one frame, a restore
+  // target captured from the wrong element, a disclosure state written
+  // over a player's own press, a header that scrolls away with the only
+  // control that closes the panel, and a play-surface floor held on a
+  // screen with nothing to draw. Each of them was green under the whole
+  // suite before its cure, which is what made it a finding rather than a
+  // failure.
+  // ------------------------------------------------------------------
+  {
+    // `X1-01`. `TableOptions.table` seats without validating and names
+    // `start` as the enforcement point, and for a name outside SPEC 6's
+    // three `start` raised a `RangeError` out of `apply` instead of
+    // refusing: `canEnter` reads `tableLimits`, which throws on an unknown
+    // id. Item `C2` requires every attempted action to be answered.
+    item: 'C2',
+    name: 'an off-list seat reaches canEnter, which raises instead of refusing',
+    file: 'src/core/table.ts',
+    find: '  return isTableId(id) && canEnter(id, state.bestBalance, state.chips);',
+    replace: '  return canEnter(id, state.bestBalance, state.chips);',
+    detectedBy: UNIT,
+  },
+  {
+    // `Z4-01`. The three house-rule toggles are the only controls in the
+    // chrome that send a negation, and the value they negated was refreshed
+    // once a frame: two presses between two frames both read it, both sent
+    // the same patch, and the second was lost. Every other control in the
+    // panel sends an absolute value and is immune, which is why nothing
+    // else in the suite could see it.
+    item: 'I5',
+    name: 'a house-rule toggle negates the frame copy instead of its own',
+    file: 'src/ui/components/overlays.ts',
+    find: '        const next = !held[key];\n        held = { ...held, [key]: next };',
+    replace: '        const next = !held[key];',
+    detectedBy: RAPID_INPUT,
+  },
+  {
+    // `Z5-05`. On a switch from one panel straight to another the dialog
+    // still holds focus, and the dialog is inside the shell: a capture that
+    // asked only "is the focused element one of ours" answered with the
+    // dialog, the `??` fallback never ran, and the close read a host that
+    // had already been hidden and fell to the controls anchor.
+    item: 'D4',
+    name: 'the restore target is captured from the dialog the switch is leaving',
+    file: 'src/ui/input.ts',
+    find: '          holding !== null && !dialog.contains(holding) ? holding : options.opener(wanted);',
+    replace: '          holding !== null ? holding : options.opener(wanted);',
+    detectedBy: KEYBOARD,
+  },
+  {
+    // `J5-03`. A phone turn crosses 768 px, so the disclosure policy really
+    // changes and the write is right to run; what was missing is that the
+    // component remembered the policy it had applied and not the state the
+    // player chose under it. Turning the phone and turning it back put
+    // eleven of SPEC 11's readouts a press away again.
+    item: 'F3',
+    name: 'the disclosure forgets the answer the player gave under each policy',
+    file: 'src/ui/components/readouts.ts',
+    find: '        const answer = chosen.get(wanted) ?? wanted;',
+    replace: '        const answer = wanted;',
+    detectedBy: ORIENTATION,
+  },
+  {
+    // The other half of the same cure: the press has to be seen at all. The
+    // read is what makes a `<details>` the player operated visible to a
+    // component that never listens to it.
+    item: 'F3',
+    name: 'a press on the disclosure is never recorded against its policy',
+    file: 'src/ui/components/readouts.ts',
+    find: '      if (appliedPolicy !== null && more.open !== appliedOpen) {',
+    replace: '      if (false as boolean) {',
+    detectedBy: ORIENTATION,
+  },
+  {
+    // `J5-04`. The Settings panel is 1,464 px of content in a 351 px window
+    // on a phone, and with the header in flow the Close button sat 814 px
+    // above the viewport at the bottom of it. Touch has no `Escape`, and
+    // the control nearest an exit down there erases the player's progress.
+    item: 'C5',
+    name: 'the overlay header scrolls away with the panel on a phone',
+    file: 'src/ui/chrome.css',
+    find: "  position: sticky;\n  top: 0;\n}",
+    replace: '  position: static;\n}',
+    detectedBy: OVERLAYS,
+  },
+  {
+    // And the breakpoint the first cure left out, which the cure round's
+    // review measured: `medium` is 768 to 1023 px, every tablet in portrait
+    // sits there, and none of them has an `Escape` key either. At 768 x 1024
+    // the panel hid 542 px and Close sat 306 px above the fold. Removing this
+    // one selector is the state the review found and leaves the two narrow
+    // breakpoints covered, so only the tablet arm goes red.
+    item: 'C5',
+    name: 'the overlay header scrolls away with the panel on a tablet',
+    file: 'src/ui/chrome.css',
+    find: ".bj-shell[data-breakpoint='medium'] .bj-overlay__header,\n",
+    replace: '',
+    detectedBy: OVERLAYS,
+  },
+  {
+    // And its layer, which is load bearing rather than decorative: flex
+    // items paint as inline blocks in document order, so the header is
+    // painted under the body beside it and the stuck Close button was on
+    // screen and not pressable.
+    item: 'C5',
+    name: 'the stuck overlay header is painted under the panel it covers',
+    file: 'src/ui/chrome.css',
+    find: '  position: relative;\n  z-index: 1;\n  display: flex;',
+    replace: '  position: relative;\n  display: flex;',
+    detectedBy: OVERLAYS,
+  },
+  {
+    // `J3-02`. QUALITY-BAR section 8's last clause has two routes to one
+    // outcome and the panel disclosed one of them: a quota-full origin
+    // resolves `window.localStorage`, throws on every `setItem`, and
+    // answered `durable: true`, so the session lost its whole carry with
+    // nothing on the page saying so.
+    item: 'I3',
+    name: 'the storage note is keyed on the boot probe again, not on the carry',
+    file: 'src/main.ts',
+    find: '      carryDegraded: persistence.readout().carryDegraded,',
+    replace: '      carryDegraded: !persistence.readout().durable,',
+    detectedBy: PERSISTENCE,
+  },
+  {
+    // The event half of the same cure, which is what reaches a player who
+    // never opens the panel. The edge is what makes it once rather than
+    // once per failed write. Re-pointed at the cure round, where the arm
+    // moved into `carryAnnouncements` so that a boot could carry it.
+    item: 'G4',
+    name: 'the failing carry is never announced at all',
+    file: 'src/ui/announce.ts',
+    find: '  if (!next.context.carryDegraded || wasDegraded) {',
+    replace: '  if (true as boolean) {',
+    detectedBy: UNIT,
+  },
+  {
+    // And the half of that edge the first cure could not reach. On an origin
+    // that refuses site data the property access itself throws, so the carry
+    // is degraded from the first frame and there is no undegraded frame in
+    // front of it: read against a real previous frame the edge was
+    // unsatisfiable, and the cure round's review measured the panel note
+    // shown with the polite region empty. This restores that reading and
+    // leaves the quota-full route, which does start at a write, announced.
+    item: 'G4',
+    name: 'a session that boots already failing is never told',
+    file: 'src/ui/announce.ts',
+    find: '  const wasDegraded = prior?.context.carryDegraded ?? false;',
+    replace: '  const wasDegraded = prior?.context.carryDegraded ?? true;',
+    detectedBy: UNIT,
+  },
+  {
+    // `J7-01`. The play-surface row took its minimum on every screen,
+    // including the two that reach it with the felt swept, so at 360 x 640
+    // the sticky layout did not fit and the start screen's own chooser and
+    // Start button were pushed below the fold. Item `F1` measures
+    // reachability, which held: the page scrolled and every control could
+    // be reached by scrolling it.
+    item: 'F1',
+    name: 'the play-surface row holds its floor on a screen with nothing to draw',
+    file: 'src/ui/breakpoints.ts',
+    find: '  return !overlayOpen && QUIET_SCREENS.has(phase) ? 0 : MIN_SURFACE_HEIGHT;',
+    replace: '  return MIN_SURFACE_HEIGHT;',
+    detectedBy: UNIT,
+  },
+  {
+    // The stylesheet half, which no unit test can see: the grid track has
+    // to give the floor up on the same two screens, or the arithmetic
+    // decides to stick a layout the grid then refuses to fit.
+    item: 'F1',
+    name: 'the grid keeps the surface floor on the screens the rule gives it up on',
+    file: 'src/ui/chrome.css',
+    find:
+      ".bj-shell[data-phase='start']:not([data-overlay]),\n" +
+      ".bj-shell[data-phase='bustOut']:not([data-overlay]) {\n" +
+      '  grid-template-rows: auto minmax(0, 1fr) auto;',
+    replace:
+      ".bj-shell[data-phase='start']:not([data-overlay]),\n" +
+      ".bj-shell[data-phase='bustOut']:not([data-overlay]) {\n" +
+      '  grid-template-rows: auto minmax(var(--surface-min-height), 1fr) auto;',
+    detectedBy: BREAKPOINTS,
+  },
+  {
+    // And the condition that keeps SPEC 10's panels usable: they are
+    // positioned inside that row, so the row's height is theirs, and the
+    // first-run How to Play panel opens on the start screen. Without it a
+    // first-time player on a short phone meets a panel of no height at all.
+    item: 'F1',
+    name: 'an open panel gives up the row it is drawn inside',
+    file: 'src/main.ts',
+    find: '        surfaceFloorFor(phase, overlay !== null),',
+    replace: '        surfaceFloorFor(phase),',
+    detectedBy: BREAKPOINTS,
+  },
+  // ------------------------------------------------------------------------
+  // AUDIT-2, the minors cycle: the armour, the gates and the two shipped cures
+  // ------------------------------------------------------------------------
+  //
+  // Every entry below breaks something that had no detector before this cycle.
+  // Five of them break a scan rather than the product, which is the `B1` and
+  // `M2` precedent: a census that cannot see the shape it hunts for is a gate
+  // that has stopped gating, and each of those scans carries the can-see
+  // control the mutation reddens.
+  {
+    // Finding `Z1-04`. Five items take their expected values from
+    // `tests/unit/reference/`, and the rule that keeps those files independent
+    // of `src/` was stated only in prose: a probe importing `handValue` from
+    // `src/core/hand` passed eslint and tsc with no output at all.
+    item: 'B1',
+    name: 'the reference independence scan stops reading import specifiers',
+    file: 'tests/unit/reference-independence.test.ts',
+    find: '  for (const pattern of patterns) {',
+    replace: '  for (const pattern of [] as RegExp[]) {',
+    detectedBy: UNIT,
+  },
+  {
+    // The other half: the refusal itself, rather than the reader in front of it.
+    item: 'B1',
+    name: 'a reference importing the code under test is no longer refused',
+    file: 'tests/unit/reference-independence.test.ts',
+    find: "  return landed === 'src' || landed.startsWith('src/') ? `src/, at ${landed}` : null;",
+    replace: '  return null;',
+    detectedBy: UNIT,
+  },
+  {
+    // Finding `Z7-02`. The `G4` armour named four of the thirteen rank glyphs
+    // and its companion assertion called `rankText` on both sides, so the nine
+    // numeric ranks were pinned by nothing: a whole-tree census found `Two`,
+    // `Three`, `Four`, `Six`, `Seven`, `Eight`, `Nine` and `Queen` in no
+    // assertion anywhere.
+    item: 'G4',
+    name: 'a numeric rank reaches the mirror as its glyph',
+    file: 'src/ui/text.ts',
+    find: "    case '7':\n      return 'Seven';",
+    replace: "    case '7':\n      return '7';",
+    detectedBy: UNIT,
+  },
+  {
+    // And the announcement side, which cannot use a digit scan because an
+    // announcement legitimately carries digits, a wager and a total among them:
+    // the word in front of a suit is read out instead and required to be one of
+    // the thirteen.
+    item: 'G4',
+    name: 'the announcement census stops reading the word in front of a suit',
+    file: 'tests/unit/announce.test.ts',
+    find: '      for (const match of entry.text.matchAll(CARD_SENTENCE)) {',
+    replace: '      for (const match of [] as RegExpExecArray[]) {',
+    detectedBy: UNIT,
+  },
+  {
+    // The cure round's review, finding `MIN-2`. The kinds a census walks are
+    // derived from a record the compiler holds total, because a hand-written
+    // second list is a list that goes stale: written out by hand it agrees
+    // with the union on the day it is written and silently stops later, which
+    // is how `'storage'` took both defaults with nothing stating the answer.
+    item: 'G4',
+    name: 'the announcement kinds are listed by hand rather than derived',
+    file: 'src/ui/announce.ts',
+    find: '  Object.keys(KIND_PRESENT) as AnnouncementKind[],',
+    replace: "  ['phase', 'card'] as AnnouncementKind[],",
+    detectedBy: UNIT,
+  },
+  {
+    // Finding `Z7-03`. Every token walk ran contract to declaration, so a
+    // number added to the stylesheet or to the renderer record that no contract
+    // row owns was never seen. Measured: `--space-9` in both files passed the
+    // whole file.
+    item: 'E1',
+    name: 'the token census stops seeing a declaration no contract row owns',
+    file: 'tests/unit/tokens.test.ts',
+    find: '    return [...names].filter((name) => !OWNED.has(name) && DERIVED[name] === undefined);',
+    replace: '    return [...names].filter(() => false);',
+    detectedBy: UNIT,
+  },
+  {
+    // Finding `Z7-04`. `M5`'s cross-clock transcript was a ten-name literal
+    // against a twelve-field readout with nothing pinning the two together, so
+    // a thirteenth field was outside the comparison from the day it landed.
+    item: 'M5',
+    name: 'the cross-clock transcript drops a field of the readout',
+    file: 'tests/unit/frame-independence.test.ts',
+    find: "const CLOCK_SHAPED = ['elapsed', 'queued'] as const;",
+    replace: "const CLOCK_SHAPED = ['elapsed', 'queued', 'shoe'] as const;",
+    detectedBy: UNIT,
+  },
+  {
+    // Finding `X3-05`. The WCAG formula was written out four times, agreeing to
+    // the last bit over 4,096 colours and pinned to nothing. The copy that
+    // matters is this one: it is what the `H2` contrast gate measures its 132
+    // rows with, so a slip here moved the gate's quantity alone with every
+    // suite green.
+    item: 'G2',
+    name: 'the report luminance weights drift from the suite that shares them',
+    file: 'scripts/report/support.mjs',
+    find: '  return 0.2126 * channel(rgb[0]) + 0.7152 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);',
+    replace: '  return 0.2126 * channel(rgb[0]) + 0.7125 * channel(rgb[1]) + 0.0722 * channel(rgb[2]);',
+    detectedBy: UNIT,
+  },
+  {
+    // Finding `Z5-03`. `src/ui/platform.ts` is where five modules read
+    // `document` and `matchMedia`, and it carried no entry at all. The guard
+    // this breaks is the one that lets the headless runner build a preference
+    // at all.
+    item: 'E7',
+    name: 'the media-query guard is inverted, so a host with no matchMedia is asked anyway',
+    file: 'src/ui/platform.ts',
+    find: "  if (typeof matchMedia !== 'function') {",
+    replace: "  if (typeof matchMedia === 'function') {",
+    detectedBy: UNIT,
+  },
+  {
+    // The second property of the same function, which no unit test can reach:
+    // that it asks for the query it was given.
+    item: 'G9',
+    name: 'the shared reader asks a query of its own instead of the caller one',
+    file: 'src/ui/platform.ts',
+    find: '  return matchMedia(query);',
+    replace: "  return matchMedia('(min-width: 0px)');",
+    detectedBy: FORCED_COLORS,
+  },
+  {
+    // And the document half, whose mutation the unit gate cannot see because
+    // the runner has no document either way.
+    item: 'C7',
+    name: 'the page document reads as absent, so nothing binds the page-level events',
+    file: 'src/ui/platform.ts',
+    find: '  return document;',
+    replace: '  return null;',
+    detectedBy: VISIBILITY,
+  },
+  {
+    // Finding `Z5-04`. `src/ui/theme.ts` owns SPEC 14's one translation and
+    // carried no entry either; its only witness was six assertions in one
+    // browser spec, and nothing had ever shown that they could fail.
+    item: 'E2',
+    name: 'the system theme resolves to an attribute value instead of to none',
+    file: 'src/ui/theme.ts',
+    find:
+      "  if (theme === 'light' || theme === 'dark') {\n" +
+      '    return theme;\n' +
+      '  }\n' +
+      '  return null;',
+    replace: '  return theme;',
+    detectedBy: UNIT,
+  },
+  {
+    // Finding `Z5-06`. The chip row was the one row where the control and the
+    // mirror each paired the predicate with the reason for themselves; they
+    // agreed only because both were written the same way.
+    item: 'B15',
+    name: 'the shared chip pairing answers the wallet backwards',
+    file: 'src/ui/availability.ts',
+    find: "  return chipEnabled(denomination, limits, chips) ? null : 'chip-over-ceiling';",
+    replace: "  return chipEnabled(denomination, limits, chips) ? 'chip-over-ceiling' : null;",
+    detectedBy: UNIT,
+  },
+  {
+    // Finding `J4-03`. `focusable` decided by `getClientRects()`, which answers
+    // 1 for content a closed `<details>` has skipped through
+    // `content-visibility`: the chrome contains that case in `BJ-16`'s readout
+    // disclosure, and both readers of this function would then have declined to
+    // rescue focus from a control that had just become unfocusable.
+    item: 'D4',
+    name: 'the focus policy reads boxes rather than asking whether the engine will focus',
+    file: 'src/ui/input.ts',
+    find:
+      "  if (typeof node.checkVisibility === 'function') {\n" +
+      '    return node.checkVisibility({ contentVisibilityAuto: true, visibilityProperty: true });\n' +
+      '  }\n' +
+      '  return node.getClientRects().length > 0;',
+    replace: '  return node.getClientRects().length > 0;',
+    detectedBy: KEYBOARD,
+  },
+  {
+    // Finding `J7-02`. "Everything else must not scroll" was checked on one
+    // axis over five literal selectors, and the one chrome element with
+    // `overflow: auto` was in neither list.
+    item: 'F1',
+    name: 'the scroller census stops walking the shell',
+    file: 'tests/browser/support/game.ts',
+    find: "      for (const node of [shell, ...shell.querySelectorAll('*')]) {",
+    replace: '      for (const node of [] as Element[]) {',
+    detectedBy: BREAKPOINTS,
+  },
+  {
+    // And the exemption that now sits beside the rule rather than in another
+    // file: the overlay really is a scroller by design, and saying so is what
+    // lets the clause refuse everything else.
+    item: 'F1',
+    name: 'the one designed scroller is dropped from the set the clause allows',
+    file: 'tests/browser/support/game.ts',
+    find: "export const DESIGNED_SCROLLERS_ANY_AXIS = [...DESIGNED_SCROLLERS, '.bj-overlay'];",
+    replace: 'export const DESIGNED_SCROLLERS_ANY_AXIS = [...DESIGNED_SCROLLERS];',
+    detectedBy: BREAKPOINTS,
+  },
+  {
+    // Finding `Z9-04`. The boundary rule read a template literal only when it
+    // carried no expression, and an interpolated one is the form Vite resolves
+    // statically and emits the chunk for: a working cross-boundary import that
+    // the gate called clean.
+    item: 'M3',
+    name: 'an unreadable dynamic specifier inside core/ is passed rather than refused',
+    file: 'tools/eslint-plugin-core-boundary/index.js',
+    find: '      if (specifierOf(node) === null) {',
+    replace: '      if (specifierOf(node) === undefined) {',
+    detectedBy: UNIT,
+  },
+  {
+    // The other direction, which is what keeps the refusal from being a blanket
+    // ban on `import()`: a specifier the rule can read, and that stays inside
+    // the boundary, must draw nothing.
+    item: 'M3',
+    name: 'the refusal fires on a dynamic specifier the rule can read perfectly well',
+    file: 'tools/eslint-plugin-core-boundary/index.js',
+    find: '      if (specifierOf(node) === null) {\n        context.report({ node, messageId: ',
+    replace: '      if (node !== null) {\n        context.report({ node, messageId: ',
+    detectedBy: UNIT,
+  },
+  {
+    // Finding `Z9-06`. The exactly-once discipline failed at the entry's own
+    // turn: the process ended with the remaining entries unmeasured and no
+    // summary printed at all, and nothing between sweeps noticed ledger rot.
+    item: 'M4',
+    name: 'the ledger pre-flight stops seeing an entry whose target has gone',
+    file: 'scripts/mutation-check.mjs',
+    // Built by concatenation so this entry's own text is not a second
+    // occurrence of the line it names.
+    find: '    if (occurrences !== 1' + ') {',
+    replace: '    if (occurrences < 0) {',
+    detectedBy: UNIT,
+  },
+  {
+    // And its place in the run, which is the whole finding: before the baseline,
+    // so a stale ledger costs no build and reports every stale entry at once.
+    item: 'M4',
+    name: 'the sweep enters the baseline without checking the ledger first',
+    file: 'scripts/mutation-check.mjs',
+    find: '  const stale = staleLedgerEntries(EDITS, ' + 'ADDITIONS);',
+    replace: '  const stale = [];',
+    detectedBy: UNIT,
+  },
+]);
 
 /**
  * Mutations that add a file. This is the one that proves the claim in the item
  * itself: not that a fixture is rejected, but that a violating module dropped
  * into the real `src/core/` fails `npm run lint` and therefore the build.
  */
-const ADDITIONS = [
+const ADDITIONS = Object.freeze([
   {
     item: 'M3',
     name: 'a Math.random() call is added to the real src/core/',
@@ -8871,7 +9459,7 @@ const ADDITIONS = [
       '}\n',
     detectedBy: UNIT,
   },
-];
+]);
 
 /**
  * The environment every gate below is measured in.
@@ -9022,6 +9610,24 @@ function record(mutation, detected) {
  */
 let inFlight = null;
 
+/**
+ * Whether any gate has been given the chance to run, and so to build.
+ *
+ * The cure round's review, finding `MIN-1`: the discard below ran however the
+ * run ended, and one of the ways it can end is the ledger pre-flight refusing
+ * before a single command is spawned. That path prints "No mutation was applied
+ * and nothing was built" and then removed the operator's bundle and told them so
+ * in the next line, which is two claims about one run that cannot both be true.
+ * The flag is set where the pre-flight lets the sweep past it, which is one
+ * statement before the baseline set is built, so it means exactly "a gate may
+ * have run" and not "a mutation was applied": the baseline itself builds.
+ *
+ * `onSignal` discards unconditionally on purpose. A signal can arrive anywhere,
+ * it prints no claim about the bundle, and removing a bundle that no gate built
+ * costs a rebuild while leaving one a gate built costs a false fingerprint.
+ */
+let mayHaveBuilt = false;
+
 const DIST = join(PROJECT_ROOT, 'dist');
 
 function discardBuild() {
@@ -9097,9 +9703,101 @@ function runAddition(mutation) {
   }
 }
 
+/**
+ * The ledger itself, exported so tooling can read it without running it.
+ *
+ * What reads these arrays: the sweep's own pre-flight below, once, on an
+ * unmutated tree, before the baseline; and `tests/unit/mutation-harness.test.ts`,
+ * which asserts their SHAPE (count and field types) and pins the pre-flight's
+ * refusal behaviour over CONSTRUCTED ledgers only. The unit suite deliberately
+ * does NOT run the stale pass over these live arrays: a sweep-applied mutation
+ * is by definition a `find` that no longer matches, so such an arm would redden
+ * `npm run test` for every applied entry and hollow the UNIT column; the test
+ * file carries that construction so it cannot be reasoned back in. Between
+ * sweeps, ledger rot is caught by the pre-flight of the next run and by the
+ * orchestrated find-check that reads these same exports.
+ * Exporting them is safe for the reason the entry-point guard at the foot of
+ * this file gives: an import runs no sweep and writes nothing.
+ */
+export { EDITS, ADDITIONS };
+
+/**
+ * Every entry's target, checked before anything is built, run or mutated.
+ * `AUDIT-2`, finding `Z9-06`.
+ *
+ * The exactly-once discipline was real and it did fail loudly, but it failed at
+ * the entry's own turn: `runEdit` threw, nothing caught it, and the process
+ * ended with the remaining entries unmeasured and no summary printed at all. A
+ * ledger that had gone stale at entry 50 cost the whole sweep and produced no
+ * report of the 49 that had run. Nothing else noticed ledger rot either, so
+ * between sweeps the ledger could drift out of step with `src/` while every
+ * merge gate stayed green.
+ *
+ * The whole pass reads a few hundred files and takes under a second, which is
+ * the argument for doing it before the baseline rather than two hours in: a
+ * stale ledger now costs nothing and reports **every** stale entry at once
+ * instead of stopping at the first.
+ *
+ * Pure, and the readers are parameters, so `tests/unit/repository-policy.test.ts`'s
+ * technique applies here too: the arms in `tests/unit/mutation-harness.test.ts`
+ * run this function over constructed ledgers without a repository to break.
+ * `runEdit`'s own occurrence check stays exactly as it was; this is the pass in
+ * front of it, not a replacement for it.
+ */
+export function staleLedgerEntries(edits, additions, io = {}) {
+  const read = io.read ?? ((file) => readFileSync(join(PROJECT_ROOT, file), 'utf8'));
+  const exists = io.exists ?? ((file) => existsSync(join(PROJECT_ROOT, file)));
+  const stale = [];
+  const name = (mutation) => `${mutation.file}: ${mutation.item} ${mutation.name}`;
+
+  for (const mutation of edits) {
+    let text;
+    try {
+      text = read(mutation.file);
+    } catch {
+      // Not a bare catch: the reason is what goes in the report, and a missing
+      // file is one of the two ways an entry goes stale.
+      stale.push(`${name(mutation)}: the file it names is missing`);
+      continue;
+    }
+    const occurrences = text.split(mutation.find).length - 1;
+    if (occurrences !== 1) {
+      stale.push(
+        `${name(mutation)}: the mutation target appears ${String(occurrences)} times, expected exactly 1`,
+      );
+    }
+  }
+
+  for (const mutation of additions) {
+    if (exists(mutation.file)) {
+      stale.push(`${name(mutation)}: the file it would add already exists`);
+    }
+  }
+
+  return stale;
+}
+
 function sweep() {
   console.log('Mutation validation for the automated gates built so far.');
   console.log('Each line breaks one thing and requires the named gate to go red.');
+  console.log('');
+
+  // Before the baseline, because a stale ledger must not cost a build.
+  const stale = staleLedgerEntries(EDITS, ADDITIONS);
+  console.log(
+    `Ledger pre-flight: ${String(EDITS.length + ADDITIONS.length)} entries, ` +
+      `${String(stale.length)} stale.`,
+  );
+  if (stale.length > 0) {
+    console.error('The ledger has gone stale. No mutation was applied and nothing was built.');
+    for (const line of stale) {
+      console.error(`  ${line}`);
+    }
+    process.exitCode = 1;
+    return;
+  }
+  // Past the refusal, so a command may now be spawned and a command may build.
+  mayHaveBuilt = true;
   console.log('');
 
   console.log('Baseline:');
@@ -9150,8 +9848,15 @@ function main() {
     // The last gate to run may have built the bundle from a mutated tree, and
     // the entry that built it is not always the last entry. Nothing downstream
     // may read a bundle whose provenance is a mutation.
-    discardBuild();
-    console.log('dist/ was removed: a gate here may have built it under a mutation.');
+    //
+    // Conditional, because the run that never reached a gate is the run that
+    // said so: the ledger pre-flight refuses before anything is spawned, and a
+    // discard there removes a bundle this process had no hand in and contradicts
+    // the line above it.
+    if (mayHaveBuilt) {
+      discardBuild();
+      console.log('dist/ was removed: a gate here may have built it under a mutation.');
+    }
   }
 }
 

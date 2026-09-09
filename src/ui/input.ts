@@ -102,14 +102,34 @@ const FOCUSABLE = 'button, summary, [href], input, select, textarea';
  *
  * `offsetParent` would answer the same for this page and would additionally
  * answer `null` for anything positioned `fixed`, which is a trap waiting for the
- * first fixed element. What this does not cover is `visibility: hidden`, which
- * generates boxes and takes focusability away; nothing in the chrome uses it,
- * and `BJ-18`'s visually hidden mirror is specified as a clip rather than a
- * visibility, so the day one appears this is the function that has to grow.
+ * first fixed element.
+ *
+ * **The rect test alone is not the rendered fact, and the chrome contains the
+ * case.** `AUDIT-2`, finding `J4-03`: a closed `<details>` skips its contents
+ * through `content-visibility`, which keeps the layout boxes and takes the
+ * content out of the focus order, so `getClientRects()` answers 1 for something
+ * the browser will not focus. Measured on the shipped page at 375 x 720: a
+ * readout inside `BJ-16`'s closed `<details data-readouts="more">` reports one
+ * client rect, and a button appended beside it reports one rect, is skipped by a
+ * real Tab walk and does not take focus when asked. `visibility: hidden` is the
+ * same shape from the other direction. So the engine is asked instead, through
+ * `checkVisibility`, and the rect test stays as the answer for a host that does
+ * not offer it.
+ *
+ * **`opacityProperty` is deliberately not asked for**, and that is a
+ * correctness choice rather than a conservative one: `bj-overlay-in` opens the
+ * dialog from `opacity: 0`, `dialog.focus()` runs on the frame the panel opens,
+ * and `contain` reads this function for every stop inside the panel on every
+ * `Tab`. An element mid-fade is focusable, and treating it as unfocusable would
+ * empty the containment list for the length of the animation, which is the one
+ * moment item `D4`'s trap has to hold.
  */
 function focusable(node: Element | null): node is HTMLElement {
   if (!(node instanceof HTMLElement) || !node.isConnected) {
     return false;
+  }
+  if (typeof node.checkVisibility === 'function') {
+    return node.checkVisibility({ contentVisibilityAuto: true, visibilityProperty: true });
   }
   return node.getClientRects().length > 0;
 }
@@ -273,10 +293,24 @@ export function createFocusPolicy(options: FocusOptions): FocusPolicy {
         // The restore target is recaptured here rather than carried over from
         // the panel being replaced, so Close returns to the control the player
         // last pressed to arrive. `options.opener(wanted)` is the fallback for
-        // the engines that do not focus a button on press, which is the same
-        // pair of readings the open branch has always used, and it makes both
-        // engines land on the same control.
-        restoreTo = activeInShell() ?? options.opener(wanted);
+        // the engines that do not focus a button on press, and on a first open
+        // the two readings agree: focus is on the opener, or on `<body>`, and
+        // either way both engines land on the same control.
+        //
+        // **The dialog is excluded from the capture, and that is what makes
+        // the fallback reachable on a switch.** `AUDIT-2`, finding `Z5-05`: a
+        // switch is synced while the panel being replaced still holds focus,
+        // because that is where `dialog.focus()` put it when the first panel
+        // opened. The dialog is inside the shell and is not `<body>`, so a
+        // capture that asked only whether the focused element is one of ours
+        // answered with the dialog itself and the `??` never evaluated. The
+        // close branch then read a host `Overlays.update` had already hidden,
+        // found it unfocusable and fell to the anchor, so a player who pressed
+        // a second panel's control and then Close was put on the controls row
+        // instead of on the control they had pressed.
+        const holding = activeInShell();
+        restoreTo =
+          holding !== null && !dialog.contains(holding) ? holding : options.opener(wanted);
         dialog.focus();
       } else if (wanted === null && open !== null) {
         // Closed. Back to the control that opened it where that control is still

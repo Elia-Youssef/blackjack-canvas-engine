@@ -221,6 +221,68 @@ test.describe('C6: rapid and duplicated input', () => {
 });
 
 // ---------------------------------------------------------------------------
+// AUDIT-2, finding Z4-01: two presses of one toggle inside one frame
+// ---------------------------------------------------------------------------
+
+/**
+ * The three SPEC 14 house-rule toggles, pressed more than once inside a frame.
+ *
+ * **This is not item `C6` and does not claim it.** The criterion above is about
+ * intents through the machine's queue, and a settings control is not an intent:
+ * SPEC 14's rules are staged through `ChromeActions.setRules`, which the panel
+ * calls straight. What the queue's discipline gives the controls above is that a
+ * second press is judged against the screen the first one produced; these three
+ * had no equivalent, and finding `Z4-01` measured the cost. Each of them sent
+ * the negation of a copy of the staged record that only the panel's per-frame
+ * sync refreshed, so two presses between two frames both read the same stale
+ * value, both sent the same patch, and the rule ended toggled once instead of
+ * back where it started. Every other control in the panel is immune because it
+ * sends an absolute value rather than a negation, and the play screen's mute
+ * reads the engine's live state at press time.
+ *
+ * So the property asserted is parity: `n` presses inside one frame leave the
+ * toggle flipped `n` times. The even arm is the finding's own construction and
+ * the odd arm is its control, without which a handler that ignored every press
+ * after the first would pass.
+ */
+test.describe('AUDIT-2 Z4-01: a house-rule toggle counts every press in a frame', () => {
+  const TOGGLES = ['doubleAfterSplit', 'surrender', 'evenMoney'] as const;
+
+  async function pressedState(page: Page, key: string): Promise<string> {
+    return (await page.locator(`[data-rule="${key}"]`).getAttribute('aria-pressed')) ?? '';
+  }
+
+  test('returns to its own state on two presses, and flips on three', async ({ page }) => {
+    await page.goto('/');
+    await expect(shell(page)).toBeVisible();
+    await page.locator('[data-open-overlay="settings"]').click();
+    await expect(page.locator('[data-overlay-host="true"]')).toBeVisible();
+    await settle(page);
+
+    for (const key of TOGGLES) {
+      const before = await pressedState(page, key);
+      expect(before, `${key} reports no state at all`).toMatch(/true|false/);
+
+      await burst(page, `[data-rule="${key}"]`, 2);
+      await settle(page);
+      expect(await pressedState(page, key), `${key} lost the second press`).toBe(before);
+
+      await burst(page, `[data-rule="${key}"]`, 3);
+      await settle(page);
+      expect(await pressedState(page, key), `${key} ignored a burst of three`).toBe(
+        before === 'true' ? 'false' : 'true',
+      );
+
+      // Left as it was found, so the toggles are independent of each other's
+      // order in the loop and the sentence under them is the session's own.
+      await burst(page, `[data-rule="${key}"]`, 1);
+      await settle(page);
+      expect(await pressedState(page, key), `${key} did not come back`).toBe(before);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
 // AUDIT-2, finding J1-01: a refusal beside an acceptance
 // ---------------------------------------------------------------------------
 

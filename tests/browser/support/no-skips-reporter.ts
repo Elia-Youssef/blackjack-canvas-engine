@@ -3,15 +3,17 @@
  *
  * **The suite ships 0 skipped, and until now that was a number read off a
  * report by a human.** Playwright exits 0 with skips present, so a criterion
- * that stopped being measured would look exactly like one that passed. Two
- * conditional skips exist, both in `tests/browser/forced-colors.spec.ts` and
- * `tests/browser/error-boundary.spec.ts`, and both are guarded by a real
- * measurement (`matchMedia('(forced-colors: active)').matches` on the page)
- * rather than by a browser name, which is the right design: an engine that
- * genuinely cannot emulate forced colors cannot be asked to measure `G9` or
- * `A5`'s forced-colors arm. What was missing is the other half. All three
- * engines emulate it today, so a skip means an engine lost a capability, and a
- * capability loss must be loud rather than quiet.
+ * that stopped being measured would look exactly like one that passed. One
+ * conditional skip exists, in `tests/browser/support/forced-colors.ts`, reached
+ * from `tests/browser/forced-colors.spec.ts` and from
+ * `tests/browser/error-boundary.spec.ts`; neither spec carries a `test.skip` of
+ * its own. It is guarded by a real measurement
+ * (`matchMedia('(forced-colors: active)').matches` on the page) rather than by a
+ * browser name, which is the right design: an engine that genuinely cannot
+ * emulate forced colors cannot be asked to measure `G9` or `A5`'s forced-colors
+ * arm. What was missing is the other half. All three engines emulate it today,
+ * so a skip means an engine lost a capability, and a capability loss must be
+ * loud rather than quiet.
  *
  * This is the whole guard: it counts skipped results and turns a run that has
  * any into a failed one, naming each. It cannot fire on the suite as it stands.

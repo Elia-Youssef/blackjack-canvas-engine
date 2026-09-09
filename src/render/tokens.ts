@@ -253,6 +253,20 @@ export const SPACE = {
   8: 64,
 } as const satisfies Record<number, number>;
 
+/**
+ * The corner radii, unitless. QUALITY-BAR section 15's `--radius-*` scale.
+ *
+ * **Nothing under `src/` reads this record, and it stays for the reason `FELT`
+ * above stays** (`AUDIT-2`, finding `Z3-05`, which read it as dead). It is the
+ * renderer's half of a three-way pin: `tokens.test.ts` reads section 15's table
+ * out of `tests/reference/design-contract.md`, requires `src/ui/tokens.css` to
+ * declare each step at that value, and requires this record to carry the same
+ * number, so the contract, the stylesheet and the renderer cannot drift apart
+ * in pairs. The
+ * play surface's own two rounded shapes take proportions of a card and of the
+ * felt instead, which is shape data rather than a chrome token, and both are
+ * documented where they are declared.
+ */
 export const RADIUS = {
   sm: 4,
   md: 8,
@@ -284,27 +298,30 @@ export const DURATION = {
   d4: 320,
 } as const satisfies Record<string, number>;
 
-export type DurationName = keyof typeof DURATION;
-
 /**
  * The two easings, as their cubic-bezier control points. The renderer needs a
  * function and CSS needs a curve; committing the control points rather than a
  * hand-rolled approximation is what keeps a canvas tween and a CSS transition
  * on the same curve.
+ *
+ * `out` is the one the tweens use, through `animate.ts`'s `easeOut`. `inOut` is
+ * drawn by nothing on either side today: no rule in `chrome.css` uses
+ * `--ease-in-out` and `ease()` is only ever reached through `easeOut`. It stays
+ * because QUALITY-BAR section 15 names both curves and this record is what
+ * `tokens.test.ts` holds the stylesheet's declaration to, the same three-way
+ * pin `RADIUS` above is part of; a curve named in the contract and mirrored
+ * nowhere would be a number with one home again.
  */
 export const EASE = {
   out: [0.2, 0, 0, 1],
   inOut: [0.4, 0, 0.2, 1],
 } as const satisfies Record<string, readonly [number, number, number, number]>;
 
-/**
- * The duration a caller should use, given the reduced-motion flag.
- *
- * The one behaviour in this file, and it is the token lookup itself rather than
- * a policy: QUALITY-BAR section 15 defines `--dur-0` as "the reduced-motion
- * value of every token below", so resolving a duration means knowing the flag.
- * The flag is read outside `core/` and passed in; nothing here queries it.
- */
-export function duration(name: DurationName, reducedMotion: boolean): number {
-  return reducedMotion ? DURATION.d0 : DURATION[name];
-}
+// **There is no `duration(name, reducedMotion)` here** (`AUDIT-2`, finding
+// `Z3-05`). This file carried one, described as its one behaviour, and nothing
+// under `src/` called it: the reduced-motion resolution QUALITY-BAR section 15
+// describes is done by the stylesheet, which redefines every `--dur-*` to
+// `--dur-0` in both the media query and the `data-motion` block, and the play
+// surface's own tweens are paced by SPEC 5's constants rather than by these
+// chrome tokens. The two behaviours this file does have, `feltColour` and
+// `surfacePalette`, are both consumed.
