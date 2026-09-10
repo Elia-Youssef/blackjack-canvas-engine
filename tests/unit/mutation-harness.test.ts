@@ -48,6 +48,7 @@ import {
   EDITS,
   GATE_RED,
   classifyGateRun,
+  lockfileDrift,
   staleLedgerEntries,
 } from '../../scripts/mutation-check.mjs';
 
@@ -283,6 +284,156 @@ describe('Z9-06: a stale ledger stops the sweep before anything is built', () =>
     );
     // And the belt behind it: `runEdit` still refuses its own entry.
     expect(HARNESS).toContain('    if (occurrences !== 1) {');
+  });
+});
+
+describe('2026-09-10: a drifted install stops the sweep before anything is built', () => {
+  /**
+   * The pass beside the ledger pre-flight, for the other thing a sweep took on
+   * trust: that `node_modules/` is what `package-lock.json` says it is. For the
+   * sweeps since `BJ-22` it was not. `report:lighthouse` installed its tool
+   * with `--no-package-lock`, which makes npm ignore the lock file while
+   * resolving, and eleven locked packages had moved to newer versions, the
+   * bundler among them. Every gate measured that tree, and the summary had no
+   * way to say so.
+   *
+   * The pass is pure and takes its reader as a parameter, so the arms below
+   * run it over constructed records. Only a package present in both records at
+   * different versions is drift: Lighthouse's own subtree is installed
+   * unrecorded on purpose, and the lock file names the optional binaries of
+   * every platform while an install takes only this one's.
+   *
+   * The same pass over the REAL records is deliberately not asserted here, for
+   * the reason the ledger pre-flight gives above: this suite is the sweep's own
+   * unit gate, and a unit test that reads the machine it runs on would report
+   * the environment rather than the source. The pre-flight belongs where it
+   * runs once, on an unmutated tree, before the baseline.
+   */
+  const TRACKED = 'package-lock.json';
+  const INSTALLED = 'node_modules/.package-lock.json';
+  const record = (packages: Record<string, { version: string }>): string =>
+    JSON.stringify({ lockfileVersion: 3, packages: { '': { version: '0.0.0' }, ...packages } });
+  const io = (files: Record<string, string>) => ({
+    read: (file: string): string => {
+      const text = files[file];
+      if (text === undefined) {
+        throw new Error(`no such file: ${file}`);
+      }
+      return text;
+    },
+  });
+
+  it('reports nothing when the installed record is the lock file', () => {
+    const packages = {
+      'node_modules/vite': { version: '8.2.2' },
+      'node_modules/rolldown': { version: '1.2.5' },
+    };
+    expect(
+      lockfileDrift(io({ [TRACKED]: record(packages), [INSTALLED]: record(packages) })),
+    ).toEqual([]);
+  });
+
+  it('names a package that moved, with both versions', () => {
+    const drift = lockfileDrift(
+      io({
+        [TRACKED]: record({ 'node_modules/rolldown': { version: '1.2.5' } }),
+        [INSTALLED]: record({ 'node_modules/rolldown': { version: '1.2.8' } }),
+      }),
+    );
+    expect(drift).toHaveLength(1);
+    expect(drift[0]).toContain('node_modules/rolldown');
+    expect(drift[0]).toContain('locked 1.2.5');
+    expect(drift[0]).toContain('installed 1.2.8');
+  });
+
+  it('reports every moved package rather than stopping at the first', () => {
+    const drift = lockfileDrift(
+      io({
+        [TRACKED]: record({
+          'node_modules/rolldown': { version: '1.2.5' },
+          'node_modules/postcss': { version: '8.5.26' },
+          'node_modules/vite': { version: '8.2.2' },
+        }),
+        [INSTALLED]: record({
+          'node_modules/rolldown': { version: '1.2.8' },
+          'node_modules/postcss': { version: '8.5.28' },
+          'node_modules/vite': { version: '8.2.2' },
+        }),
+      }),
+    );
+    expect(drift).toHaveLength(2);
+  });
+
+  it('ignores a package only the installed record has, which is how the tool arrives', () => {
+    const drift = lockfileDrift(
+      io({
+        [TRACKED]: record({ 'node_modules/vite': { version: '8.2.2' } }),
+        [INSTALLED]: record({
+          'node_modules/vite': { version: '8.2.2' },
+          'node_modules/lighthouse': { version: '13.4.1' },
+          'node_modules/puppeteer-core': { version: '25.10.0' },
+        }),
+      }),
+    );
+    expect(drift).toEqual([]);
+  });
+
+  it("ignores a package only the lock file has, which is every other platform's binary", () => {
+    const drift = lockfileDrift(
+      io({
+        [TRACKED]: record({
+          'node_modules/vite': { version: '8.2.2' },
+          'node_modules/@rolldown/binding-darwin-arm64': { version: '1.2.5' },
+        }),
+        [INSTALLED]: record({ 'node_modules/vite': { version: '8.2.2' } }),
+      }),
+    );
+    expect(drift).toEqual([]);
+  });
+
+  it('reports a record it cannot read rather than throwing over it', () => {
+    const missing = lockfileDrift(io({ [TRACKED]: record({}) }));
+    expect(missing).toHaveLength(1);
+    expect(missing[0]).toContain(INSTALLED);
+    expect(missing[0]).toContain('npm ci');
+    const broken = lockfileDrift(io({ [TRACKED]: 'not a record', [INSTALLED]: record({}) }));
+    expect(broken).toHaveLength(1);
+    expect(broken[0]).toContain(TRACKED);
+  });
+
+  it('reports a record with no packages table rather than reading it as agreement', () => {
+    const drift = lockfileDrift(
+      io({ [TRACKED]: JSON.stringify({ lockfileVersion: 1 }), [INSTALLED]: record({}) }),
+    );
+    expect(drift).toHaveLength(1);
+    expect(drift[0]).toContain('no packages table');
+  });
+
+  it('runs after the ledger pre-flight and before the baseline, and stops without applying anything', () => {
+    // The ordering is the finding, pinned as source for the reason the ledger
+    // arm gives: a sweep is the one thing a unit test cannot start.
+    const drift = HARNESS.indexOf('const drift = lockfileDrift();');
+    const ledger = HARNESS.indexOf('const stale = staleLedgerEntries(EDITS, ADDITIONS);');
+    const baseline = HARNESS.indexOf('const commands = [UNIT, LINT,');
+    expect(drift, 'the sweep no longer runs the lock-file pre-flight').toBeGreaterThan(-1);
+    expect(ledger).toBeLessThan(drift);
+    expect(drift).toBeLessThan(baseline);
+    expect(HARNESS).toContain(
+      "      'The installed tree has drifted from the lock file. No mutation was applied and nothing was built.',",
+    );
+    // The refusal returns rather than falling through, held with real newlines
+    // for the reason the ledger arm gives, and it is the last refusal before
+    // the flag the discard reads: a drift that fell through would set it.
+    expect(HARNESS).toContain(
+      [
+        "    console.error('Run npm ci, then npm run report:lighthouse, and start the sweep again.');",
+        '    process.exitCode = 1;',
+        '    return;',
+        '  }',
+        '  // Past the refusal, so a command may now be spawned and a command may build.',
+        '  mayHaveBuilt = true;',
+      ].join('\n'),
+    );
   });
 });
 

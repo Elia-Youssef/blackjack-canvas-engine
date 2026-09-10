@@ -26,12 +26,22 @@
  * two lines of a lock file nobody wrote. Older Lighthouse is worse rather than
  * better, resolving the package rather than merely naming it.
  *
- * So `npm run report:lighthouse` installs the pinned version with `--no-save
- * --no-package-lock` and then runs this file: the tool is present for the
- * measurement, the tracked record is untouched, and the version is exact. The
- * sanctioned alternative is a `ci-` amendment to the provenance pattern, which
- * is not a part branch's to make: `BJ-22`'s CI patch file carries the drafted
- * amendment and the reasoning for whoever rules on it.
+ * So `npm run report:lighthouse` installs the pinned version with `--no-save`
+ * and then runs this file: the tool is present for the measurement, the tracked
+ * record is untouched, and the version is exact. `--no-save` is the whole of
+ * that protection, by npm's own definition of the flag: it prevents writing to
+ * `package-lock.json`. Until 2026-09-10 the install passed `--no-package-lock`
+ * as well, and that flag does something different and worse: it makes npm
+ * ignore the lock file while resolving, so every range in `package.json` was
+ * re-resolved against the registry on each run. Measured that day: eleven
+ * locked packages had moved to newer versions, the bundler among them, so the
+ * sweep and the reports were measuring a tree the lock file did not describe.
+ * With the lock file in force the install adds Lighthouse's own subtree and
+ * nothing else, and the sweep's lock-file pre-flight in
+ * `scripts/mutation-check.mjs` refuses to run on any tree where a locked
+ * package has moved. The sanctioned alternative is a `ci-` amendment to the
+ * provenance pattern, which is not a part branch's to make: `BJ-22`'s CI patch
+ * file carries the drafted amendment and the reasoning for whoever rules on it.
  *
  * Three runs, the median reported, all three shown. Exits 1 on a breach.
  */
