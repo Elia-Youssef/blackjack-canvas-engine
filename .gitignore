@@ -5,6 +5,7 @@ node_modules/
 dist/
 coverage/
 artifacts/reports/
+artifacts/demos/
 *.tsbuildinfo
 
 # Test and browser output
