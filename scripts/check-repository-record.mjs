@@ -54,23 +54,31 @@ function checkText(text, label) {
   });
 }
 
-function checkSubject(subject, label) {
-  if (subject.length > 72) fail(`${label} exceeds 72 characters`);
-  if (subject.endsWith('.')) fail(`${label} ends with a full stop`);
+function checkSubject(subject, label, allowGeneratedPullRequestReference = false) {
+  // GitHub appends ` (#123)` when it creates a squash commit. The pull request
+  // title is still checked verbatim before that write, so the 72-character
+  // limit applies to the authored summary and not to this generated reference.
+  // Only GitHub-committed records may take this path below; a human cannot add
+  // a suffix to evade the commit-subject limit.
+  const summary = allowGeneratedPullRequestReference
+    ? subject.replace(/ \(#\d+\)$/, '')
+    : subject;
+  if (summary.length > 72) fail(`${label} exceeds 72 characters`);
+  if (summary.endsWith('.')) fail(`${label} ends with a full stop`);
   // GITHUB section 4 names seven areas, `BJ-n`, `PF-n`, `ENG-n`, `fix`, `docs`,
   // `ci` and `deps`, and this expression accepted five of them: the first
   // `PF-0` or `ENG-1` commit would have failed the policy gate on a subject the
   // document lists as valid, before any other gate reported. Section 15's rule
   // is that the rule and its enforcement are never a version apart.
-  if (!/^(?:(?:BJ|PF|ENG)-\d+|fix|docs|ci|deps): [a-z0-9]/.test(subject)) {
+  if (!/^(?:(?:BJ|PF|ENG)-\d+|fix|docs|ci|deps): [a-z0-9]/.test(summary)) {
     fail(`${label} does not use the required area and imperative summary format`);
   }
 }
 
-function checkMessage(message, label, requireClosure = true) {
+function checkMessage(message, label, requireClosure = true, allowGeneratedPullRequestReference = false) {
   checkText(message, label);
   const lines = message.trimEnd().split(/\r?\n/);
-  checkSubject(lines[0] ?? '', `${label} subject`);
+  checkSubject(lines[0] ?? '', `${label} subject`, allowGeneratedPullRequestReference);
   if (requireClosure) {
     const closureLines = lines.filter((line) => /^Closes: (?:None|[A-Z][A-Z0-9-]*(?:, [A-Z][A-Z0-9-]*)*)$/.test(line));
     if (closureLines.length !== 1) fail(`${label} must contain exactly one valid Closes line`);
@@ -205,7 +213,8 @@ if (hasCommit) {
     const [hash, authorName, authorEmail, committerName, committerEmail, ...messageParts] = record.split('\x1f');
     const message = messageParts.join('\x1f').trim();
     checkText(`${authorName}\n${authorEmail}\n${committerName}\n${committerEmail}`, `commit ${hash} identity`);
-    checkMessage(message, `commit ${hash}`, !dependencyCommit(message));
+    const generatedSquashCommit = committerName === 'GitHub' && committerEmail === 'noreply@github.com';
+    checkMessage(message, `commit ${hash}`, !dependencyCommit(message), generatedSquashCommit);
   }
 }
 

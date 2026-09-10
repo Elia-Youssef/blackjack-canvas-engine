@@ -125,6 +125,15 @@ function commit(message: string, hash = 'a1b2c3d'): CommitFixture {
   };
 }
 
+/** A squash commit whose trailing pull-request reference is written by GitHub. */
+function githubSquashCommit(message: string): CommitFixture {
+  return {
+    ...commit(message),
+    committerName: 'GitHub',
+    committerEmail: 'noreply@github.com',
+  };
+}
+
 /** The `.gitattributes` the scan reads its skiplist from. */
 const ATTRIBUTES = '*.png binary\n*.ico binary\n';
 
@@ -251,6 +260,37 @@ describe('the repository policy gate answers for its own behaviour', () => {
     });
     expect(outcome.failures, outcome.failures.join(' / ')).toEqual([]);
     expect(outcome.status).toBe(0);
+  });
+
+  it('measures a GitHub squash reference outside the authored subject budget', () => {
+    // GitHub writes the pull request number after the title while it creates a
+    // squash commit. The title must fit the budget before that decoration; the
+    // generated reference must not turn the resulting main commit into a
+    // permanent policy failure.
+    const title = `fix: ${'x'.repeat(67)}`;
+    const squashedSubject = `${title} (#34)`;
+    const generated = run({
+      branch: 'main',
+      commits: [githubSquashCommit(`${squashedSubject}\n\nCloses: None`)],
+    });
+    expect(generated.failures, generated.failures.join(' / ')).toEqual([]);
+    expect(generated.status).toBe(0);
+
+    const ordinary = run({ commits: [commit(`${squashedSubject}\n\nCloses: None`)] });
+    expect(ordinary.status).toBe(1);
+    expect(ordinary.failures.join(' / ')).toContain('subject exceeds 72 characters');
+
+    const pullRequest = run({
+      branch: 'fix-subject-budget',
+      commits: [commit('fix: check the policy\n\nCloses: None')],
+      env: {
+        GITHUB_EVENT_NAME: 'pull_request',
+        PULL_REQUEST_TITLE: squashedSubject,
+        PULL_REQUEST_BODY: 'Closes: None',
+      },
+    });
+    expect(pullRequest.status).toBe(1);
+    expect(pullRequest.failures.join(' / ')).toContain('pull request title exceeds 72 characters');
   });
 
   it('still requires a Closes line from a human commit on an update branch', () => {
