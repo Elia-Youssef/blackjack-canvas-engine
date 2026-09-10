@@ -9158,6 +9158,29 @@ const EDITS = Object.freeze([
     replace: '  const stale = [];',
     detectedBy: UNIT,
   },
+  {
+    // The lock-file pre-flight, 2026-09-10: the installed tree is compared
+    // against the tracked lock file after the ledger and before the baseline,
+    // because for the sweeps since `BJ-22` the two silently disagreed. This
+    // entry blinds the comparison: a package that moved is no longer a
+    // difference. Built by concatenation for the reason the pair above gives.
+    item: 'M4',
+    name: 'the lock-file pre-flight stops seeing a package that has moved',
+    file: 'scripts/mutation-check.mjs',
+    find: '    if (locked !== undefined && locked.version !== ' + 'installed.version) {',
+    replace: '    if (locked !== undefined && false) {',
+    detectedBy: UNIT,
+  },
+  {
+    // And its place in the run: after the ledger and before the baseline, so
+    // a drifted tree costs no build and reports every moved package at once.
+    item: 'M4',
+    name: 'the sweep enters the baseline without checking the lock file first',
+    file: 'scripts/mutation-check.mjs',
+    find: '  const drift = lockfileDrift(' + ');',
+    replace: '  const drift = [];',
+    detectedBy: UNIT,
+  },
 ]);
 
 /**
@@ -9777,6 +9800,71 @@ export function staleLedgerEntries(edits, additions, io = {}) {
   return stale;
 }
 
+/**
+ * The installed tree, checked against the tracked lock file after the ledger
+ * pre-flight and before anything is built, run or mutated. 2026-09-10.
+ *
+ * Every gate in the sweep runs on `node_modules/`, and npm's own record of what
+ * is in there is the hidden `node_modules/.package-lock.json`. The record of
+ * what is meant to be there is the tracked `package-lock.json`. For the sweeps
+ * since `BJ-22` the two disagreed: `report:lighthouse` installed its tool with
+ * `--no-package-lock`, which ignores the lock file while resolving, so eleven
+ * locked packages had quietly moved to newer versions, the bundler among them,
+ * and every gate measured a toolchain the lock file did not describe. Nothing
+ * noticed, because nothing compared the two records.
+ *
+ * Three shapes of difference, and only one of them is drift:
+ *
+ *   - a package present in both records at different versions IS drift, and is
+ *     reported one line per package with both versions named;
+ *   - a package only the installed record has is not: Lighthouse's own subtree
+ *     is installed unrecorded on purpose, for the reason
+ *     `scripts/report/lighthouse.mjs` gives, and it has to be present for the
+ *     sweep's own baseline;
+ *   - a package only the lock file has is not either: the lock file names every
+ *     platform's optional binaries and an install takes only this one's.
+ *
+ * Pure, and the reader is a parameter, so `tests/unit/mutation-harness.test.ts`
+ * runs it over constructed records without touching an installation. A record
+ * that cannot be read, or that carries no packages table, is reported rather
+ * than thrown over or read as agreement: an unverifiable tree is not a
+ * verified one.
+ */
+export function lockfileDrift(io = {}) {
+  const read = io.read ?? ((file) => readFileSync(join(PROJECT_ROOT, file), 'utf8'));
+  const TRACKED = 'package-lock.json';
+  const INSTALLED = 'node_modules/.package-lock.json';
+  const records = {};
+  for (const file of [TRACKED, INSTALLED]) {
+    let packages;
+    try {
+      packages = JSON.parse(read(file)).packages;
+    } catch (error) {
+      // Not a bare catch: the reason is what goes in the report.
+      const reason = error instanceof Error ? error.message : String(error);
+      return [`${file} could not be read (${reason}): run npm ci and start again`];
+    }
+    if (typeof packages !== 'object' || packages === null) {
+      return [`${file} carries no packages table: run npm ci and start again`];
+    }
+    records[file] = packages;
+  }
+
+  const drift = [];
+  for (const [name, installed] of Object.entries(records[INSTALLED])) {
+    if (name === '') {
+      continue;
+    }
+    const locked = records[TRACKED][name];
+    if (locked !== undefined && locked.version !== installed.version) {
+      drift.push(
+        `${name}: locked ${String(locked.version)}, installed ${String(installed.version)}`,
+      );
+    }
+  }
+  return drift;
+}
+
 function sweep() {
   console.log('Mutation validation for the automated gates built so far.');
   console.log('Each line breaks one thing and requires the named gate to go red.');
@@ -9793,6 +9881,26 @@ function sweep() {
     for (const line of stale) {
       console.error(`  ${line}`);
     }
+    process.exitCode = 1;
+    return;
+  }
+
+  // And the tree itself, for the same reason: a tree that is not the lock
+  // file's is not the tree any gate below could claim to have measured. After
+  // the ledger, so a scratch copy of this file with no lock file beside it
+  // still reports its ledger first.
+  const drift = lockfileDrift();
+  console.log(
+    `Lock-file pre-flight: ${String(drift.length)} installed packages off the lock file.`,
+  );
+  if (drift.length > 0) {
+    console.error(
+      'The installed tree has drifted from the lock file. No mutation was applied and nothing was built.',
+    );
+    for (const line of drift) {
+      console.error(`  ${line}`);
+    }
+    console.error('Run npm ci, then npm run report:lighthouse, and start the sweep again.');
     process.exitCode = 1;
     return;
   }
