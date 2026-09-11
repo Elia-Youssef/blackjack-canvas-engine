@@ -92,8 +92,16 @@ function checkMessage(
   requireClosure = true,
   allowGeneratedPullRequestReference = false,
   allowDependabotFormat = false,
+  allowGeneratedDependabotAttribution = false,
 ) {
-  checkText(message, label);
+  // GitHub preserves this exact Dependabot attribution when it creates a
+  // squash commit from a bot-authored update. It is generated metadata, not a
+  // human authorship claim. The caller only enables this for GitHub-committed
+  // records; every other authorship trailer remains prohibited.
+  const text = allowGeneratedDependabotAttribution
+    ? message.replace(dependabotAttributionTrailer, '')
+    : message;
+  checkText(text, label);
   const lines = message.trimEnd().split(/\r?\n/);
   checkSubject(
     lines[0] ?? '',
@@ -125,6 +133,10 @@ function checkMessage(
  * form, the provenance scan and the identity scan run on every commit.
  */
 const standardDependabotSubject = (message) => /^deps: Bump [A-Za-z0-9@]/.test(message);
+const dependabotAttributionTrailer = new RegExp(
+  `^${escapePattern(decode('Q28tYXV0aG9yZWQtYnk6IGRlcGVuZGFib3RbYm90XSA8NDk2OTkzMzMrZGVwZW5kYWJvdFtib3RdQHVzZXJzLm5vcmVwbHkuZ2l0aHViLmNvbT4='))}$`,
+  'm',
+);
 const dependabotCommit = (message, authorName, authorEmail) =>
   standardDependabotSubject(message)
   && authorName === 'dependabot[bot]'
@@ -248,12 +260,15 @@ if (hasCommit) {
       authorName,
       authorEmail,
     );
+    const generatedDependabotAttribution = generatedSquashCommit
+      && dependabotAttributionTrailer.test(message);
     checkMessage(
       message,
       `commit ${hash}`,
       !dependencyCommit(message, authorName, authorEmail),
       generatedSquashCommit,
       generatedDependabotRecord,
+      generatedDependabotAttribution,
     );
   }
 }

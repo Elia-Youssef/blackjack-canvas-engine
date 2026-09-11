@@ -216,6 +216,11 @@ function run(scenario: Scenario, patch: (text: string) => string = (text) => tex
 
 const decode = (value: string): string => Buffer.from(value, 'base64').toString('utf8');
 
+/** The exact Dependabot trailer GitHub preserves in a squash commit. */
+const DEPENDABOT_ATTRIBUTION = decode(
+  'Q28tYXV0aG9yZWQtYnk6IGRlcGVuZGFib3RbYm90XSA8NDk2OTkzMzMrZGVwZW5kYWJvdFtib3RdQHVzZXJzLm5vcmVwbHkuZ2l0aHViLmNvbT4=',
+);
+
 /**
  * A dependency update's own body, quoting release notes that credit a product
  * the provenance scan is built to catch. Encoded, per this file's header.
@@ -305,6 +310,20 @@ describe('the repository policy gate answers for its own behaviour', () => {
     expect(ordinaryPullRequest.failures.join(' / ')).toContain(
       'pull request title does not use the required area and imperative summary format',
     );
+  });
+
+  it('accepts GitHub-preserved Dependabot attribution only on a generated squash', () => {
+    const message = `ci: sync the playwright container image (#37)\n\nCloses: None\n\n${DEPENDABOT_ATTRIBUTION}`;
+    const generated = run({
+      branch: 'main',
+      commits: [githubSquashCommit(message)],
+    });
+    expect(generated.failures, generated.failures.join(' / ')).toEqual([]);
+    expect(generated.status).toBe(0);
+
+    const ordinary = run({ commits: [commit(message)] });
+    expect(ordinary.status).toBe(1);
+    expect(ordinary.failures.join(' / ')).toContain('contains an authorship trailer');
   });
 
   it('measures a GitHub squash reference outside the authored subject budget', () => {
