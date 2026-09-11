@@ -143,53 +143,17 @@ Four layers, one composition root, and one boundary that is enforced rather than
 
 ```mermaid
 flowchart TB
-    subgraph Root["main.ts, the composition root"]
-        Boot["Boot, frame loop, round boundary"]
-    end
-
-    subgraph Core["src/core, pure rules. No DOM, no canvas, no clock"]
-        Table["table.ts, the phase machine"]
-        Rules["rules, shoe, dealer, hand, cards"]
-        Money["wallet, settlement"]
-        Meta["strategy, statistics, history"]
-        RNG["rng.ts, seeded streams"]
-    end
-
-    subgraph Render["src/render, the play surface on canvas"]
-        Scene["scene.ts, layer composition"]
-        Layers["felt, card, chips"]
-        Animate["animate.ts, tweens and pacing"]
-    end
-
-    subgraph UI["src/ui, every control as a real DOM element"]
-        Chrome["chrome.ts, controls and readouts"]
-        Mirror["mirror.ts and announcer.ts, screen-reader surfaces"]
-        Layout["layout.ts and breakpoints.ts"]
-        Audio["audio.ts and cues.ts"]
-    end
-
-    subgraph Store["src/storage, one versioned document"]
-        Doc["document.ts, sanitising and merge"]
-        Persist["persistence.ts and store.ts"]
-    end
-
-    Boot --> Table
-    Boot --> Scene
-    Boot --> Chrome
-    Boot --> Persist
-    Table --> Rules
-    Table --> Money
-    Table --> Meta
-    Rules --> RNG
-    Scene --> Layers
-    Scene --> Animate
-    Chrome --> Mirror
-    Chrome --> Layout
-    Chrome --> Audio
-    Persist --> Doc
-
-    Core -. "read only, one observation per frame" .-> Render
-    Core -. "read only, one observation per frame" .-> UI
+    Root["main.ts<br/>the composition root:<br/>boot, frame loop,<br/>round boundary"]
+    Core["src/core<br/>the rules engine, pure:<br/>no DOM, no canvas,<br/>no clock"]
+    Render["src/render<br/>the play surface,<br/>one canvas"]
+    UI["src/ui<br/>the chrome, every control<br/>a real DOM element"]
+    Store["src/storage<br/>one versioned document"]
+    Root --> Core
+    Root --> Store
+    Root --> UI
+    Root --> Render
+    Core -. "read only, once per frame" .-> UI
+    Core -. "read only, once per frame" .-> Render
 ```
 
 **`src/core` imports nothing from `src/render`, `src/ui`, the DOM or the canvas.** A custom ESLint rule
@@ -207,25 +171,26 @@ SPEC 10's eleven phases. One `apply(intent)` entry point accepts or refuses ever
 refuses anything illegal for the current phase rather than trusting the interface to hide it.
 
 ```mermaid
+%%{init: {"state": {"nodeSpacing": 30, "rankSpacing": 30}}}%%
 stateDiagram-v2
-    [*] --> start
     start --> betting: choose a table
+    betting --> start: change table
     betting --> dealing: deal
-    dealing --> peek: dealer shows an Ace or a ten
-    dealing --> playerTurn: no peek needed
-    peek --> insurance: dealer shows an Ace
-    peek --> playerTurn: no natural found
-    insurance --> playerTurn: take, decline or even money
+    dealing --> insurance: Ace showing
+    dealing --> peek: ten showing
+    dealing --> playerTurn: anything else
+    insurance --> peek: take, decline or even money
+    peek --> settling: dealer natural
+    peek --> playerTurn: no natural
     playerTurn --> playerTurn: hit, double, split, surrender
-    playerTurn --> reveal: stand or all hands resolved
-    reveal --> dealerTurn: dealer draws to 17
-    dealerTurn --> settling
-    reveal --> settling: every hand already resolved
+    playerTurn --> reveal: stand, or every hand resolved
+    reveal --> dealerTurn: a hand still in contention
+    reveal --> settling: nothing left to beat
+    dealerTurn --> settling: stands at 17 or busts
     settling --> roundResult
-    roundResult --> betting: next hand
-    roundResult --> bustOut: below the table minimum
-    bustOut --> betting: drop a table or reset
-    bustOut --> [*]
+    roundResult --> betting: Next Hand
+    roundResult --> bustOut: Next Hand, below the minimum
+    bustOut --> betting: drop a table or free reset
 ```
 
 ### Determinism
@@ -309,7 +274,7 @@ exclusions that are themselves asserted to be non-vacuous.
 - TypeScript 6 in strict mode, ES modules, no runtime dependencies
 - Canvas 2D for the play surface, with one device-pixel-ratio backing store and two ordered passes
 - Vite 8 for the dev server and the production build
-- Vitest 4 for unit and property tests, Playwright 1.62 for browser tests across eight projects
+- Vitest 5 for unit and property tests, Playwright 1.63 for browser tests across eight projects
 - ESLint 10 with a custom rule enforcing the `core` import boundary
 - axe-core 4.13 for automated accessibility scanning, development only
 - Node 20.19 or newer
@@ -400,12 +365,12 @@ npm run verify:mutations
 | --- | --- | --- |
 | `typecheck` | Strict TypeScript across source and tests | Clean |
 | `lint` | Style, plus the `core` import boundary, proven by a violating fixture | Clean |
-| `test` | Unit and property tests, plus spec-derived reference implementations | 1,364 tests in 60 files |
-| `test:browser` | Playwright against the built output, eight browser projects | 2,096 tests, zero skipped |
+| `test` | Unit and property tests, plus spec-derived reference implementations | 1,375 tests in 60 files |
+| `test:browser` | Playwright against the built output, eight browser projects | 2,181 tests, zero skipped |
 | `verify:build` | Two adversarial builds compared byte for byte | Reproducible |
 | `verify:policy` | Repository, subject and metadata rules over every tracked file | Clean |
 | `report:all` | Bundle size, contrast, touch targets, frame timing, Lighthouse, memory | 6 of 6 pass |
-| `verify:mutations` | Breaks the source and requires the named gate to go red | 840 ledger entries |
+| `verify:mutations` | Breaks the source and requires the named gate to go red | 842 ledger entries |
 
 `npm run verify` chains `verify:policy`, `typecheck`, `lint`, `test`, `test:browser` and
 `verify:build`. `report:all` and `verify:mutations` are run separately, and the reports need a build
