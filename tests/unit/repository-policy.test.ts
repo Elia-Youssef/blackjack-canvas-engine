@@ -134,6 +134,15 @@ function githubSquashCommit(message: string): CommitFixture {
   };
 }
 
+/** A Dependabot-authored dependency update with its conventional subject. */
+function dependabotCommit(message: string): CommitFixture {
+  return {
+    ...commit(message),
+    authorName: 'dependabot[bot]',
+    authorEmail: '49699333+dependabot[bot]@users.noreply.github.com',
+  };
+}
+
 /** The `.gitattributes` the scan reads its skiplist from. */
 const ATTRIBUTES = '*.png binary\n*.ico binary\n';
 
@@ -260,6 +269,42 @@ describe('the repository policy gate answers for its own behaviour', () => {
     });
     expect(outcome.failures, outcome.failures.join(' / ')).toEqual([]);
     expect(outcome.status).toBe(0);
+  });
+
+  it('accepts authenticated Dependabot metadata without weakening human records', () => {
+    const subject = 'deps: Bump the dev group across 1 directory with 6 updates';
+    const update = run({
+      branch: UPDATE_BRANCH,
+      commits: [dependabotCommit(subject)],
+      env: {
+        GITHUB_EVENT_NAME: 'pull_request',
+        PULL_REQUEST_AUTHOR: UPDATE_AUTHOR,
+        PULL_REQUEST_TITLE: subject,
+        PULL_REQUEST_BODY: HOSTILE_BODY,
+      },
+    });
+    expect(update.failures, update.failures.join(' / ')).toEqual([]);
+    expect(update.status).toBe(0);
+
+    const ordinary = run({ commits: [commit(subject)] });
+    expect(ordinary.status).toBe(1);
+    expect(ordinary.failures.join(' / ')).toContain(
+      'does not use the required area and imperative summary format',
+    );
+
+    const ordinaryPullRequest = run({
+      branch: 'fix-a-thing',
+      commits: [commit('fix: check the policy\n\nCloses: None')],
+      env: {
+        GITHUB_EVENT_NAME: 'pull_request',
+        PULL_REQUEST_TITLE: subject,
+        PULL_REQUEST_BODY: 'Closes: None',
+      },
+    });
+    expect(ordinaryPullRequest.status).toBe(1);
+    expect(ordinaryPullRequest.failures.join(' / ')).toContain(
+      'pull request title does not use the required area and imperative summary format',
+    );
   });
 
   it('measures a GitHub squash reference outside the authored subject budget', () => {

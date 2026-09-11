@@ -54,7 +54,12 @@ function checkText(text, label) {
   });
 }
 
-function checkSubject(subject, label, allowGeneratedPullRequestReference = false) {
+function checkSubject(
+  subject,
+  label,
+  allowGeneratedPullRequestReference = false,
+  allowDependabotFormat = false,
+) {
   // GitHub appends ` (#123)` when it creates a squash commit. The pull request
   // title is still checked verbatim before that write, so the 72-character
   // limit applies to the authored summary and not to this generated reference.
@@ -70,15 +75,32 @@ function checkSubject(subject, label, allowGeneratedPullRequestReference = false
   // `PF-0` or `ENG-1` commit would have failed the policy gate on a subject the
   // document lists as valid, before any other gate reported. Section 15's rule
   // is that the rule and its enforcement are never a version apart.
-  if (!/^(?:(?:BJ|PF|ENG)-\d+|fix|docs|ci|deps): [a-z0-9]/.test(summary)) {
+  // Dependabot's own commit and pull-request titles use the conventional
+  // `deps: Bump …` wording. That uppercase verb is admitted only at the
+  // authenticated call sites below; every human-authored record still uses
+  // the repository's lowercase imperative form.
+  const validDependabotSubject = allowDependabotFormat
+    && /^deps: Bump [A-Za-z0-9@]/.test(summary);
+  if (!validDependabotSubject && !/^(?:(?:BJ|PF|ENG)-\d+|fix|docs|ci|deps): [a-z0-9]/.test(summary)) {
     fail(`${label} does not use the required area and imperative summary format`);
   }
 }
 
-function checkMessage(message, label, requireClosure = true, allowGeneratedPullRequestReference = false) {
+function checkMessage(
+  message,
+  label,
+  requireClosure = true,
+  allowGeneratedPullRequestReference = false,
+  allowDependabotFormat = false,
+) {
   checkText(message, label);
   const lines = message.trimEnd().split(/\r?\n/);
-  checkSubject(lines[0] ?? '', `${label} subject`, allowGeneratedPullRequestReference);
+  checkSubject(
+    lines[0] ?? '',
+    `${label} subject`,
+    allowGeneratedPullRequestReference,
+    allowDependabotFormat,
+  );
   if (requireClosure) {
     const closureLines = lines.filter((line) => /^Closes: (?:None|[A-Z][A-Z0-9-]*(?:, [A-Z][A-Z0-9-]*)*)$/.test(line));
     if (closureLines.length !== 1) fail(`${label} must contain exactly one valid Closes line`);
@@ -102,7 +124,14 @@ function checkMessage(message, label, requireClosure = true, allowGeneratedPullR
  * human commits included. Only the `Closes:` line is ever excused: the subject
  * form, the provenance scan and the identity scan run on every commit.
  */
-const dependencyCommit = (message) => /^deps: [a-z0-9]/.test(message);
+const standardDependabotSubject = (message) => /^deps: Bump [A-Za-z0-9@]/.test(message);
+const dependabotCommit = (message, authorName, authorEmail) =>
+  standardDependabotSubject(message)
+  && authorName === 'dependabot[bot]'
+  && authorEmail === '49699333+dependabot[bot]@users.noreply.github.com';
+const dependencyCommit = (message, authorName, authorEmail) =>
+  /^deps: [a-z0-9]/.test(message)
+  || dependabotCommit(message, authorName, authorEmail);
 
 const branch = process.env.REPOSITORY_BRANCH || git('branch', '--show-current').trim();
 const dependencyBranch = branch.startsWith('dependabot/');
@@ -214,12 +243,30 @@ if (hasCommit) {
     const message = messageParts.join('\x1f').trim();
     checkText(`${authorName}\n${authorEmail}\n${committerName}\n${committerEmail}`, `commit ${hash} identity`);
     const generatedSquashCommit = committerName === 'GitHub' && committerEmail === 'noreply@github.com';
-    checkMessage(message, `commit ${hash}`, !dependencyCommit(message), generatedSquashCommit);
+    const generatedDependabotRecord = dependabotCommit(
+      message,
+      authorName,
+      authorEmail,
+    );
+    checkMessage(
+      message,
+      `commit ${hash}`,
+      !dependencyCommit(message, authorName, authorEmail),
+      generatedSquashCommit,
+      generatedDependabotRecord,
+    );
   }
 }
 
 if (process.env.PULL_REQUEST_TITLE) {
-  checkSubject(process.env.PULL_REQUEST_TITLE, 'pull request title');
+  const dependabotPullRequestTitle = dependencyUpdate
+    && standardDependabotSubject(process.env.PULL_REQUEST_TITLE);
+  checkSubject(
+    process.env.PULL_REQUEST_TITLE,
+    'pull request title',
+    false,
+    dependabotPullRequestTitle,
+  );
   checkText(process.env.PULL_REQUEST_TITLE, 'pull request title');
 }
 /**
